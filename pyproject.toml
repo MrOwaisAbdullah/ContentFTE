@@ -1,9 +1,28 @@
 [project]
 name = "seo-blog-agent"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Autonomous SEO blog and Content FTE agent pipeline with multi-agent orchestration, Discord bot, Sanity CMS publishing, and Search Console monitoring"
 readme = "README.md"
 requires-python = ">=3.13"
+keywords = [
+    "seo",
+    "ai-agent",
+    "blog-generator",
+    "digital-fte",
+    "ai-employee",
+    "openai-agents-sdk",
+    "sanity-cms",
+    "discord-bot",
+    "content-automation",
+    "search-console",
+    "gemini",
+    "headless-cms",
+]
+classifiers = [
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "assemblyai>=0.42.0",
     "bs4>=0.0.2",
