@@ -424,19 +424,110 @@ def _get_sanity_post_index() -> Dict[str, dict]:
     return index
 
 
+_PERFORMANCE_HEADERS = [
+    "Timestamp", "Title", "URL", "Impressions", "Clicks", "CTR", "Average Position", "Finding", "Suggested Edit", "Status"
+]
+
+_FRESHNESS_SWEEP_HEADERS = [
+    "Timestamp", "Title", "Status", "Reason", "Suggested Edit"
+]
+
+
+def _get_check_history_from_sheet(worksheet_name: str) -> Dict[str, datetime]:
+    """Reads a review log worksheet (e.g. 'performance' or 'freshness sweep')
+    and returns a mapping of Title -> latest checked datetime."""
+    history: Dict[str, datetime] = {}
+    res = manage_sheet_data(worksheet_name=worksheet_name, action="get_all_records")
+    if res.get("status") == "success":
+        for r in res.get("data", []):
+            t = str(r.get("Title", "")).strip()
+            ts_str = str(r.get("Timestamp", "")).strip()
+            if not t or not ts_str:
+                continue
+            dt = None
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S UTC",
+                "%Y-%m-%d %H:%M UTC",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d",
+            ):
+                try:
+                    clean_ts = ts_str.replace("UTC", "").strip()
+                    clean_fmt = fmt.replace(" UTC", "").strip()
+                    dt = datetime.strptime(clean_ts, clean_fmt).replace(tzinfo=timezone.utc)
+                    break
+                except ValueError:
+                    continue
+            if dt:
+                if t not in history or dt > history[t]:
+                    history[t] = dt
+    return history
+
+
+def _log_performance_review(
+    title: str,
+    url: str,
+    impressions: float,
+    clicks: float,
+    ctr: float,
+    position: float,
+    finding: str,
+    suggested_edit: str,
+    status: str,
+) -> None:
+    try:
+        ensure_worksheet_exists("performance", _PERFORMANCE_HEADERS)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        manage_sheet_data(
+            worksheet_name="performance",
+            action="append_row",
+            row_values=[
+                ts,
+                title,
+                url,
+                f"{impressions:.0f}",
+                f"{clicks:.0f}",
+                f"{ctr * 100:.2f}%",
+                f"{position:.1f}",
+                finding,
+                suggested_edit,
+                status,
+            ],
+        )
+        print(f"[search_performance_review] Logged performance review to sheet for '{title}' (status={status}).")
+    except Exception as e:
+        print(f"Warning: failed to log performance review for '{title}': {e}")
+
+
+def _log_freshness_sweep(
+    title: str,
+    status: str,
+    reason: str = "",
+    suggested_edit: str = "",
+) -> None:
+    try:
+        ensure_worksheet_exists("freshness sweep", _FRESHNESS_SWEEP_HEADERS)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        manage_sheet_data(
+            worksheet_name="freshness sweep",
+            action="append_row",
+            row_values=[ts, title, status, reason, suggested_edit],
+        )
+        print(f"[freshness_sweep] Logged freshness check to sheet for '{title}' (status={status}).")
+    except Exception as e:
+        print(f"Warning: failed to log freshness sweep for '{title}': {e}")
+
+
 def _select_review_candidate(
     rows: list, sanity_index: Dict[str, dict], check_column: str, min_age_days: Optional[int] = None,
 ) -> Optional[dict]:
     """Picks the published post most overdue for a review of the given kind,
-    rotating through the whole catalog over time via check_column instead of
-    re-picking the same post every run. Age comes from Sanity's real
-    _createdAt (sanity_index), not a sheet timestamp, so posts that predate
-    this pipeline's own tracking are still included rather than silently
-    skipped forever -- if a title isn't in sanity_index at all (age
-    unknown), it's still treated as eligible rather than excluded.
+    rotating through the whole catalog over time via check_column and the
+    dedicated review log worksheet (freshness sweep). Age comes from Sanity's real
+    _createdAt (sanity_index)."""
+    history_sheet = "freshness sweep" if check_column == "Last Freshness Check" else None
+    sheet_history = _get_check_history_from_sheet(history_sheet) if history_sheet else {}
 
-    Priority: posts never reviewed before (empty check_column) first,
-    real-age-oldest first among those; then posts reviewed longest ago."""
     now = datetime.now(timezone.utc)
     never_checked = []
     previously_checked = []
@@ -450,17 +541,23 @@ def _select_review_candidate(
         sanity_info = sanity_index.get(title) or {}
         created_at = sanity_info.get("created_at")
         if min_age_days is not None and created_at is not None and (now - created_at).days < min_age_days:
-            continue  # known (via real Sanity age) to be too recent -- skip regardless of check history
+            continue
 
         check_raw = str(row.get(check_column, "")).strip()
         sort_key = created_at or datetime.min.replace(tzinfo=timezone.utc)
-        if not check_raw:
+        checked_at = None
+        if check_raw:
+            try:
+                checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        sheet_checked_at = sheet_history.get(title)
+        if sheet_checked_at and (checked_at is None or sheet_checked_at > checked_at):
+            checked_at = sheet_checked_at
+
+        if checked_at is None:
             never_checked.append((sort_key, row))
             continue
-        try:
-            checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
-        except ValueError:
-            checked_at = datetime.min.replace(tzinfo=timezone.utc)
         previously_checked.append((checked_at, row))
 
     if never_checked:
@@ -476,36 +573,18 @@ def _select_review_candidate_from_sanity(
     sanity_index: Dict[str, dict], sheet_rows_by_title: Dict[str, dict], check_column: str, min_age_days: Optional[int] = None,
     already_checked: Optional[set] = None,
 ) -> Optional[str]:
-    """Like _select_review_candidate, but candidates come from the live
-    Sanity post list (sanity_index) instead of generated_posts sheet rows.
-    Confirmed live: some published posts have no generated_posts row at all
-    -- ones published before this pipeline's sheet-tracking existed, or
-    added directly in Sanity Studio -- and a sheet-row-driven selection
-    can never see them no matter how the age source is fixed, since the
-    outer loop itself never reaches them. Only use this for review stages
-    that don't need the sheet's own content (title/slug/age is enough --
-    e.g. search_performance_review); freshness_sweep still needs the
-    sheet's saved Markdown to fact-check and can't do this.
+    """Candidates come directly from live Sanity posts. Rotation is tracked
+    via both generated_posts check_column AND the persistent 'performance'
+    log worksheet, ensuring that posts without a generated_posts row rotate
+    properly across independent GitHub Actions runs."""
+    perf_history = _get_check_history_from_sheet("performance")
 
-    Rotation tracking (check_column) is read from the matching sheet row
-    when one exists; posts with no matching row are treated as
-    never-checked and sorted oldest-first as a reasonable fallback since
-    there's no stamp history to compare -- stamping later also silently
-    no-ops for these (find_row_by_key just won't find a row), which is
-    fine, they simply keep surfacing until something creates a row for
-    them some other way.
-
-    already_checked: optional in-memory set of titles already checked in
-    this process run, used to prevent re-selection when sheet stamping
-    no-ops for posts without a generated_posts row."""
     now = datetime.now(timezone.utc)
     never_checked = []
     previously_checked = []
     for title, info in sanity_index.items():
         if not title:
             continue
-        # Skip posts already checked in this run (prevents repeated flagging
-        # when stamping can't record the check -- e.g. no sheet row exists).
         if already_checked and title in already_checked:
             continue
         created_at = info.get("created_at")
@@ -515,13 +594,20 @@ def _select_review_candidate_from_sanity(
         sheet_row = sheet_rows_by_title.get(title) or {}
         check_raw = str(sheet_row.get(check_column, "")).strip()
         sort_key = created_at or datetime.min.replace(tzinfo=timezone.utc)
-        if not check_raw:
+
+        checked_at = None
+        if check_raw:
+            try:
+                checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        perf_checked_at = perf_history.get(title)
+        if perf_checked_at and (checked_at is None or perf_checked_at > checked_at):
+            checked_at = perf_checked_at
+
+        if checked_at is None:
             never_checked.append((sort_key, title))
             continue
-        try:
-            checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
-        except ValueError:
-            checked_at = datetime.min.replace(tzinfo=timezone.utc)
         previously_checked.append((checked_at, title))
 
     if never_checked:
@@ -1277,9 +1363,27 @@ async def run_freshness_sweep() -> None:
     _stamp_check_column("generated_posts", "Title", title, "Last Freshness Check")
 
     if not content:
+        from lib.sanity_adapter import SanityAdapter
+        try:
+            sanity = SanityAdapter(
+                project_id=os.environ["SANITY_PROJECT_ID"],
+                dataset=os.environ.get("SANITY_DATASET") or "production",
+                token=os.environ["SANITY_API_TOKEN"],
+            )
+            doc = _find_sanity_post_fuzzy(title, sanity.list_posts())
+            if doc and doc.get("_id"):
+                full_doc = sanity.get_post_content_markdown(doc["_id"])
+                if full_doc and full_doc.get("content_markdown", "").strip():
+                    content = full_doc["content_markdown"].strip()
+                    print(f"[freshness_sweep] Fetched content for '{title}' directly from live Sanity doc.")
+        except Exception as e:
+            print(f"[freshness_sweep] Failed to fetch content from Sanity for '{title}': {e}")
+
+    if not content:
         msg = f"Picked '{title}' but it has no saved content; skipped."
         print(f"[freshness_sweep] {msg}")
         _notify(f"🕰️ Freshness sweep: {msg}")
+        _log_freshness_sweep(title, "skipped", "No saved content available")
         return
 
     print(f"[freshness_sweep] Checking '{title}' for stale claims.")
@@ -1294,11 +1398,13 @@ async def run_freshness_sweep() -> None:
         msg = f"Checked '{title}' -- looks current, no action needed."
         print(f"[freshness_sweep] {msg}")
         _notify(f"🕰️ Freshness sweep: {msg}")
+        _log_freshness_sweep(title, "current", "Content is current, no action needed")
         return
 
     suggested_edit = str(_get_field(parsed, "suggested_edit", "")).strip()
     reason = str(_get_field(parsed, "reason", "")).strip()
     print(f"[freshness_sweep] Flagged '{title}': {reason}")
+    _log_freshness_sweep(title, "needs_update", reason, suggested_edit)
 
     if suggested_edit:
         _notify(
@@ -1580,6 +1686,7 @@ async def run_search_performance_review() -> None:
         msg = f"No Search Console data yet for '{title}'; nothing to flag."
         print(f"[search_performance_review] {msg}")
         _notify(f"📊 Search performance review: {msg}")
+        _log_performance_review(title, page_url, 0, 0, 0.0, 0.0, "No Search Console data yet", "", "no_data")
         return
 
     impressions = perf["impressions"]
@@ -1587,6 +1694,7 @@ async def run_search_performance_review() -> None:
         msg = f"'{title}' has only {impressions:.0f} impressions in 28 days -- not enough data to judge yet."
         print(f"[search_performance_review] {msg}")
         _notify(f"📊 Search performance review: {msg}")
+        _log_performance_review(title, page_url, impressions, perf.get("clicks", 0), ctr, position, "Low impressions (< 50)", "", "insufficient_data")
         return
 
     ctr = perf["ctr"]
@@ -1633,9 +1741,11 @@ async def run_search_performance_review() -> None:
         msg = f"Checked '{title}' -- looks healthy ({impressions:.0f} impressions, {ctr * 100:.1f}% CTR, position {position:.1f}), no action needed."
         print(f"[search_performance_review] {msg}")
         _notify(f"📊 Search performance review: {msg}")
+        _log_performance_review(title, page_url, impressions, perf.get("clicks", 0), ctr, position, "Looks healthy", "", "healthy")
         return
 
     print(f"[search_performance_review] Flagged '{title}': {finding}")
+    _log_performance_review(title, page_url, impressions, perf.get("clicks", 0), ctr, position, finding, suggested_edit, "flagged")
 
     # Context only -- informs the reviewer's judgment (e.g. whether a
     # region-specific example or mobile-readability pass makes sense), not
@@ -1692,18 +1802,17 @@ async def run_mine_feedback() -> None:
         except Exception as e:
             print(f"Failed to send Discord mine_feedback notification: {e}")
 
-    result = manage_sheet_data(worksheet_name="review_feedback_log", action="get_all_records")
+    result = manage_sheet_data(worksheet_name="review", action="get_all_records")
     if result.get("status") != "success":
-        msg = "Couldn't read review_feedback_log this run (worksheet may not exist yet -- it's created on first approve/reject in Discord)."
+        msg = "Couldn't read review worksheet this run (it is created on first approve/reject in Discord)."
         print(f"[mine_feedback] {msg}")
-        _notify(f"🧠 Feedback mining: {msg}")
         return
 
     rows = result.get("data") or []
     if len(rows) < _MINE_FEEDBACK_MIN_ROWS:
         msg = f"Only {len(rows)} review decision(s) logged so far -- need at least {_MINE_FEEDBACK_MIN_ROWS} before a pattern search is worth running."
         print(f"[mine_feedback] {msg}")
-        _notify(f"🧠 Feedback mining: {msg}")
+        # Silently return without notifying Discord to avoid noisy spam on approvals
         return
 
     rows_text = "\n".join(
@@ -1778,9 +1887,9 @@ async def run_log_coverage() -> None:
     coverage file (checked by filename, derived deterministically from the
     title), so re-running this on a schedule never duplicates a record even
     if the same row is read again."""
-    result = manage_sheet_data(worksheet_name="review_feedback_log", action="get_all_records")
+    result = manage_sheet_data(worksheet_name="review", action="get_all_records")
     if result.get("status") != "success":
-        print("[log_coverage] Couldn't read review_feedback_log this run (worksheet may not exist yet).")
+        print("[log_coverage] Couldn't read review worksheet this run (may not exist yet).")
         return
 
     rows = result.get("data") or []

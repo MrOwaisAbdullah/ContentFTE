@@ -270,3 +270,33 @@ the key in GCP IAM."
 
 **Status: OPEN.** This is not something a future coding session can close by editing files —
 verify with the owner whether the key was rotated before treating this as resolved.
+
+## E15 — Search performance review repeatedly flagging the same untracked post
+
+**Symptom:** The weekly `search_performance_review` stage repeatedly flagged the exact same post
+("AI Agents, Automations, and Agentic AI - What’s Really Different?") week after week.
+
+**Root cause:** Candidates were selected from Sanity, but rotation history was tracked only via
+the "Last Performance Check" column in the `generated_posts` sheet. Posts published before sheet
+tracking existed (or added directly in Studio) had no row in `generated_posts`. `_stamp_check_column`
+failed silently, leaving the post in `never_checked` on every fresh GitHub Actions run.
+
+**Evidence:** Fixed by persisting every check to the `performance` worksheet and having
+`_select_review_candidate_from_sanity` consult check history from the sheet directly.
+
+**Status: FIXED.**
+
+## E16 — Silent candidate rejections and premature feedback mining alerts
+
+**Symptom:** Rejecting topic candidates in Discord (`❌`) skipped them without prompting for why,
+leaving zero feedback signal. Furthermore, every approval triggered `mine_feedback`, which posted
+noisy "Only X decision(s) logged... need 5" warnings to Discord.
+
+**Root cause:** `on_raw_reaction_add` had no follow-up reason collector for topic candidates, and
+`_log_review_feedback` dispatched `mine_feedback` unconditionally regardless of row count.
+
+**Evidence:** Added `_collect_topic_rejection_reason` with opinion options (duplicate, not
+relevant, old/outdated, poor angle), logged rejections to the `review` worksheet, gated automated
+dispatch on having at least 5 rows, and silenced Discord notifications when below threshold.
+
+**Status: FIXED.**

@@ -394,45 +394,40 @@ def _get_keywords_worksheet():
 # entry" guarantee instead lives in get_brain_notes_tool itself: it only
 # ever reads brain/*.md, never this worksheet -- promoting a pattern found
 # here into a real brain/ entry stays a deliberate, human, file-writing step.
-REVIEW_FEEDBACK_WORKSHEET = "review_feedback_log"
+REVIEW_FEEDBACK_WORKSHEET = "review"
+_REVIEW_FEEDBACK_ALIASES = ("review", "review_feedback_log", "review_feedback", "review feedback")
 _REVIEW_FEEDBACK_HEADERS = ["Timestamp", "Status", "Title", "Quality Score", "Summary", "Reason"]
 _REASON_COLUMN = len(_REVIEW_FEEDBACK_HEADERS)  # 1-indexed, last column
 
 
+def _get_review_worksheet(spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
+    """Finds existing review worksheet using known aliases or creates 'review'."""
+    for name in _REVIEW_FEEDBACK_ALIASES:
+        try:
+            return spreadsheet.worksheet(name)
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+    ws = spreadsheet.add_worksheet(
+        title="review", rows=100, cols=len(_REVIEW_FEEDBACK_HEADERS)
+    )
+    ws.append_row(_REVIEW_FEEDBACK_HEADERS, value_input_option="USER_ENTERED")
+    return ws
+
+
 async def _log_review_feedback(record: dict, status: str, reason: str = "") -> Optional[int]:
     """Appends one row per review decision (Discord ✅/❌ or the chat
-    approval tool) to REVIEW_FEEDBACK_WORKSHEET so approve/disapprove
+    approval tool) to the review worksheet so approve/disapprove
     outcomes aren't lost the moment the reaction is handled. Uses the same
-    retry-on-rate-limit wrapper as add_keyword -- approve/reject reactions
-    can arrive in the same kind of burst that originally caused add_keyword
-    to silently lose topics (see docs/incident_ledger.md E4), so this write
-    needs the same protection from the start rather than waiting for a live
-    incident to prove it.
-
-    `reason` is the WHY behind the decision -- empty by default, since a
-    plain reaction carries none. The chat path (set_post_approval_tool) can
-    supply one directly if the user gave one in their message; the reaction
-    path (on_raw_reaction_add) has none available synchronously and instead
-    follows up afterward via _collect_rejection_reason, which fills this in
-    later using the row_index this function returns. Never fabricate a
-    reason to fill an empty one -- an unexplained decision is honest signal,
-    a made-up explanation is not.
-
-    Returns the 1-indexed row number the entry was written to (so a later
-    reason update can target it precisely), or None if the write failed."""
+    retry-on-rate-limit wrapper as add_keyword.
+    """
     row_index: Optional[int] = None
+    existing_row_count = 0
     try:
         def _append():
-            nonlocal row_index
+            nonlocal row_index, existing_row_count
             client = _get_gspread_client()
             spreadsheet = client.open(SPREADSHEET_NAME)
-            try:
-                worksheet = spreadsheet.worksheet(REVIEW_FEEDBACK_WORKSHEET)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(
-                    title=REVIEW_FEEDBACK_WORKSHEET, rows=100, cols=len(_REVIEW_FEEDBACK_HEADERS)
-                )
-                worksheet.append_row(_REVIEW_FEEDBACK_HEADERS, value_input_option="USER_ENTERED")
+            worksheet = _get_review_worksheet(spreadsheet)
             existing_row_count = len(worksheet.get_all_values())
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             title = str(record.get("Title", "")).strip() or "(untitled)"
@@ -446,19 +441,12 @@ async def _log_review_feedback(record: dict, status: str, reason: str = "") -> O
 
         await _run_with_sheets_retry(_append, what="review feedback log append")
     except Exception:
-        logger.exception("_log_review_feedback: failed to append to review_feedback_log")
+        logger.exception("_log_review_feedback: failed to append to review worksheet")
         return None
 
-    # Per explicit request: after an approval (never a rejection), trigger
-    # mine_feedback automatically instead of requiring a manual command. This
-    # only moves WHEN the pattern search runs -- mine_feedback itself is
-    # unchanged: it still needs _MINE_FEEDBACK_MIN_ROWS real rows before it
-    # attempts anything, and it still only POSTS a candidate to Discord,
-    # never writes to brain/ itself. That review gate stays exactly as it
-    # was; only the trigger became automatic. A dispatch failure here is
-    # logged, never surfaced as an approval failure -- the approval itself
-    # already succeeded above.
-    if status.strip().lower() == "approved":
+    # After an approval (never a rejection), trigger mine_feedback automatically,
+    # but ONLY when we have accumulated at least 5 rows to prevent noisy premature warnings.
+    if status.strip().lower() == "approved" and existing_row_count >= 5:
         try:
             dispatch_workflow("mine_feedback")
         except Exception:
@@ -468,12 +456,12 @@ async def _log_review_feedback(record: dict, status: str, reason: str = "") -> O
 
 
 async def _update_review_feedback_reason(row_index: int, reason: str) -> None:
-    """Fills in the Reason cell for an already-written review_feedback_log
-    row -- used by _collect_rejection_reason once a follow-up reply arrives
-    after the original ❌ reaction (which had no reason available yet)."""
+    """Fills in the Reason cell for an already-written review row -- used by
+    _collect_rejection_reason once a follow-up reply arrives after the
+    original ❌ reaction."""
     def _update():
         client = _get_gspread_client()
-        worksheet = client.open(SPREADSHEET_NAME).worksheet(REVIEW_FEEDBACK_WORKSHEET)
+        worksheet = _get_review_worksheet(client.open(SPREADSHEET_NAME))
         worksheet.update_cell(row_index, _REASON_COLUMN, reason)
 
     try:
@@ -483,15 +471,13 @@ async def _update_review_feedback_reason(row_index: int, reason: str) -> None:
 
 
 async def _collect_rejection_reason(channel, user_id: int, row_index: int, title: str, timeout: float = 300.0) -> None:
-    """Best-effort follow-up after a ❌ reaction: ask why, and if the same
-    user replies in this channel within `timeout` seconds, log it against
-    this row. Runs as a background task (never awaited by the reaction
-    handler itself) so it can't delay or block processing further reactions.
-    Nobody answering is the expected common case, not an error -- a reason
-    is bonus signal on top of an already-successful rejection, never a
-    requirement for it."""
+    """Best-effort follow-up after a ❌ draft reaction: ask for feedback opinion,
+    and if the user replies in this channel within `timeout` seconds, log it against this row."""
     try:
-        await channel.send(f"Why? (optional -- reply here within 5 minutes and I'll log it against **{title}**)")
+        await channel.send(
+            f"Why was this draft rejected? (e.g. **duplicate**, **not relevant**, **old/outdated**, **poor angle**, **too generic**, **factual error**) — "
+            f"reply here within 5 minutes and I'll log it against **{title}**."
+        )
     except Exception:
         logger.exception("_collect_rejection_reason: failed to send prompt")
         return
@@ -509,9 +495,45 @@ async def _collect_rejection_reason(channel, user_id: int, row_index: int, title
         return
     await _update_review_feedback_reason(row_index, reason)
     try:
-        await channel.send("Logged -- thanks, that'll help future drafts on similar topics.")
+        await channel.send(f"Logged rejection reason for **{title}** -- thanks, that will help future drafts!")
     except Exception:
         logger.exception("_collect_rejection_reason: failed to send confirmation")
+
+
+async def _collect_topic_rejection_reason(channel, user_id: int, candidate_topic: str, timeout: float = 300.0) -> None:
+    """Follow-up after a ❌ topic candidate reaction: ask for rejection opinion
+    (duplicate, not relevant, old, etc.) and log it into the review worksheet."""
+    try:
+        await channel.send(
+            f"❌ Skipped topic candidate: **{candidate_topic}**.\n"
+            "Why was this rejected? (e.g. **duplicate**, **not relevant**, **old/outdated**, **poor angle**) — "
+            "reply here within 5 minutes to log feedback."
+        )
+    except Exception:
+        logger.exception("_collect_topic_rejection_reason: failed to send prompt")
+        return
+
+    def _check(m: discord.Message) -> bool:
+        return m.channel.id == channel.id and m.author.id == user_id and not m.author.bot
+
+    reason = ""
+    try:
+        reply = await bot.wait_for("message", check=_check, timeout=timeout)
+        reason = reply.content.strip()
+    except asyncio.TimeoutError:
+        pass
+
+    record = {
+        "Title": candidate_topic,
+        "Quality Score": "",
+        "Summary": "Topic candidate rejected during discovery triage",
+    }
+    await _log_review_feedback(record, "REJECTED_TOPIC", reason=reason)
+    if reason:
+        try:
+            await channel.send(f"Logged feedback for **{candidate_topic}** -- thanks!")
+        except Exception:
+            pass
 
 
 async def set_approval(title: str, status: str) -> Optional[int]:
@@ -1453,7 +1475,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if candidate_topic:
         if emoji == "❌":
             logger.info(f"[reaction] Skipped topic candidate: {candidate_topic!r}")
-            await channel.send(f"❌ Skipped topic candidate: **{candidate_topic}**")
+            asyncio.create_task(_collect_topic_rejection_reason(channel, payload.user_id, candidate_topic))
             return
         duplicate_match = await _check_duplicate_topic(candidate_topic)
         try:

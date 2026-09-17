@@ -222,11 +222,11 @@ class FallbackAgentRunner(AgentRunner):
         """Append one row to model_usage_log worksheet. Non-blocking:
         failures are logged but never raise or break the pipeline."""
         try:
-            from tools.sheet_tool import get_spreadsheet, ensure_worksheet_exists
+            from tools.sheet_tool import get_spreadsheet, ensure_worksheet_exists, resolve_worksheet
             headers = ["Timestamp", "Model", "Agent", "Stage", "Status", "Latency (s)"]
-            ensure_worksheet_exists("model_usage_log", headers)
+            ensure_worksheet_exists("usage logs", headers)
             spreadsheet = get_spreadsheet()
-            worksheet = spreadsheet.worksheet("model_usage_log")
+            worksheet = resolve_worksheet(spreadsheet, "usage logs")
             worksheet.append_row(
                 [
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -239,18 +239,18 @@ class FallbackAgentRunner(AgentRunner):
                 value_input_option="USER_ENTERED",
             )
         except Exception as e:
-            logger.warning(f"model_usage_log append failed (non-fatal): {e}")
+            logger.warning(f"usage logs append failed (non-fatal): {e}")
 
     def _seed_usage_from_sheet(self):
-        """Read today's model_usage_log entries and seed model_usage so
+        """Read today's usage logs entries and seed model_usage so
         quota tracking survives across process restarts (each GitHub Actions
         run starts a fresh process). Called once at __init__ time."""
         try:
-            from tools.sheet_tool import get_spreadsheet, ensure_worksheet_exists
+            from tools.sheet_tool import get_spreadsheet, ensure_worksheet_exists, resolve_worksheet
             headers = ["Timestamp", "Model", "Agent", "Stage", "Status", "Latency (s)"]
-            ensure_worksheet_exists("model_usage_log", headers)
+            ensure_worksheet_exists("usage logs", headers)
             spreadsheet = get_spreadsheet()
-            worksheet = spreadsheet.worksheet("model_usage_log")
+            worksheet = resolve_worksheet(spreadsheet, "usage logs")
             records = worksheet.get_all_records()
             today_str = datetime.now().strftime("%Y-%m-%d")
             counts: Dict[str, int] = {}

@@ -75,21 +75,55 @@ def get_spreadsheet() -> gspread.Spreadsheet:
     return _spreadsheet_cache
 
 
+WORKSHEET_ALIASES: Dict[str, List[str]] = {
+    "freshness sweep": ["freshness sweep", "freshness_sweep", "freshness_log", "freshness"],
+    "freshness_sweep": ["freshness sweep", "freshness_sweep", "freshness_log", "freshness"],
+    "audit": ["audit", "claims_audit", "claims audit"],
+    "claims_audit": ["audit", "claims_audit", "claims audit"],
+    "performance": ["performance", "search_performance", "search performance", "performance_log"],
+    "search_performance": ["performance", "search_performance", "search performance", "performance_log"],
+    "review": ["review", "review_feedback_log", "review_feedback", "review feedback"],
+    "review_feedback_log": ["review", "review_feedback_log", "review_feedback", "review feedback"],
+    "usage logs": ["usage logs", "model_usage_log", "model_usage", "usage_logs", "usage log"],
+    "model_usage_log": ["usage logs", "model_usage_log", "model_usage", "usage_logs", "usage log"],
+}
+
+
+def resolve_worksheet(spreadsheet: gspread.Spreadsheet, worksheet_name: str) -> gspread.Worksheet:
+    """Attempts to find an existing worksheet matching worksheet_name or any
+    known alias (e.g. 'audit' vs 'claims_audit', 'performance' vs 'search_performance',
+    'review' vs 'review_feedback_log', 'freshness sweep' vs 'freshness_sweep',
+    'usage logs' vs 'model_usage_log'). Raises gspread.exceptions.WorksheetNotFound
+    if neither the requested name nor any alias exists."""
+    candidates = [worksheet_name]
+    lowered = worksheet_name.strip().lower()
+    if lowered in WORKSHEET_ALIASES:
+        for alias in WORKSHEET_ALIASES[lowered]:
+            if alias not in candidates:
+                candidates.append(alias)
+    spaced = lowered.replace("_", " ")
+    underscored = lowered.replace(" ", "_")
+    for variant in (spaced, underscored):
+        if variant not in candidates:
+            candidates.append(variant)
+
+    for name in candidates:
+        try:
+            return spreadsheet.worksheet(name)
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+    raise gspread.exceptions.WorksheetNotFound(worksheet_name)
+
+
 def ensure_worksheet_exists(worksheet_name: str, headers: List[str]) -> bool:
-    """Creates worksheet_name (with the given header row) if it doesn't
-    already exist in the spreadsheet. manage_sheet_data's own actions all
-    call spreadsheet.worksheet(worksheet_name) unconditionally before
-    dispatching on `action`, so a missing worksheet fails before any action
-    (including a hypothetical create action) could run -- this is a
-    separate, standalone function for that reason. Self-healing schema,
-    same rationale as scripts/run_stage.py's _ensure_column_header for new
-    columns: no manual Google Sheets setup step required before a new stage
-    that needs its own worksheet (e.g. repurposed_content) can run."""
+    """Creates worksheet_name (with the given header row) if it or an alias doesn't
+    already exist in the spreadsheet. Self-healing schema, supports aliases so both
+    'performance' and 'search_performance' resolve cleanly."""
     try:
         spreadsheet = get_spreadsheet()
         try:
-            spreadsheet.worksheet(worksheet_name)
-            return True  # Already exists.
+            resolve_worksheet(spreadsheet, worksheet_name)
+            return True  # Already exists (as name or alias).
         except gspread.exceptions.WorksheetNotFound:
             pass
         worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=100, cols=max(len(headers), 1))
@@ -301,9 +335,9 @@ def manage_sheet_data(
     while attempt < retries:
         try:
             spreadsheet = get_spreadsheet()
-            # --- Key Change: Open the specific worksheet by name ---
-            worksheet = spreadsheet.worksheet(worksheet_name)
-            # -------------------------------------------------------
+            # --- Open worksheet, resolving aliases if needed ---
+            worksheet = resolve_worksheet(spreadsheet, worksheet_name)
+            # ---------------------------------------------------
 
             logger.debug(f"Performing action '{action}' on worksheet '{worksheet_name}', attempt {attempt + 1}")
 
