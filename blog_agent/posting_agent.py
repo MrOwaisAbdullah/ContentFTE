@@ -11,6 +11,8 @@ import asyncio
 import copy
 from blog_agent.custom_runner import FallbackAgentRunner
 from lib.run_result_utils import run_looks_failed
+# Jev general helpers — category taxonomy Choice + tool-call gate (general SEO pipeline)
+from lib.jev_tools import jev_classify_category_tool, jev_gate_tool_call_tool
 
 
 custom_runner = FallbackAgentRunner()
@@ -97,7 +99,7 @@ preparation_agent = Agent(
       - `TITLE`: Use `Keyword/Topic` or derive a title.
     - `SUMMARY`: Ensure there is a 50–160 character SEO-friendly meta description. If the sheet includes a valid `Summary` (50–160 chars, contains primary keyword), use it. Otherwise, derive a concise meta description (50–160 chars) that includes the primary keyword, accurately summarizes the page, and is suitable for search result snippets.
       - `SLUG`: Create a URL-friendly slug from `Keyword/Topic` (e.g., `brand-consistency-in-social-media`).
-      - `CATEGORIES`: Call `get_existing_categories_tool` FIRST and prefer reusing an existing category name (even if the wording doesn't match your first instinct exactly -- e.g. reuse an existing "AI Agents" rather than inventing "AI Agent Tools" or "AI-Powered Agents" for the same concept) over inventing a new one. Only propose a genuinely new category if none of the existing ones reasonably fit this post's topic. Keep it to 1-3 categories derived from `Keyword/Topic` (e.g., `["Social Media", "Branding"]`). A consistent, reused category set across posts is the entire point -- a different ad hoc label on every post is equivalent to having no categories at all.
+      - `CATEGORIES`: Call `get_existing_categories_tool` FIRST to get existing taxonomy (up to 255 titles). Then call `jev_classify_category_tool` with `keyword_topic=Keyword/Topic` and `existing_categories_json` (JSON string of the titles you just fetched) — Jev Choice (typed, no hallucination) picks which existing category best fits, or signals `propose_new` with low confidence. Prefer `action==reuse` (use that category) over inventing a new one; only propose a genuinely new category if `action==propose_new` (confidence<0.6) and none of the existing ones fit. Keep 1-3 categories; Jev prevents the `"AI Agent Tools"` vs `"AI-Powered Agents"` drift. If Jev returns `fallback==true`, fall back to picking the closest existing by lexical match or keep the prior manual logic, never invent without Jev/tool signal.
       - `CONTENT_WITH_LINKS`: Use `Generated Content`. TITLE is rendered as the page's own H1 above the content -- if `Generated Content` starts with a heading (`#`, `##`, or `###`) that repeats the title, remove that heading line before using it here so the title doesn't appear twice on the page. The content should start directly with the introduction, not a heading that restates the title.
       - `IMAGE_URL`: Use the `image_url` extracted from the `get_blog_image_tool` response (NOT a default/example URL).
       - `ALT_TEXT`: Use the `alt_text` extracted from the `get_blog_image_tool` response.
@@ -149,7 +151,7 @@ preparation_agent = Agent(
     - **IMPORTANT**: Do NOT use example URLs like `https://example.com/ai-smart-glasses.jpg`.
     - **IMPORTANT**: The `IMAGE_URL` field in your output MUST contain the actual path returned by the tool.
     """,
-    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, get_stock_image_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
+    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, jev_classify_category_tool, get_stock_image_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.5),
@@ -184,7 +186,8 @@ posting_agent = Agent(
     ## CRITICAL STEPS:
     1. FIND the data between === markers
     2. PARSE each field (TITLE, SUMMARY, CONTENT_WITH_LINKS, etc.)
-     3. Validate SUMMARY and IMMEDIATELY call `post_to_sanity_tool` with these values:
+    2b. **Jev gate before risky publish (F2, 70-500ms):** Call `jev_gate_tool_call` with `tool_name="post_to_sanity_tool"`, `tool_args_json` = JSON string of `{title, slug, summary length, categories}` and `user_request="publish approved blog post to Sanity"`. Returns `{action: allow|refuse|ask_human, confidence, supported}`. If `action==refuse` and `confidence>=0.85`, do NOT call `post_to_sanity_tool` — return error JSON instead. If `ask_human` with high confidence, log warning but still publish (human already approved via Discord ✅). On `fallback==true` (JevError/timeout), proceed to publish as before — never block on Jev outage. Log `action/confidence/usage` for cost accounting.
+     3. Validate SUMMARY and IMMEDIATELY call `post_to_sanity_tool` with these values (only after Jev gate above allows it):
          - Before posting: ensure `SUMMARY` is SEO-friendly and between 50 and 160 characters and includes the primary keyword. If the extracted `SUMMARY` does not meet these constraints, generate or trim a concise meta description that fits (50–160 chars) and accurately summarizes the page.
          - title: the extracted TITLE
          - summary: the validated or generated SUMMARY
@@ -219,7 +222,7 @@ posting_agent = Agent(
     - After posting succeeds, do steps 4 and 5 to update sheets
     - If you skip calling post_to_sanity_tool, you have completely failed
     """,
-    tools=[post_to_sanity_tool, manage_sheet_data_tool],
+    tools=[post_to_sanity_tool, manage_sheet_data_tool, jev_gate_tool_call_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
 )

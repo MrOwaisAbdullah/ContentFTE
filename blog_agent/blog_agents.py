@@ -9,6 +9,17 @@ from tools.search_tools import web_search_tool, tavily_search_tool, tavily_extra
 from agents import enable_verbose_stdout_logging
 from blog_agent.hooks import MyAgentHooks
 from typing import Dict, Any
+# Jev general helpers — batched decision lane (Context7 + Tavily verified)
+from lib.jev_tools import (
+    jev_score_draft_quality_tool,
+    jev_classify_category_tool,
+    jev_gate_blog_topic_tool,
+    jev_score_brief_quality_tool,
+    jev_verify_claim_tool,
+    jev_score_title_hook_tool,
+    jev_check_pii_tool,
+    jev_rank_internal_links_tool,
+)
 
 # enable_verbose_stdout_logging()
 
@@ -148,9 +159,14 @@ content_evaluation_agent = Agent(
     "errors": [],
     "warnings": []
     }
-    ```
-    """,
-    tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool],
+     **Jev cheap pre-checks (use before expensive Tavily where possible):**
+     - `jev_verify_claim(claim, excerpt)` — Noul per-claim verification (70ms) to map each factual claim to excerpt before full `tavily_extract_tool` crawl; fallback `supported==0` → treat as UNVERIFIED.
+     - `jev_score_title_hook(title, summary, intent)` — Score hook_strength `["Generic label", "Usable but flat", "Strong: specific angle matching intent"]`; `ready==false` means generic label before deeper SEO scoring.
+     - `jev_check_pii(text)` — Noul contains_pii pre-check before sending content to external tools.
+
+     ```
+     """,
+    tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
     # Cross-provider evaluation: DeepSeek evaluates Gemini-written content
     # and vice versa, preventing same-provider bias. DeepSeek V4 Flash is
     # pay-per-token (~$0.07/M) -- negligible for the few evaluation calls
@@ -274,15 +290,23 @@ content_generator_agent = Agent(
         - Maximize structured data opportunities with bullet points and numbered lists
         - Optimize for featured snippets by including clear, concise answers to common questions  
         - Focus on direct, concise answers to user questions throughout the content
-    - **Link Integration**:
+    - **Link Integration (with Jev relevance + diversity gate — fixes same-type repetition):**
         - Internal links: Use descriptive anchor text (e.g., "learn more about social media automation" not "click here")
         - External links: Use descriptive anchor text (e.g., "according to industry research" not "source")
         - Never use generic link text like "click here," "read more," or "link"
         - Integrate links naturally within the content, not in a separate "Related Posts" section
         - **CRITICAL -- internal links must be real, not invented**: Every internal link MUST come from an actual entry `fetch_internal_links_tool` returned in this run (each entry's `slug` field is already the full absolute URL, e.g. `https://owaisabdullah.dev/blog/ai-agents-automations-and-agentic-ai-whats-really-different` -- use it exactly as returned). NEVER invent a plausible-sounding internal link, guess a slug, or reuse a slug/title from an earlier example in these instructions -- those are illustrative placeholders, not real posts, and linking to a URL with no matching post is a dead link on a live site. If `fetch_internal_links_tool` returns no results (or you haven't called it), write the sentence WITHOUT an internal link rather than fabricate one. Never use a bare relative path like `/blog/some-slug` -- always the full `https://owaisabdullah.dev/blog/...` URL.
+        - **After `fetch_internal_links_tool` (returns up to 3 links ordered by `_createdAt desc`), call `jev_rank_internal_links_tool` with `section_text` = the H2 section you're about to write + `links_json` = JSON string of the fetch results + `recent_links_json` = JSON string of recently used slugs (from `published_posts` or last 10 links you inserted; if unknown, pass `[]`). It returns `{ranked: [{slug, title, is_relevant, noul, confidence, is_recent_repeat, adjusted_noul}]}` where `adjusted_noul = noul - 0.15 if is_recent_repeat else noul`. **Pick top 1 per section by `is_relevant` primary + `adjusted_noul` secondary (max 2-3 total per post)** — this is soft penalty: recent 0.95→0.80 still beats non-recent 0.70, but recent 0.75→0.60 loses to non-recent 0.70. So **penalized recent is deprioritized, not blocked** — the best match still wins if gap is large. This replaces the old `_createdAt` same-type bias (newest 3×) with section-level relevance + soft diversity — `fetch` orders by recency, **Jev judges contextual fit** (`title+summary` vs `section_text`, `noul≥0.65, conf≥0.5`). On `fallback==true`, keep original fetch order but still rank by recency penalty.
 
-    5. **Evaluate and Iterate:**
-    - Use `get_evaluation_feedback` to evaluate content. ALWAYS include your current Title and Summary in this call, not just the body -- the evaluator scores them as the actual SERP snippet (curiosity/hook, clear value proposition, intent match, no AI-tell openers), and can't do that if they're not part of what you send it:
+    5. **Jev Verified Cascade — cheap gate before expensive evaluator (70-500ms, $0.042/MTok, typed) — includes stack/about-me alignment:**
+    - BEFORE calling `get_evaluation_feedback`, call `jev_score_draft_quality_tool` with your current draft, `facts_json` (JSON string of `["excerpt 1", "excerpt 2", ...]` — the source excerpts you fact-checked against, or `["No facts provided"]` if none), **and `live_profile_json`** (JSON string of `live_profile` from Step 2 `get_author_context_tool`: `{about_me: about (one-line bio, e.g. "Spec-Driven Developer..."), summary, skills: string[], current_roles}` — this is `tools.py:185` `live_profile` vs fallback static `tagline/proof_points`; see `AUTHOR_PROFILE_API_URL` `https://owaisabdullah.dev/api/profile`). It returns `{supported, on_brand, stack_aligned, score, publish_ready, usage, fallback}` where `publish_ready = supported>=0.7 && score>=1.5 && on_brand>=0.6 && stack_aligned>=0.7`.
+    - `stack_aligned` checks: does `draft`'s tech mentions (frameworks, DB, infra) match only items in `live_profile.skills` + `summary` core stack (TypeScript/Next.js/Python/Claude Code/OpenAI SDK/PostgreSQL/pgvector/R2/Docker) and `about_me` — not invented stacks like generic WordPress/PHP when live is Next.js? Fallback static (`tools.py:252` `React/Next.js/Python/Sanity/WordPress`) is stale; if live fetch failed, the tool still returns fallback but will be low, flagging for reviewer. **About me clearly:** `live_profile.about_me` (`live_profile.about`) is the one-line bio to keep tone on-brand; `summary` is the longer paragraph; `current_roles` is `["Title at Company" for Present]`.
+    - If `publish_ready==true`, you MAY skip `get_evaluation_feedback` for this iteration (saves DeepSeek ~$0.0003-0.0008 and 2-5s) and treat the draft as publish-ready — log the Jev `usage` and proceed to Step 6 (Return). This is the Jev Verified Cascade pattern (references/patterns.md, cookbook `evaluate-and-optimize/jev-verified-cascade` verified via Context7 `/openrouterteam/docs`).
+    - If `publish_ready==false` or `fallback==true`, still call `get_evaluation_feedback` but include Jev's `supported/on_brand/stack_aligned/score` in your feedback analysis to narrow the rewrite (e.g., if `stack_aligned` low, fix stack mentions to match `live_profile.skills`; if `supported` low, focus rewrite on factual claims; if `on_brand` low, fix tone).
+    - On any `JevError`/timeout, the tool returns `publish_ready==false, fallback==true` — never block, always fall through to the full evaluator.
+
+    5b. **Evaluate and Iterate (expensive, gated):**
+    - Use `get_evaluation_feedback` to evaluate content (only if Jev gate did not already mark publish_ready). ALWAYS include your current Title and Summary in this call, not just the body -- the evaluator scores them as the actual SERP snippet (curiosity/hook, clear value proposition, intent match, no AI-tell openers), and can't do that if they're not part of what you send it:
         - Readability (30%): Short sentences, conversational tone, mobile-friendly (Flesch-Kincaid 60–70, <5 grammar errors).
         - Relevance (30%): Aligns with user intent, keywords, and subtopics; all claims verified.
         - SEO (20%): Word count (1500–2500), FAQs (5–7 questions), keyword usage (2–3 per keyword), natural link integration, AND whether Title/Summary would genuinely earn a click rather than reading as a generic label.
@@ -316,15 +340,16 @@ content_generator_agent = Agent(
     - Use fallbacks if Tavily tools fail.
     - If `get_evaluation_feedback` tool is unavailable or fails after retries, skip evaluation and proceed directly to returning the Output JSON below with `"Claims Notes": ""`.
 
-    **Tools:**
+     **Tools:**
     - `manage_sheet_data_tool`: Read the next ungenerated brief from `content_briefs` (Step 1) only -- no longer used for saving; the caller persists your output after this run completes.
     - `get_author_context_tool`: Retrieve author context with tone, emojis, banned words.
     - `get_brain_notes_tool`: Retrieve the owner's real first-hand stories/opinions/numbers for this topic, if any exist.
     - `tavily_search_tool`: Source user questions (1 credit/query).
     - `tavily_extract_tool`: Fact-check content (1 credit/5 URLs).  
     - `tavily_crawl_tool`: Deep content exploration (1 credit/5 URLs).  
-    - `web_search_tool` (fallback): Web content for fact-checking.  
-    - `get_evaluation_feedback`: Evaluate content quality (readability, relevance, SEO, user value).  
+    - `web_search_tool` (fallback): Web content for fact-checking.
+    - `jev_score_draft_quality_tool` (Jev, 70-500ms): Batched Noul fact_supported + Noul on_brand + Score quality — call BEFORE get_evaluation_feedback per Step 5 (Verified Cascade); publish_ready gates the expensive evaluator.
+    - `get_evaluation_feedback`: Evaluate content quality (readability, relevance, SEO, user value) — only on `jev publish_ready==false`.  
     - `fetch_internal_links_tool`: Fetch internal links for natural integration (LIMITED TO 3 USES PER RUN - use strategically).
     **Output (JSON in Markdown):**  
 
@@ -344,7 +369,7 @@ content_generator_agent = Agent(
     "warnings": []
     }
     """,
-    tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
+    tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_rank_internal_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
     handoff_description="Use the given brief to create a high quality seo friendly Blog content, and use evaluation tools for feedback and improve the content using it.",
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
@@ -687,15 +712,17 @@ brief_agent = Agent(
          - Suggest natural link placements throughout (format as [Link Text](URL) for later integration)
          - Follow writing guidelines: no colons in headings, short paragraphs, natural tone
     
-    4. Generate 5-7 FAQs in JSON format:
-       - Use `tavily_search_tool` with query "People Also Ask [Keyword/Topic]" or `tavily_extract_tool` on source URLs
-       - Questions should be conversational and answers <50 words for AI Overviews
-       - Validate answers using `tavily_extract_tool` or `tavily_crawl_tool`
-    
-    5. Verify source titles using `tavily_extract_tool` on Source URLs
-       - Format: "Title: URL"
-    
-    6. Save to `content_briefs` worksheet using `manage_sheet_data_tool` with action="append_row" to save the following in order:
+     4. Generate 5-7 FAQs in JSON format:
+        - Use `tavily_search_tool` with query "People Also Ask [Keyword/Topic]" or `tavily_extract_tool` on source URLs
+        - Questions should be conversational and answers <50 words for AI Overviews
+        - Validate answers using `tavily_extract_tool` or `tavily_crawl_tool`
+     
+     5. Verify source titles using `tavily_extract_tool` on Source URLs
+        - Format: "Title: URL"
+
+     5b. **Jev brief completeness gate (C1, 70-500ms):** Call `jev_score_brief_quality` with `brief_content` and `faqs_json` BEFORE saving. Returns `{score, ready, usage}` where `ready = score>=1.5` means H1 + 4-6 H2 + 5-7 FAQs + links + summary all present. If `ready==false`, improve the brief (add missing H2, fix FAQ count, ensure 50-160 char summary with keyword) then re-check; on `fallback==true` proceed as before. Never block saving on JevError — log and continue.
+     
+     6. Save to `content_briefs` worksheet using `manage_sheet_data_tool` with action="append_row" to save the following in order:
        - Keyword/Topic (from the research_data row)
        - Brief Content (Markdown with H1, introduction, H2 headings, link suggestions)
        - FAQs (JSON string)
@@ -707,7 +734,7 @@ brief_agent = Agent(
     
     **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
     """,
-    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool],
+    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.8),

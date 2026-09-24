@@ -18,7 +18,7 @@ RUN useradd --create-home --uid 1000 botuser
 COPY requirements.txt ./
 RUN uv pip install --system --no-cache -r requirements.txt
 
-COPY bot.py ./
+COPY bot.py jev_helper.py ./
 
 USER botuser
 

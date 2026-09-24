@@ -11,6 +11,9 @@ from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 from tools.sheet_tool import manage_sheet_data, get_keyword_tool, release_keyword_claim, clear_keyword_claim
 from blog_agent.custom_runner import FallbackAgentRunner
 from lib.run_result_utils import run_looks_failed as _run_looks_failed, _JSON_FENCE_RE
+# Jev general helpers — Decision lane for bounded judgments (Tavily/Context7 verified)
+from lib.jev_helpers import gate_blog_topic, filter_relevant_excerpts
+from lib.jev_tools import jev_is_relevant_tool, jev_gate_blog_topic_tool
 
 
 # Configure logging
@@ -207,8 +210,15 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         - `tavily_crawl_tool`: Explore website structure (1 credit/1 URLs).  
         - `fetch_url_title`: Fetch URL titles and snippets.  
         - SerpApi `web_search_tool`(fallback): Keyword data.  
+        - `jev_gate_blog_topic_tool` (Jev): Batch needs_research + intent + trend — call FIRST before deep Tavily to save credits on evergreen/low-need topics.
+        - `jev_is_relevant_tool` (Jev): Noul is_relevant ×N batched — call AFTER tavily_search with `excerpts_json` (JSON of {id, excerpt} from search content) to filter before tavily_extract; keep only `noul>=0.65`, fallback returns all.
+
+        **Jev Guidance (replace heuristic thresholds with calibrated decisions):**
+        - BEFORE Tavily extract/crawl: call `jev_gate_blog_topic_tool(topic, brief="")` to get `needs_research` + `intent` (informational/transactional/navigational/comparison) + `trend`. If `needs_research==false` for this evergreen topic, skip deep Tavily and summarize from search snippets alone.
+        - AFTER Tavily search: build `excerpts_json` from the 5 hit `content` fields (each ~800 chars, capped to 10) and call `jev_is_relevant_tool(question=topic, excerpts_json)` — keep only relevant hits for `tavily_extract_tool`. This replaces the old `score>0.7` heuristic and saves extract credits. On `fallback==True`, keep all hits.
+        - Classify intent via the Jev `intent` from the first call, not via LLM prompt.
         """,
-        tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_url_title],
+        tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_url_title, jev_gate_blog_topic_tool, jev_is_relevant_tool],
         hooks=MyAgentHooks(),
         model=custom_runner.get_model_by_name("gemini-flash-latest"),
         model_settings=ModelSettings(temperature=0.5),
@@ -309,11 +319,28 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         logger.info("Triage Agent found no available keyword; skipping research this run.")
         return {"status": "no_available_keywords", "message": "No available keywords found in ContentSpark_Keywords."}
 
+    # --- Jev gate: needs_research + intent + trend (batched, 70-500ms, $0.042/MTok) ---
+    # General SEO Blog Agent pattern: batch 3 judgments before expensive Tavily.
+    # Calibrated, fallback-safe — on JevError returns needs_research=True, intent=informational (never blocks).
+    # This replaces heuristic score>0.7 threshold and LLM intent prompt with typed gate.
+    jev_gate = None
+    try:
+        jev_gate = await gate_blog_topic(input_string, brief="")
+        logger.info(f"Jev gate_blog_topic: needs_research={jev_gate['needs_research']} intent={jev_gate['intent']} trend={jev_gate['trend']:.2f} fallback={jev_gate['fallback']} usage={jev_gate.get('usage')}")
+    except Exception as e:
+        logger.warning(f"Jev gate_blog_topic failed (fallback to research): {e}")
+        jev_gate = {"needs_research": True, "intent": "informational", "trend": 0.0, "fallback": True}
+
     # Step 2: For now, always use the Researcher Agent regardless of input type
     # (youtube_research_agent is commented out)
     research_agent = researcher_agent
-    # Add context to make it clear this is the research subject
-    research_input = f"This is the keyword or URL to research: {input_string}\n\nPlease conduct thorough research on this topic and provide detailed findings."
+    # Add context to make it clear this is the research subject + enrich with Jev intent
+    intent_hint = f" (Jev intent: {jev_gate['intent']}, trend: {jev_gate['trend']:.2f})" if jev_gate else ""
+    research_input = (
+        f"This is the keyword or URL to research: {input_string}{intent_hint}\n\n"
+        f"Please conduct thorough research on this topic and provide detailed findings."
+        + ("" if jev_gate and jev_gate["needs_research"] else "\n\nNote: Jev gate indicates this evergreen topic may not need deep citations — focus on search snippets and common knowledge; skip heavy Tavily extract/crawl if search snippets suffice.")
+    )
 
     # Step 3: Run the appropriate Research Agent with fallback logic and retry
     research_result = None
@@ -523,4 +550,34 @@ async def run_topic_discovery_workflow(max_retries: int = 2, max_turns: int = 20
     candidates = parsed.get("candidates", []) if isinstance(parsed, dict) else []
     if not candidates:
         return {"status": "no_candidates_found", "candidates": []}
+
+    # --- A3 Jev trend sorting (general SEO pipeline) ---
+    # Sort candidates with trend Score so "Trending now" surfaces first in Discord, evergreen last.
+    # Batched via gate_blog_topic (needs_research+intent+trend in 1 call per candidate) — 70-500ms each.
+    # Fallback on JevError keeps original order; never blocks.
+    try:
+        async def _score_candidate(c):
+            topic = str(c.get("topic", "")).strip()
+            if not topic:
+                return (c, 0.0)
+            gate = await gate_blog_topic(topic, brief=str(c.get("rationale", ""))[:500])
+            # trend Score: 0=Evergreen,1=Seasonal,2=Trending → higher = more timely
+            return (c, float(gate.get("trend", 0.0)))
+
+        # Gather with limited concurrency to avoid hammering Decisions API
+        scored = []
+        for cand in candidates:
+            try:
+                _, trend = await _score_candidate(cand)
+                scored.append((cand, trend))
+            except Exception as e:
+                logger.warning(f"Jev trend scoring fallback for '{cand.get('topic','')[:50]}': {e}")
+                scored.append((cand, 0.0))
+        # Stable sort: trending (2) first, then seasonal (1), then evergreen (0)
+        scored.sort(key=lambda x: x[1], reverse=True)
+        candidates = [c for c, _ in scored]
+        logger.info(f"Jev trend sorting: {[ (c.get('topic','')[:40], f'{t:.2f}') for c,t in scored ]}")
+    except Exception as e:
+        logger.warning(f"Jev trend sorting overall fallback (keep original order): {e}")
+
     return {"status": "success", "candidates": candidates}

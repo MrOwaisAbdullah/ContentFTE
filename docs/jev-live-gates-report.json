@@ -1,0 +1,60 @@
+{
+  "gate": {
+    "needs_research": true,
+    "intent": "comparison",
+    "trend": 1.11,
+    "fallback": false,
+    "latency_ms": 2009.1,
+    "usage": {
+      "input_tokens": 498,
+      "output_tokens": 86,
+      "cost": 2.0916e-05
+    }
+  },
+  "filter": {
+    "kept": [
+      "e2",
+      "e3"
+    ],
+    "fallback": false,
+    "latency_ms": 1387.0
+  },
+  "quality": {
+    "supported": 0.19,
+    "on_brand": 0.75,
+    "stack_aligned": 0.93,
+    "score": 1.03,
+    "publish_ready": false,
+    "fallback": false,
+    "latency_ms": 1225.6
+  },
+  "category": {
+    "action": "reuse",
+    "category": "Vector DBs",
+    "confidence": 1.0,
+    "fallback": false,
+    "latency_ms": 1157.8
+  },
+  "links": {
+    "top": [
+      "pgvector-vs-pinecone",
+      "claude-code-hooks",
+      "docker-node-size"
+    ],
+    "fallback": false,
+    "latency_ms": 1207.3
+  },
+  "human": {
+    "priority": 1.9,
+    "is_safe": true,
+    "needs_update": true,
+    "fallback": false,
+    "latency_ms": 1166.7
+  },
+  "choice_dup": {
+    "matched": "Choosing a vector database in 2026",
+    "conf": 0.72,
+    "fallback": false,
+    "latency_ms": 1426.8
+  }
+}

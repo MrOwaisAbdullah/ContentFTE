@@ -107,6 +107,14 @@ class FallbackAgentRunner(AgentRunner):
         # Temporary per-model unavailability tracking
         self.provider_unavailable_until = {m["name"]: None for m in self.LLM_MODELS}
 
+        # --- Jev System One — not in LLM fallback chain, but tracked for cost/latency accounting (G1) ---
+        # General SEO pipeline win: Jev handles ~30-40 classifier/gate calls/day at 70-500ms vs LLM 400-2000ms.
+        # Tracking here lets _sort_models_by_performance reserve Gemini quota for generation and
+        # lets dashboards (model_usage_log sheet) show Jev spend separately. See lib/jev.py.
+        self.jev_stats = {"success_count": 0, "error_count": 0, "avg_response_time": 0.0, "total_cost": 0.0, "total_input_tokens": 0}
+        self.jev_usage = 0
+        self.jev_rpm_timestamps: list = []
+
         # Seed model_usage from today's model_usage_log sheet entries so
         # quota tracking survives across process restarts (each GitHub Actions
         # run starts a fresh process with in-memory counters at zero).
@@ -472,6 +480,35 @@ class FallbackAgentRunner(AgentRunner):
             stats["avg_response_time"] = (stats["avg_response_time"] * total_requests + response_time) / (total_requests + 1)
             
         print(f"[Stats] Model {model_name}: Success rate={(stats['success_count']/(stats['success_count']+stats['error_count'])):.2f}, Avg response time={stats['avg_response_time']:.2f}s")
+
+    async def record_jev_result(self, success: bool, latency: float, cost: float = 0.0, input_tokens: int = 0):
+        """Record Jev Decisions API result for G1 cost/latency accounting — call from lib/jev.py callers."""
+        # RPM sliding window
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=60)
+        self.jev_rpm_timestamps = [ts for ts in self.jev_rpm_timestamps if ts > cutoff]
+        self.jev_rpm_timestamps.append(now)
+        self.jev_usage += 1
+        stats = self.jev_stats
+        total = stats["success_count"] + stats["error_count"]
+        if success:
+            stats["success_count"] += 1
+            stats["total_cost"] += cost
+            stats["total_input_tokens"] += input_tokens
+        else:
+            stats["error_count"] += 1
+        if total == 0:
+            stats["avg_response_time"] = latency
+        else:
+            stats["avg_response_time"] = (stats["avg_response_time"] * total + latency) / (total + 1)
+        print(f"[Jev Stats] success={success} latency={latency:.2f}s cost=${cost:.6f} tokens={input_tokens} avg={stats['avg_response_time']:.2f}s total_cost=${stats['total_cost']:.5f}")
+
+    async def is_jev_available(self):
+        """Check Jev RPM (60/min) — quota is not per-day like Gemini, but RPM still matters for 70-500ms calls."""
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=60)
+        self.jev_rpm_timestamps = [ts for ts in self.jev_rpm_timestamps if ts > cutoff]
+        return len(self.jev_rpm_timestamps) < 60
 
     async def _execute_agent_run(self, agent, input_data, context=None, max_turns=15, hooks=None, session=None):
         """Helper wrapper that actually invokes the parent AgentRunner.run.

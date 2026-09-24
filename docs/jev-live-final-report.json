@@ -1,0 +1,400 @@
+{
+  "pairing": {
+    "n": 20,
+    "choice_fallbacks": 0,
+    "noul_fallbacks": 0,
+    "noul_null_conf": 20,
+    "acc": {
+      "choice_0_65": {
+        "correct": 15,
+        "accuracy": 0.75,
+        "precision": 0.667,
+        "recall": 0.889,
+        "f1": 0.762,
+        "tp": 8,
+        "fp": 4,
+        "fn": 1
+      },
+      "choice_0_8": {
+        "correct": 16,
+        "accuracy": 0.8,
+        "precision": 0.727,
+        "recall": 0.889,
+        "f1": 0.8,
+        "tp": 8,
+        "fp": 3,
+        "fn": 1
+      },
+      "noul_0_6": {
+        "correct": 17,
+        "accuracy": 0.85,
+        "precision": 1.0,
+        "recall": 0.667,
+        "f1": 0.8,
+        "tp": 6,
+        "fp": 0,
+        "fn": 3
+      }
+    },
+    "choice_vs_noul_agreement": "15/20",
+    "rows": [
+      {
+        "i": 1,
+        "kind": "exact_dup",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.99,
+        "choice_fallback": false,
+        "noul": 0.85,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 2,
+        "kind": "same_story",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.99,
+        "choice_fallback": false,
+        "noul": 0.55,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 3,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.57,
+        "choice_fallback": false,
+        "noul": 0.17,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 4,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.96,
+        "choice_fallback": false,
+        "noul": 0.47,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 5,
+        "kind": "same_story",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.98,
+        "choice_fallback": false,
+        "noul": 0.62,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 6,
+        "kind": "unrelated",
+        "truth_dup": false,
+        "choice_raw": false,
+        "choice_conf": 0.6,
+        "choice_fallback": false,
+        "noul": 0.13,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 7,
+        "kind": "exact_dup",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 1.0,
+        "choice_fallback": false,
+        "noul": 0.87,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 8,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": false,
+        "choice_conf": 0.95,
+        "choice_fallback": false,
+        "noul": 0.09,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 9,
+        "kind": "unrelated",
+        "truth_dup": false,
+        "choice_raw": false,
+        "choice_conf": 0.88,
+        "choice_fallback": false,
+        "noul": 0.1,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 10,
+        "kind": "same_story",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.92,
+        "choice_fallback": false,
+        "noul": 0.25,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 11,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.95,
+        "choice_fallback": false,
+        "noul": 0.22,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 12,
+        "kind": "unrelated",
+        "truth_dup": false,
+        "choice_raw": false,
+        "choice_conf": 0.88,
+        "choice_fallback": false,
+        "noul": 0.04,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 13,
+        "kind": "exact_dup",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.99,
+        "choice_fallback": false,
+        "noul": 0.63,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 14,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.56,
+        "choice_fallback": false,
+        "noul": 0.18,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 15,
+        "kind": "same_story",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.52,
+        "choice_fallback": false,
+        "noul": 0.16,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 16,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.91,
+        "choice_fallback": false,
+        "noul": 0.25,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 17,
+        "kind": "exact_dup",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.99,
+        "choice_fallback": false,
+        "noul": 0.77,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 18,
+        "kind": "unrelated",
+        "truth_dup": false,
+        "choice_raw": false,
+        "choice_conf": 0.85,
+        "choice_fallback": false,
+        "noul": 0.06,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": false,
+        "choice_0_8": false
+      },
+      {
+        "i": 19,
+        "kind": "same_story",
+        "truth_dup": true,
+        "choice_raw": true,
+        "choice_conf": 0.99,
+        "choice_fallback": false,
+        "noul": 0.69,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": true,
+        "choice_0_65": true,
+        "choice_0_8": true
+      },
+      {
+        "i": 20,
+        "kind": "same_broad",
+        "truth_dup": false,
+        "choice_raw": true,
+        "choice_conf": 0.75,
+        "choice_fallback": false,
+        "noul": 0.25,
+        "noul_conf": 0.0,
+        "noul_fallback": false,
+        "noul_0_6": false,
+        "choice_0_65": true,
+        "choice_0_8": false
+      }
+    ]
+  },
+  "forced_failures": {
+    "bad_key_401": {
+      "gate_fallback": true,
+      "gate_needs_research": true,
+      "gate_intent": "informational",
+      "noul_fallback": true,
+      "noul_is_dup": false,
+      "choice_fallback": true,
+      "choice_matched": null
+    },
+    "invalid_model_400": {
+      "raised": true,
+      "type": "JevError",
+      "status": 400,
+      "message": "Jev API error 400: {\"error\":{\"message\":\"Model typesafe/does-not-exist does not exist\",\"code\":400}}"
+    },
+    "forced_timeout": {
+      "raised": true,
+      "type": "JevError",
+      "latency_ms": 1044.2,
+      "message": "Jev request timed out after 1ms: "
+    },
+    "empty_questions": {
+      "raised": true,
+      "type": "JevError",
+      "message": "questions must be non-empty mapping"
+    },
+    "score_one_criterion": {
+      "raised": true,
+      "type": "JevError",
+      "message": "Score question 'bad' requires at least 2 criteria entries"
+    }
+  },
+  "bot_sync": {
+    "timeout_ms_default": 5000,
+    "rows": [
+      {
+        "candidate": "pgvector vs Pinecone for content recommendation search",
+        "truth_dup": true,
+        "matched": "pgvector vs Pinecone for content recommendation search",
+        "fallback": false,
+        "correct": true,
+        "latency_ms": 514.3,
+        "input_tokens": 964,
+        "cost": 4.0488e-05
+      },
+      {
+        "candidate": "Supabase vs Firebase for indie SaaS backends",
+        "truth_dup": false,
+        "matched": null,
+        "fallback": false,
+        "correct": true,
+        "latency_ms": 401.4,
+        "input_tokens": 964,
+        "cost": 4.0488e-05
+      },
+      {
+        "candidate": "Dockerfile best practices for long-running Node bots",
+        "truth_dup": true,
+        "matched": "Docker multi-stage builds for Node.js blog agents",
+        "fallback": false,
+        "correct": true,
+        "latency_ms": 507.2,
+        "input_tokens": 964,
+        "cost": 4.0488e-05
+      }
+    ],
+    "correct": 3,
+    "n": 3,
+    "fallbacks": 0,
+    "bad_key_fallback": {
+      "matched": null,
+      "raw": null,
+      "fallback": true,
+      "never_raised": true
+    }
+  }
+}

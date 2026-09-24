@@ -43,6 +43,11 @@ from typing import List, Optional
 import discord
 import gspread
 import requests
+# Jev helper — isolated copy (see jev_helper.py + lib/jev.py Phase 0). Replaces DeepSeek LLM for bounded judgments.
+try:
+    import jev_helper  # type: ignore
+except ImportError:
+    jev_helper = None  # fallback to old LLM path if helper missing
 from agents import (
     Agent,
     AgentHooks,
@@ -621,6 +626,23 @@ async def _check_duplicate_topic(candidate: str) -> Optional[str]:
     # and this only needs to catch genuinely recent overlap, not every topic
     # ever queued.
     existing = existing[-300:]
+
+    # --- Primary: Jev Choice (70-500ms, $0.042/MTok, typed, no hallucination) ---
+    # Uses isolated jev_helper (requests sync in thread to avoid blocking event loop).
+    # Falls back to DeepSeek LLM only if Jev helper missing or Jev explicitly fallback.
+    if jev_helper is not None and OPENROUTER_API_KEY:
+        try:
+            # Offload sync requests call to thread to keep bot event loop responsive
+            matched, raw, is_fallback = await asyncio.to_thread(jev_helper.find_duplicate_topic, candidate, existing)
+            if not is_fallback:
+                if matched:
+                    logger.info(f"_check_duplicate_topic: Jev matched '{matched}' (choice, fast path)")
+                else:
+                    logger.info(f"_check_duplicate_topic: Jev no duplicate (choice)")
+                return matched  # None or matched string — advisory, never blocking
+            logger.warning("_check_duplicate_topic: Jev fallback, trying LLM")
+        except Exception as e:
+            logger.warning(f"_check_duplicate_topic: Jev error, trying LLM: {e}")
 
     client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
     prompt = (
@@ -1696,6 +1718,50 @@ async def on_message(message: discord.Message):
     question = question.strip()
     if not question:
         question = "What's the current pipeline status? Give me a quick overview."
+
+    # --- Jev router (70-500ms, typed) — gate before expensive DeepSeek LLM ---
+    # Saves LLM cost on frequent status/seo queries that have deterministic answers.
+    # General SEO Blog Agent pattern: Choice greeting/status/seo/prioritize/trigger/open_chat (SKILL.md).
+    if jev_helper is not None and OPENROUTER_API_KEY:
+        try:
+            def _classify():
+                return jev_helper.call_jev_sync(
+                    state={"message": question},
+                    questions={
+                        "classification": {
+                            "type": "choice",
+                            "instructions": "Classify this Discord message about the SEO blog pipeline.",
+                            "criteria": {
+                                "greeting": "Social pleasantries — hi, hello, thanks, bye",
+                                "status_query": "Asking for pipeline status — how many keywords queued, briefs pending, posts awaiting review, published counts, what's currently queued/pending",
+                                "seo_report": "Asking for SEO report — search performance, rankings, traffic, clicks, impressions, Search Console data",
+                                "prioritize_topic": "Asking to prioritize, bump, or run a specific topic/keyword next",
+                                "trigger_stage": "Asking to trigger/run a specific pipeline stage (research, brief, content, post, discover_topics)",
+                                "open_chat": "Open-ended chat, brainstorming, advice, discussion, or complex question needing LLM synthesis",
+                            },
+                        }
+                    },
+                )
+            data = await asyncio.to_thread(_classify)
+            ans = data["answers"]["classification"]
+            choice = str(ans.get("choice", "open_chat"))
+            conf = float(ans.get("confidence", 0) or 0)
+            logger.info(f"Jev bot router: '{question[:60]}' → {choice} conf={conf:.2f}")
+            # High-confidence deterministic shortcuts — never hallucinate, typed branch.
+            if choice == "status_query" and conf >= 0.6:
+                status = gather_pipeline_status()
+                reply = format_status_report(status)
+                await _send_chunked(message.channel, reply)
+                await bot.process_commands(message)
+                return
+            if choice == "seo_report" and conf >= 0.6:
+                reply = _build_seo_report()
+                await _send_chunked(message.channel, reply)
+                await bot.process_commands(message)
+                return
+            # greeting handled by LLM still — but could short-circuit too; keep LLM for natural tone.
+        except Exception as e:
+            logger.warning(f"Jev bot router fallback to LLM: {e}")
 
     async with message.channel.typing():
         history = await _fetch_recent_history(message.channel, message)

@@ -48,6 +48,8 @@ from blog_agent.posting_agent import run_posting_workflow
 from blog_agent.research_agent import combined_research_workflow, run_topic_discovery_workflow
 from tools.sheet_tool import manage_sheet_data, ensure_worksheet_exists
 from tools.tools import BRAIN_DIR, reset_internal_links_counter
+# Jev helper — freshness gate (F3) + general logging. Reuses lib/jev.py Decisions API.
+from lib.jev import call_jev, JevError
 
 MAX_TURNS = 30
 
@@ -1387,6 +1389,35 @@ async def run_freshness_sweep() -> None:
         return
 
     print(f"[freshness_sweep] Checking '{title}' for stale claims.")
+    # --- Jev freshness gate (F3, 70-500ms, saves LLM call on current posts) ---
+    # Score staleness + Noul needs_update in one batched call (patterns.md). If both indicate current, skip expensive freshness_check_agent LLM.
+    try:
+        # age from sanity_index if available; else use sheet Created At fallback
+        sanity_info = sanity_index.get(title) or {}
+        created_at = sanity_info.get("created_at")
+        age_days = (datetime.now(timezone.utc) - created_at).days if created_at else 120  # default to eligible age if unknown
+        jev_state = {"title": title, "content": content[:30000], "age_days": age_days}
+        jev_questions = {
+            "staleness": {"type": "score", "instructions": "How stale is this content?", "criteria": ["Current: accurate and fresh", "Needs refresh soon: minor updates available", "Outdated: price/version/availability changed or misleading"]},
+            "needs_update": {"type": "noul", "instructions": "Does `content` need an update given `age_days`? Flag only specific outdated facts (price, version, availability), not general rewriting."},
+        }
+        jev_resp = await call_jev(jev_state, jev_questions)
+        staleness = float(getattr(jev_resp.answers["staleness"], "score", 0))
+        needs_up_noul = float(getattr(jev_resp.answers["needs_update"], "noul", 0))
+        conf = float(getattr(jev_resp.answers["staleness"], "confidence", 0) or 0)
+        print(f"[freshness_sweep] Jev gate: staleness={staleness:.2f} needs_update={needs_up_noul:.2f} conf={conf:.2f} usage={jev_resp.usage.model_dump()}")
+        # If Jev says current (score <1.0) and low need to update (<0.65), and confident, skip LLM
+        if staleness < 1.0 and needs_up_noul < 0.65 and conf >= 0.6:
+            msg = f"Checked '{title}' -- Jev gate says current (staleness {staleness:.2f}, no update needed), skipped LLM check."
+            print(f"[freshness_sweep] {msg}")
+            _notify(f"🕰️ Freshness sweep: {msg}")
+            _log_freshness_sweep(title, "current", f"Jev gate: current (staleness={staleness:.2f})")
+            return
+    except JevError as e:
+        print(f"[freshness_sweep] Jev gate fallback (proceed to LLM): {e}")
+    except Exception as e:
+        print(f"[freshness_sweep] Jev gate unexpected fallback: {e}")
+
     result = await custom_runner.run_with_fallback(
         freshness_check_agent,
         f"Here is a published post titled '{title}':\n\n{content}",
