@@ -50,6 +50,7 @@ from tools.sheet_tool import manage_sheet_data, ensure_worksheet_exists
 from tools.tools import BRAIN_DIR, reset_internal_links_counter
 # Jev helper — freshness gate (F3) + general logging. Reuses lib/jev.py Decisions API.
 from lib.jev import call_jev, JevError
+from lib.link_validator import validate_links, strip_invalid_links
 
 MAX_TURNS = 30
 
@@ -902,13 +903,36 @@ def _row_looks_malformed(existing_row: dict) -> bool:
     return summary_value in ("yes", "no") or not published_value
 
 
+def _clean_hallucinated_links(content: dict) -> dict:
+    md = str(_get_field(content, "Generated Content", "") or "")
+    if not md or "[" not in md:
+        return content
+    try:
+        v = validate_links(md, check_external_head=True)
+    except Exception as e:
+        print(f"[content] link validation skipped: {e}")
+        return content
+    if not v.get("has_invalid"):
+        return content
+    cleaned = strip_invalid_links(md, v)
+    out = dict(content)
+    out["Generated Content"] = cleaned
+    for bad in v.get("invalid_internal", []):
+        print(f"[content] stripped hallucinated internal link {bad.get('raw')} -> slug '{bad.get('slug')}' not in Sanity")
+    for bad in v.get("invalid_external", []):
+        print(f"[content] stripped hallucinated external link {bad.get('raw')} -> status {bad.get('status')}")
+    print(f"[content] link guard: {len(v['invalid_internal'])} internal + {len(v['invalid_external'])} external stripped (kept anchor text)")
+    return out
+
+
 def _ensure_content_persisted(content: dict) -> dict:
     """Same fix as _ensure_brief_persisted, for the Content Generator Agent
-    -> generated_posts. Returns the persisted row (existing, repaired, or
-    freshly appended) so the caller can use it directly for the Discord
-    notification instead of blindly trusting "last row = the one just
-    generated", which would silently notify about a stale row if the agent
-    hadn't actually saved anything."""
+     -> generated_posts. Returns the persisted row (existing, repaired, or
+     freshly appended) so the caller can use it directly for the Discord
+     notification instead of blindly trusting "last row = the one just
+     generated", which would silently notify about a stale row if the agent
+     hadn't actually saved anything."""
+    content = _clean_hallucinated_links(content)
     title = str(_get_field(content, "Title")).strip()
     if not title:
         raise RuntimeError(f"Content output missing Title; cannot persist or verify. Keys seen: {list(content.keys())}")

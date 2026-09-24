@@ -471,3 +471,50 @@ def jev_rank_internal_links(section_text: str, links_json: str, recent_links_jso
 
 
 jev_rank_internal_links_tool = function_tool(jev_rank_internal_links)
+
+
+def jev_verify_external_links(section_text: str, external_links_json: str, excerpts_json: str = "[]") -> str:
+    try:
+        links = json.loads(external_links_json) if external_links_json.strip().startswith("[") else []
+        if not isinstance(links, list):
+            links = []
+    except Exception:
+        links = []
+    try:
+        excerpts = json.loads(excerpts_json) if excerpts_json.strip().startswith("[") else ([excerpts_json] if excerpts_json.strip() else [])
+        if not isinstance(excerpts, list):
+            excerpts = [str(excerpts)]
+    except Exception:
+        excerpts = []
+    if not links:
+        return json.dumps({"ranked": [], "fallback": True, "error": "no links"})
+    batch = links[:5]
+    excerpts_joined = "\n---\n".join(excerpts[:10])[:12000] if excerpts else "No excerpts"
+    state = {"section_text": section_text[:4000], "external_links": batch, "excerpts": excerpts_joined}
+    questions: dict = {}
+    for i, link in enumerate(batch):
+        url = link.get("url", "")
+        anchor = link.get("text", link.get("anchor", ""))
+        questions[f"ext_{i}_supported"] = {"type": "noul", "instructions": f"Is external link `external_links[{i}].url` ({url} anchor '{anchor}') supported by `excerpts` and relevant to `section_text`? Real domain from excerpts or same topic, not hallucinated."}
+    try:
+        resp = call_jev_sync(state, questions)
+        ranked = []
+        for i, link in enumerate(batch):
+            ans = resp.answers.get(f"ext_{i}_supported")
+            if ans is None:
+                continue
+            noul = float(getattr(ans, "noul", ans.get("noul", 0)) if isinstance(ans, dict) else getattr(ans, "noul", 0))
+            conf = float(getattr(ans, "confidence", ans.get("confidence", 0) or 0) if isinstance(ans, dict) else getattr(ans, "confidence", 0) or 0)
+            is_supported = noul >= 0.65
+            ranked.append({**link, "is_supported": is_supported, "noul": noul, "confidence": conf})
+        ranked.sort(key=lambda x: (x["is_supported"], x["noul"]), reverse=True)
+        return json.dumps({"ranked": ranked, "fallback": False, "usage": resp.usage.model_dump()})
+    except JevError as e:
+        logger.warning(f"jev_verify_external_links fallback: {e}")
+        return json.dumps({"ranked": [{**l, "is_supported": True, "noul": 0, "confidence": 0} for l in batch], "fallback": True, "error": str(e)})
+    except Exception as e:
+        logger.warning(f"jev_verify_external_links unexpected fallback: {e}")
+        return json.dumps({"ranked": [{**l, "is_supported": True, "noul": 0, "confidence": 0} for l in batch], "fallback": True, "error": str(e)})
+
+
+jev_verify_external_links_tool = function_tool(jev_verify_external_links)

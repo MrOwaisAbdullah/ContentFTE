@@ -602,8 +602,7 @@ def validate_row(row, row_index):
     if not 4 <= h2_count <= 6:
         errors.append(f"Found {h2_count} H2 sections, expected 4–6")
 
-    # Internal Links Check
-    internal_links = len(re.findall(r'\[.+?\]\(/blog/.+?\)', content))
+    internal_links = len(re.findall(r'\[.+?\]\(https://owaisabdullah\.dev/blog/.+?\)', content)) + len(re.findall(r'\[.+?\]\(/blog/.+?\)', content))
     if not 2 <= internal_links <= 3:
         errors.append(f"Found {internal_links} internal links, expected 2–3")
 

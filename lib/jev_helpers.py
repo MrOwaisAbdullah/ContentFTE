@@ -389,7 +389,39 @@ async def rank_internal_links(section_text: str, links: List[Dict[str, str]], re
 
 
 # ---------------------------------------------------------------------------
-# 8) Human-in-the-loop routing — Score priority + Noul is_safe/needs_update
+# 8) External link hallucination guard — Noul is_supported per external URL
+# ---------------------------------------------------------------------------
+async def verify_external_links(section_text: str, external_links: List[Dict[str, str]], excerpts: List[str]) -> Dict[str, Any]:
+    if not external_links:
+        return {"ranked": [], "fallback": True, "raw": None}
+    batch = external_links[:5]
+    excerpts_joined = "\n---\n".join(excerpts[:10])[:12000] if excerpts else "No excerpts"
+    state: Dict[str, Any] = {"section_text": section_text[:4000], "external_links": batch, "excerpts": excerpts_joined}
+    questions: Dict[str, Any] = {}
+    for i, link in enumerate(batch):
+        url = link.get("url", "")
+        anchor = link.get("text", link.get("anchor", ""))
+        questions[f"ext_{i}_supported"] = {"type": "noul", "instructions": f"Is external link `external_links[{i}].url` ({url} anchor '{anchor}') supported by `excerpts` and contextually relevant to `section_text`? Must be real domain mentioned in excerpts or same topic, not hallucinated."}
+    try:
+        resp = await call_jev(state, questions)
+        ranked: List[Dict[str, Any]] = []
+        for i, link in enumerate(batch):
+            ans = resp.answers.get(f"ext_{i}_supported")
+            if ans is None:
+                continue
+            noul = float(getattr(ans, "noul", 0))
+            conf = float(getattr(ans, "confidence", 0) or 0)
+            is_supported = noul >= 0.65
+            ranked.append({**link, "is_supported": is_supported, "noul": noul, "confidence": conf})
+        ranked.sort(key=lambda x: (x["is_supported"], x["noul"]), reverse=True)
+        return {"ranked": ranked, "fallback": False, "raw": resp}
+    except JevError as e:
+        logger.warning(f"verify_external_links fallback: {e}")
+        return {"ranked": [{**l, "is_supported": True, "noul": 0, "confidence": 0} for l in batch], "fallback": True, "raw": None}
+
+
+# ---------------------------------------------------------------------------
+# 9) Human-in-the-loop routing — Score priority + Noul is_safe/needs_update
 # ---------------------------------------------------------------------------
 async def route_human_review(draft: str, seo_metrics: Optional[Dict[str, Any]] = None, age_days: Optional[int] = None) -> Dict[str, Any]:
     """
