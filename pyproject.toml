@@ -1,5 +1,5 @@
 [project]
-name = "seo-blog-agent"
+name = "contentfte"
 version = "1.0.0"
 description = "Autonomous SEO blog and Content FTE agent pipeline with multi-agent orchestration, Discord bot, Sanity CMS publishing, and Search Console monitoring"
 readme = "README.md"

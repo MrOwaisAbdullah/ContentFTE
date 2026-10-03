@@ -314,7 +314,7 @@ Discord call `workflow_dispatch`.
    not an HTTP service) → restart policy: always.
 2. Set these in Dokploy's runtime env panel (not baked into the image):
    `DISCORD_BOT_TOKEN`, `GITHUB_PAT`, `GITHUB_REPO` (`owner/repo`,
-   e.g. `MrOwaisAbdullah/SEO-Blog-Agent` — **not** the full
+   e.g. `MrOwaisAbdullah/ContentFTE` — **not** the full
    `https://github.com/...` URL, an easy copy-paste mistake that produces a
    404 from `/run` since the dispatch URL gets built as
    `.../repos/https://github.com/.../actions/workflows/...`; `bot.py`

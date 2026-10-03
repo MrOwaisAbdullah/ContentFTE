@@ -143,7 +143,7 @@ def _build_headers() -> Dict[str, str]:
         "Authorization": f"Bearer {_get_api_key()}",
         "Content-Type": "application/json",
         "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "https://owaisabdullah.dev"),
-        "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "ContentFTE-SEO-Blog-Agent"),
+        "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "ContentFTE"),
     }
 
 
