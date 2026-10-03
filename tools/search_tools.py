@@ -1,4 +1,6 @@
 import os
+import logging
+from datetime import datetime, timedelta
 from tavily import AsyncTavilyClient
 from agents import function_tool
 from typing import List, Optional, Dict, Any, Union
@@ -37,17 +39,17 @@ async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "gen
             search_depth=search_depth
         )
         return {
-            "query": response["query"],
+            "query": response.get("query", query),
             "results": [
                 {
                     "url": result["url"],
-                    "title": result["title"],
-                    "content": result["content"],
-                    "score": result["score"]
+                    "title": result.get("title", ""),
+                    "content": result.get("content", ""),
+                    "score": result.get("score", 0.0)
                 }
-                for result in response["results"]
+                for result in response.get("results", [])
             ],
-            "response_time": response["response_time"]
+            "response_time": response.get("response_time")
         }
     except Exception as e:
         return {"error": str(e), "results": [], "response_time": None}
@@ -68,20 +70,24 @@ async def tavily_extract_tool(urls: List[str], include_images: bool = False) -> 
     try:
         response = await tavily_client.extract(urls=urls, include_images=include_images)
 
-        # Check if response is a list (expected case)
-        if isinstance(response, list):
-            return [
-                {
-                    "url": result["url"],
-                    "title": result.get("title", ""),
-                    "content": result["content"],
-                    "images": result.get("images", []) if include_images else []
-                }
-                for result in response
-            ]
+        # tavily-python 0.7.x always returns a dict:
+        # {"results": [{"url", "raw_content", "images", "favicon"}], "failed_results": [...], ...}
+        if isinstance(response, dict):
+            results = response.get("results", [])
+        elif isinstance(response, list):
+            results = response
         else:
-            # Handle case where response might be an error dictionary
-            return {"error": f"Unexpected response format: {response}", "results": []}
+            return {"error": f"Unexpected response format: {type(response).__name__}", "results": []}
+
+        return [
+            {
+                "url": result.get("url", ""),
+                "title": result.get("title", ""),
+                "content": result.get("raw_content", result.get("content", "")),
+                "images": result.get("images", []) if include_images else []
+            }
+            for result in results
+        ]
     except Exception as e:
         return {"error": str(e), "results": []}
 
@@ -109,10 +115,10 @@ async def tavily_crawl_tool(start_url: str, max_depth: int = 2, limit: int = 10,
         )
         return [
             {
-                "url": result["url"],
-                "raw_content": result["raw_content"]
+                "url": result.get("url", ""),
+                "raw_content": result.get("raw_content", "")
             }
-            for result in response["results"]
+            for result in (response.get("results", []) if isinstance(response, dict) else [])
         ]
     except Exception as e:
         return {"error": str(e), "results": []}

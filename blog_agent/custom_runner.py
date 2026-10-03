@@ -3,6 +3,7 @@ try:
     from agents.models.interface import Model
     from agents.exceptions import ModelBehaviorError, MaxTurnsExceeded
     from agents.run import AgentRunner
+    from agents import RunConfig
 except ImportError:
     # Create dummy classes to allow the application to run
     # This is a workaround for the missing 'agents' module
@@ -16,6 +17,9 @@ except ImportError:
         pass
     class MaxTurnsExceeded(Exception):
         pass
+    class RunConfig:
+        def __init__(self, **kwargs):
+            pass
     class AgentRunner:
         async def run(self, *args, **kwargs):
             print("Warning: 'agents' module not found. Using dummy AgentRunner.")
@@ -510,11 +514,13 @@ class FallbackAgentRunner(AgentRunner):
         self.jev_rpm_timestamps = [ts for ts in self.jev_rpm_timestamps if ts > cutoff]
         return len(self.jev_rpm_timestamps) < 60
 
-    async def _execute_agent_run(self, agent, input_data, context=None, max_turns=15, hooks=None, session=None):
+    async def _execute_agent_run(self, agent, input_data, context=None, max_turns=15, hooks=None, session=None, run_config=None):
         """Helper wrapper that actually invokes the parent AgentRunner.run.
 
         This exists so tests or fake runners can override this single method
         to simulate agent behavior without requiring a full Agents SDK.
         """
+        if run_config is None:
+            run_config = RunConfig(tool_not_found_behavior="return_error_to_model")
         # In normal operation, delegate to the parent class implementation.
-        return await super().run(agent, input_data, context=context, max_turns=max_turns, hooks=hooks, session=session)
+        return await super().run(agent, input_data, context=context, max_turns=max_turns, hooks=hooks, session=session, run_config=run_config)

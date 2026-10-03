@@ -67,7 +67,7 @@ def jev_is_relevant(question: str, excerpts_json: str) -> str:
 
 
 # Wrapped tool for agents (OpenAI Agents SDK tool calling)
-jev_is_relevant_tool = function_tool(jev_is_relevant)
+jev_is_relevant_tool = function_tool(jev_is_relevant, name_override="jev_is_relevant_tool")
 
 
 def jev_gate_blog_topic(topic: str, brief: str = "") -> str:
@@ -114,7 +114,7 @@ def jev_gate_blog_topic(topic: str, brief: str = "") -> str:
         return json.dumps({"needs_research": True, "intent": "informational", "trend": 0.0, "fallback": True, "error": str(e)})
 
 
-jev_gate_blog_topic_tool = function_tool(jev_gate_blog_topic)
+jev_gate_blog_topic_tool = function_tool(jev_gate_blog_topic, name_override="jev_gate_blog_topic_tool")
 
 
 def jev_score_draft_quality(draft: str, facts_json: str, live_profile_json: str = "") -> str:
@@ -188,7 +188,7 @@ def jev_score_draft_quality(draft: str, facts_json: str, live_profile_json: str 
         return json.dumps({"supported": 0, "on_brand": 0, "stack_aligned": 0, "score": 0, "publish_ready": False, "fallback": True, "error": str(e)})
 
 
-jev_score_draft_quality_tool = function_tool(jev_score_draft_quality)
+jev_score_draft_quality_tool = function_tool(jev_score_draft_quality, name_override="jev_score_draft_quality_tool")
 
 
 def jev_classify_category(keyword_topic: str, existing_categories_json: str) -> str:
@@ -228,7 +228,7 @@ def jev_classify_category(keyword_topic: str, existing_categories_json: str) -> 
         return json.dumps({"action": "propose_new", "category": existing[0] if existing else keyword_topic.strip().title()[:60], "confidence": 0, "fallback": True, "error": str(e)})
 
 
-jev_classify_category_tool = function_tool(jev_classify_category)
+jev_classify_category_tool = function_tool(jev_classify_category, name_override="jev_classify_category_tool")
 
 
 # --- Additional general SEO pipeline gates (remaining from integration report) ---
@@ -470,7 +470,7 @@ def jev_rank_internal_links(section_text: str, links_json: str, recent_links_jso
         return json.dumps({"ranked": [{**l, "is_relevant": True, "noul": 0, "confidence": 0, "is_recent_repeat": False, "adjusted_noul": 0} for l in batch], "fallback": True, "error": str(e)})
 
 
-jev_rank_internal_links_tool = function_tool(jev_rank_internal_links)
+jev_rank_internal_links_tool = function_tool(jev_rank_internal_links, name_override="jev_rank_internal_links_tool")
 
 
 def jev_verify_external_links(section_text: str, external_links_json: str, excerpts_json: str = "[]") -> str:
@@ -517,4 +517,4 @@ def jev_verify_external_links(section_text: str, external_links_json: str, excer
         return json.dumps({"ranked": [{**l, "is_supported": True, "noul": 0, "confidence": 0} for l in batch], "fallback": True, "error": str(e)})
 
 
-jev_verify_external_links_tool = function_tool(jev_verify_external_links)
+jev_verify_external_links_tool = function_tool(jev_verify_external_links, name_override="jev_verify_external_links_tool")

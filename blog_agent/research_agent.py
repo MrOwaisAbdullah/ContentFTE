@@ -211,7 +211,7 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         - `fetch_url_title`: Fetch URL titles and snippets.  
         - SerpApi `web_search_tool`(fallback): Keyword data.  
         - `jev_gate_blog_topic_tool` (Jev): Batch needs_research + intent + trend — call FIRST before deep Tavily to save credits on evergreen/low-need topics.
-        - `jev_is_relevant_tool` (Jev): Noul is_relevant ×N batched — call AFTER tavily_search with `excerpts_json` (JSON of {id, excerpt} from search content) to filter before tavily_extract; keep only `noul>=0.65`, fallback returns all.
+        - `jev_is_relevant_tool` (Jev): Noul is_relevant ×N batched — call AFTER tavily_search with `excerpts_json` (JSON of {{id, excerpt}} from search content) to filter before tavily_extract; keep only `noul>=0.65`, fallback returns all.
 
         **Jev Guidance (replace heuristic thresholds with calibrated decisions):**
         - BEFORE Tavily extract/crawl: call `jev_gate_blog_topic_tool(topic, brief="")` to get `needs_research` + `intent` (informational/transactional/navigational/comparison) + `trend`. If `needs_research==false` for this evergreen topic, skip deep Tavily and summarize from search snippets alone.

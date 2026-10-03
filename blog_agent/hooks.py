@@ -8,7 +8,7 @@ class MyAgentHooks(AgentHooks):
         print(f"Handing off to {agent_name}...")
         print("--------------------------------")
 
-    async def on_agent_start(self, context: RunContextWrapper, agent: Agent):
+    async def on_start(self, context, agent: Agent):
         print("--------------------------------")
         print(f"[Hook] Agent start: {agent.name}")
         # Print input length if possible
@@ -18,7 +18,7 @@ class MyAgentHooks(AgentHooks):
             print(f"[Hook] Input type for agent '{agent.name}': {type(context.input)}")
         print("--------------------------------")
 
-    async def on_agent_end(self, context, agent, result):
+    async def on_end(self, context, agent: Agent, output):
         print("--------------------------------")
         print(f"[Hook] Agent end: {agent.name}")
         print("--------------------------------")

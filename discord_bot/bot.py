@@ -1188,10 +1188,10 @@ class _ChatAgentHooks(AgentHooks):
     of print() since this runs as a long-lived process, not a one-shot
     script -- consistent with the rest of this file's logging."""
 
-    async def on_agent_start(self, context: RunContextWrapper, agent: Agent) -> None:
+    async def on_start(self, context: RunContextWrapper, agent: Agent) -> None:
         logger.info(f"[chat] Agent start: {agent.name}")
 
-    async def on_agent_end(self, context: RunContextWrapper, agent: Agent, result) -> None:
+    async def on_end(self, context: RunContextWrapper, agent: Agent, output) -> None:
         logger.info(f"[chat] Agent end: {agent.name}")
 
     async def on_tool_start(self, context: RunContextWrapper, agent: Agent, tool: Tool) -> None:

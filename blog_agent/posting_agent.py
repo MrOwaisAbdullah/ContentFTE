@@ -376,6 +376,7 @@ async def run_posting_workflow(max_retries: int = 2) -> Dict[str, Any]:
             # preparing the data format with === markers, and automatically 
             # handing off to the contextual image agent for image insertion
             preparation_result = None
+            last_error = None
             for attempt in range(max_retries):
                 try:
                     logger.info(f"Running Preparation Agent (attempt {attempt + 1}/{max_retries})...")
@@ -388,18 +389,22 @@ async def run_posting_workflow(max_retries: int = 2) -> Dict[str, Any]:
                     
                     if _prep_or_contextual_succeeded(preparation_result):
                         logger.info("Preparation Agent completed successfully")
+                        last_error = None
                         break
                     else:
                         logger.warning(f"Preparation Agent failed on attempt {attempt + 1}: {str(preparation_result)}")
                 except Exception as e:
+                    last_error = e
+                    preparation_result = None
                     logger.warning(f"Preparation Agent failed on attempt {attempt + 1} with exception: {str(e)}")
 
                 if attempt < max_retries - 1:  # Don't sleep on the last attempt
                     await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
             if preparation_result is None or not _prep_or_contextual_succeeded(preparation_result):
-                logger.error(f"Preparation Agent failed after {max_retries} attempts")
-                return {"status": "error", "error": f"Preparation Agent failed after {max_retries} attempts: {str(preparation_result)}"}
+                detail = str(last_error) if last_error is not None else str(preparation_result)
+                logger.error(f"Preparation Agent failed after {max_retries} attempts: {detail}")
+                return {"status": "error", "error": f"Preparation Agent failed after {max_retries} attempts: {detail}"}
 
             # Normalize the preparation result: it can be a RunResult-like object, a dict, or a string.
             def _extract_result_payload(res):

@@ -167,7 +167,7 @@ content_evaluation_agent = Agent(
 
      ```
      """,
-    tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
+    tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
     # Cross-provider evaluation: DeepSeek evaluates Gemini-written content
     # and vice versa, preventing same-provider bias. DeepSeek V4 Flash is
     # pay-per-token (~$0.07/M) -- negligible for the few evaluation calls
