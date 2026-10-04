@@ -368,6 +368,50 @@ def _stamp_created_at(worksheet_name: str, key_column: str, key_value: str) -> N
         print(f"Warning: failed to stamp Created At on {worksheet_name} for '{key_value}': {e}")
 
 
+def _stamp_image_source(title_value: str, image_source: str) -> None:
+    """Records which image actually shipped with a published post -- the AI
+    model id (e.g. Cloudflare Workers AI (@cf/black-forest-labs/flux-2-dev))
+    or the stock provider (Pexels) -- in an 'Image Source' column on
+    generated_posts.
+
+    Added because the pipeline had no answer at all to "did this post get an
+    AI image or a stock photo, and from which model": post_to_sanity_tool
+    derived its image_source from the shape of the path, so every
+    Cloudflare-generated local file collapsed to "Local" and nothing was ever
+    written to the sheet. Like Created At, the column is added on demand by
+    _ensure_column_header, which appends it after the existing headers so no
+    existing row's column mapping shifts (generated_posts is positionally
+    appended elsewhere, so a column inserted mid-row would corrupt every
+    later row).
+
+    Best-effort and idempotent -- the publish already succeeded by the time
+    this runs, so a sheet hiccup must not fail the stage."""
+    try:
+        title_value = str(title_value or "").strip()
+        image_source = str(image_source or "").strip()
+        if not title_value or not image_source:
+            return
+        col_index = _ensure_column_header("generated_posts", "Image Source")
+        if col_index is None:
+            return
+        lookup = manage_sheet_data(
+            worksheet_name="generated_posts", action="find_row_by_key",
+            key_column="Title", key_value=title_value,
+        )
+        if not (lookup.get("status") == "success" and lookup.get("found")):
+            print(f"[post] No generated_posts row for '{title_value}'; Image Source not recorded.")
+            return
+        if str((lookup.get("data") or {}).get("Image Source", "")).strip():
+            return
+        manage_sheet_data(
+            worksheet_name="generated_posts", action="update_cell",
+            row_index=lookup["row_index"], col_index=col_index, data=image_source,
+        )
+        print(f"[post] Recorded Image Source '{image_source}' for '{title_value}'.")
+    except Exception as e:
+        print(f"Warning: failed to record Image Source on generated_posts for '{title_value}': {e}")
+
+
 def _stamp_check_column(worksheet_name: str, key_column: str, key_value: str, check_column_name: str) -> None:
     """Records when a row was last reviewed by a given review stage
     (freshness sweep / search performance review), adding that column if it
@@ -1132,6 +1176,12 @@ async def run_post() -> None:
     print(f"[post] result: {result}")
     if isinstance(result, dict) and result.get("status") == "error":
         raise RuntimeError(f"Posting stage failed: {result.get('error')}")
+
+    if isinstance(result, dict) and result.get("image_source"):
+        _stamp_image_source(
+            str(result.get("source_keyword_topic") or "").strip() or str(result.get("title") or "").strip(),
+            str(result.get("image_source") or ""),
+        )
 
     if isinstance(result, dict) and result.get("post_url"):
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")

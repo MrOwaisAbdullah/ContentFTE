@@ -49,8 +49,63 @@ The system consists of multiple agents working together:
 2. **Research Agent** - Conducts keyword research using Tavily API
 3. **Brief Agent** - Creates content briefs from research findings
 4. **Content Generator Agent** - Generates SEO-optimized blog posts
-5. **Posting Agent** - Publishes content to Sanity CMS
-6. **Repurposing Agent** - Repurposes content for other platforms (planned)
+5. **Image Selection Agent** - Builds and QA-checks the thumbnail (see below)
+6. **Posting Agent** - Publishes content to Sanity CMS
+7. **Repurposing Agent** - Repurposes content for other platforms (planned)
+
+### Thumbnail Generation & QA
+
+Every post gets a thumbnail from Cloudflare Workers AI (genuinely free tier,
+10,000 Neurons/day) rather than a stock photo, using the site's fixed house
+cinematic-3D prompt — the agent never writes the prompt itself, it only supplies
+the title, the SEO summary, and an optional one-sentence scene concept.
+
+Generation is a **generate → look → revise** loop, not a single shot:
+
+1. `_build_house_prompt()` fills the title/summary/scene-concept slots of the
+   house template (default model `@cf/black-forest-labs/flux-2-klein-4b`,
+   ~110 Neurons per 1280×720 image, overridable with `CLOUDFLARE_IMAGE_MODEL`).
+2. `lib/image_vision.py` sends the actual pixels to a VLM (`gemini-3.5-flash-lite`)
+   which returns a description, the on-image text it can read, style notes, and
+   issues — the image is never judged from its filename.
+3. Jev turns that into a decision: `matches_blog` and `matches_style` must both
+   clear their thresholds (0.65 / 0.6) to pass. Jev is **fail-open** — if the
+   decision service is down the image is accepted rather than blocking a post.
+4. On a miss, the image is regenerated with the failed attempt attached as an
+   img2img reference and the VLM's specific complaints written into the prompt —
+   up to `IMAGE_MAX_REVISIONS` (default 3) attempts. The best-scoring attempt is
+   always returned; a non-passing QA is reported, not raised.
+
+Pexels is only reached if Cloudflare is unset or every attempt fails.
+
+### Model routing
+
+All agents run through `FallbackAgentRunner`, which tries models in a
+performance-sorted chain and records every attempt. Two properties matter for
+reliability on the free tier:
+
+- **Each Gemini model has its own independent daily quota** — Lite variants are
+  500 RPD / 15 RPM, Flash variants 20 RPD / 5 RPM — so they are separate entries
+  in the chain rather than one shared bucket.
+- **Usage is counted per attempt, not per success.** Counting only successes made
+  a quota-exhausted model look available all day; now a model that Google is
+  rejecting exhausts its local budget and the chain moves on.
+
+The chain leads with `gemini-3.5-flash-lite` / `gemini-3.1-flash-lite` (measured
+9.34% error across 851 logged runs) and puts `gemini-flash-latest` (87.95%
+error) later.
+
+### Logging
+
+Two worksheets answer "what actually happened" after the fact:
+
+- **`model_usage_log`** — one row per LLM attempt: `Timestamp, Model, Agent,
+  Stage, Status, Latency (s)`.
+- **`image_logs`** — one row per image call: `Timestamp, Model, Stage, Subject,
+  Status, Reference, Latency (s), Detail`. `Stage=generate` covers every
+  Cloudflare attempt (`Reference=yes` marks img2img revisions), `Stage=stock`
+  covers Pexels fallbacks, and one `Stage=result` row per call carries the
+  VLM/Jev verdict and attempts used. Created automatically on first write.
 
 ## Prerequisites
 
@@ -89,6 +144,10 @@ PEXELS_API_KEY=your_pexels_api_key
 CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id
 CLOUDFLARE_API_TOKEN=your_cloudflare_workers_ai_token
 
+# Optional: Image generation knobs
+CLOUDFLARE_IMAGE_MODEL=@cf/black-forest-labs/flux-2-klein-4b
+IMAGE_MAX_REVISIONS=3
+
 # Security
 API_KEY=your_custom_api_key_for_authentication
 
@@ -123,6 +182,10 @@ DEFAULT_MODEL=gemini-2.5-flash
 - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` - Cloudflare Workers AI for AI image generation (primary; genuinely free, 10,000 Neurons/day)
 - `PEXELS_API_KEY` - Pexels API key for stock images (fallback)
 
+#### Image Generation Knobs (optional)
+- `CLOUDFLARE_IMAGE_MODEL` - Which Workers AI model makes the thumbnail. Defaults to `@cf/black-forest-labs/flux-2-klein-4b` (~110 Neurons → ~90 images/day, and it accepts an img2img reference, which the revision loop needs). Swap to `.../flux-2-klein-9b` for legible on-image text (~7/day) or `.../flux-2-dev` for highest quality (~3/day).
+- `IMAGE_MAX_REVISIONS` - Max generate → validate → regenerate cycles per post before the best attempt is accepted (default `3`, bounding worst-case spend at ~330 Neurons).
+
 #### Security
 - `API_KEY` - Custom API key for authenticating requests to the agent API
 
@@ -150,11 +213,25 @@ DEFAULT_MODEL=gemini-2.5-flash
 
 ### 1. Google Sheets Setup
 
-1. Create a Google Sheet named "ContentFTE" with the following worksheets:
-   - `ContentFTE_Keywords` - For input keywords/YouTube URLs
-   - `research_data` - For research findings
-   - `content_briefs` - For content briefs
-   - `generated_posts` - For generated blog posts
+1. Create **two** Google Sheets (titles are hardcoded in `tools/sheet_tool.py`):
+
+   - **`ContentSpark_Keywords`** — a standalone spreadsheet whose first sheet is
+     the input queue, with headers `Keyword` (A) and `Status` (B). Rows are
+     `available` until claimed, then flipped to `used`.
+   - **`ContentSpark`** — the pipeline's database, with these worksheets:
+
+     | Worksheet | Written by | Notes |
+     | --- | --- | --- |
+     | `research_data` | Research Agent | |
+     | `content_briefs` | Brief Agent | |
+     | `generated_posts` | Content Generator | `Created At` and `Image Source` columns are appended automatically at the end |
+     | `approved_unpublished` | **you** | A live `FILTER` view over `generated_posts` — see `docs/service_setup.md` |
+     | `published_posts` | Posting Agent | |
+     | `claims_audit` | Claims gate | |
+     | `review_feedback_log` | Review stages | |
+     | `model_usage_log` | Fallback runner | One row per LLM attempt |
+     | `freshness sweep`, `performance` | Review stages | |
+     | `image_logs` | Image tools | **Created automatically** on first write — don't create it by hand |
 
 2. Create a Google Cloud Project and enable the Google Sheets API
 

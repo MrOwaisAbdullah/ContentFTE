@@ -97,6 +97,35 @@ A second Google Sheet named exactly `ContentSpark`, with these worksheets
 | `generated_posts` | `Title, Generated Content, FAQs, Quality Score, Summary, Approve/Disapprove, Published` | Content Generator Agent (`/generate_content`) | you (manual approval), and indirectly `approved_unpublished` |
 | `approved_unpublished` | same 7 columns as `generated_posts` | **you must create this — no code writes to it** | Preparation Agent (`/post_content`) |
 | `published_posts` | `Keyword/Topic, Post URL, Error` | Posting Agent (`/post_content`) | — |
+| `model_usage_log` | `Timestamp, Model, Agent, Stage, Status, Latency (s)` | Fallback runner (one row per LLM attempt) | you / quota dashboards |
+| `image_logs` | `Timestamp, Model, Stage, Subject, Status, Reference, Latency (s), Detail` | Image tools — **created automatically on first write**, you don't have to make it | you / image QA |
+
+`model_usage_log` is how "which LLM actually ran" stays answerable after the
+fact. The code asks for a worksheet named `usage logs`; `resolve_worksheet`'s
+alias set maps that onto `model_usage_log`, so both names address the same tab.
+
+`image_logs` is the equivalent audit trail for images, kept as its own tab so
+it isn't interleaved with hundreds of LLM rows. It gets one row per real call:
+
+- `Stage = generate` — every Cloudflare generation attempt, with `Model` set to
+  the actual generator id (e.g. `@cf/black-forest-labs/flux-2-klein-4b`).
+  `Reference = yes` marks the img2img revision attempts, and `Detail` carries
+  the error when an attempt failed — so quota spend from the
+  generate → validate → regenerate loop is countable from the sheet alone.
+- `Stage = stock` — Pexels fallback fetches.
+- `Stage = result` — one summary row per `generate_image_tool` call with the
+  VLM/Jev verdict (`passed`/`failed`, attempts used, both scores, top issues).
+
+Two more columns are appended to `generated_posts` **at the end** (never in the
+middle, so the `FILTER` formula below and every existing row's column mapping
+stay valid) the first time the code needs them:
+
+- `Created At` — UTC timestamp of when the row was written.
+- `Image Source` — which image actually shipped with the post once it is
+  published: the AI model id (e.g. `Cloudflare Workers AI (@cf/black-forest-labs/flux-2-dev)`)
+  or `Pexels (stock photo)`. Written deterministically by the post stage, not
+  by the agent, so it records what `post_to_sanity_tool` really uploaded
+  rather than what the model claimed it did.
 
 **The `approved_unpublished` worksheet is the one manual-setup step that's easy
 to miss.** The posting workflow reads row 2 of it directly

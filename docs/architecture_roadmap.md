@@ -26,10 +26,35 @@ page before committing engineering time to any of these.**
 
 ## 1. Image generation
 
-**Current state.** Cloudflare Workers AI (`@cf/black-forest-labs/flux-2-dev`) is the sole AI
-generator (genuinely free, 10,000 Neurons/day), falling back to Pexels stock photos. Freepik
-was removed earlier this session (expired key, one-time trial credit only, not an ongoing
-free tier).
+**Current state.** Cloudflare Workers AI is the sole AI generator (genuinely free,
+10,000 Neurons/day), falling back to Pexels stock photos. Freepik was removed earlier
+this session (expired key, one-time trial credit only, not an ongoing free tier).
+
+Changed 2026-10-04:
+
+- Default model is now `@cf/black-forest-labs/flux-2-klein-4b` (was `flux-2-dev`).
+  Measured live at 1280×720: klein-4b ~110 Neurons (~90/day), klein-9b ~1,364
+  (~7/day), dev ~2,640 (~3/day). klein-4b also accepts an `image` base64 field, so
+  it supports the img2img revision loop; `flux-2-dev`/`klein-9b` are the swap targets
+  if on-image text matters (klein-4b misspelled baked-in headlines 3/3 live tests).
+  Override with `CLOUDFLARE_IMAGE_MODEL`.
+- The prompt is no longer model-written. `_build_house_prompt()` fills the site's
+  fixed cinematic-3D house template with the post title, SEO summary and an optional
+  one-sentence scene concept, so visual identity is stable across posts.
+- Generation is a **generate → look → revise** loop: `lib/image_vision.py` sends the
+  actual pixels to a VLM, Jev decides `matches_blog` + `matches_style` against
+  0.65 / 0.6 floors (fail-open if Jev is down), and on a miss the failed image is
+  re-attached as an img2img reference with the VLM's complaints written into the
+  prompt — up to `IMAGE_MAX_REVISIONS` (default 3). Best attempt always returns; a
+  non-passing QA is reported, not raised.
+- Every call is audited in the auto-created `image_logs` worksheet (one row per
+  attempt, plus one summary row carrying the QA verdict).
+
+**Still open:** prompt length. The filled house prompt is ~4.1k chars and flux-2
+publishes no `maxLength` (flux-1-schnell caps at 2048) — unverified whether
+Cloudflare accepts it; a worker-community thread reports >6,144 chars rejected on
+some models. Trim `_HOUSE_IMAGE_PROMPT_TEMPLATE` first if generation starts failing,
+and confirm with one live generation once the daily Neuron allocation resets.
 
 **Option 1 — Gemini "Nano Banana" family, via the `GEMINI_API_KEY` already configured.**
 This is the most immediately actionable option since it needs zero new signup/key — the

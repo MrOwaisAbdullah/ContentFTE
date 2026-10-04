@@ -79,7 +79,16 @@ preparation_agent = Agent(
       - Use only the links that are already in the content
 
     4. **Fetch Image**
-    - Use `get_blog_image_tool` with `TITLE` (same as `Keyword/Topic` from index 0) and `Summary` (index 4 from sheet data). Note: `Summary` should be a 50–160 character SEO-friendly meta description; use it when available to guide image selection.
+    - Use `get_blog_image_tool` with a clearly labeled input block, e.g.:
+      ```
+      TITLE: Brand Consistency on Social Media
+      SUMMARY: Ever scrolled through your feed and instantly recognized a brand...
+      ```
+      `TITLE` is the same as `Keyword/Topic` from index 0 (or the derived title if you
+      have one already). `Summary` is index 4 from sheet data and should be a 50-160
+      character SEO-friendly meta description; use it when available to guide image
+      selection. The labels matter -- the tool reads them from this text to build the
+      image prompt, so do not pass a bare keyword with no labels.
       - This tool will generate an AI image first, evaluate its quality, and use stock photos as fallback.
       - **IMPORTANT**: The tool returns a JSON response. You MUST extract the `image_url` field from this JSON response.
       - Example JSON response format:
@@ -583,6 +592,14 @@ async def run_posting_workflow(max_retries: int = 2) -> Dict[str, Any]:
                 "status": "completed",
                 "data": posting_output,
                 "title": post_fields.get("TITLE"),
+                # source_keyword_topic is what generated_posts' Title column
+                # is keyed on -- TITLE itself is rephrased/optimized at
+                # publish time and can diverge from it (see _find_sanity_post_fuzzy).
+                "source_keyword_topic": post_fields.get("SOURCE_KEYWORD_TOPIC"),
+                # Which image actually shipped: the AI model id or the stock
+                # provider, resolved deterministically inside
+                # post_to_sanity_tool rather than by parsing agent prose.
+                "image_source": sanity_output.get("image_source"),
                 "post_url": sanity_output.get("post_url"),
                 "post_id": sanity_output.get("post_id"),
             }

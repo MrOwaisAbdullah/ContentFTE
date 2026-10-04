@@ -139,7 +139,7 @@ content_evaluation_agent = Agent(
     - `textstat_tool`: Calculate readability metrics (Flesch-Kincaid, sentence length).  
     - `grammar_check_tool`: Identify grammar/spelling errors.
 
-    **IMPORTANT**: The generated_posts worksheet has the following columns in order: Keyword/Topic, Generated Content, FAQs, Quality Score, Status, Approve/Disapprove, Published  
+    **IMPORTANT**: The generated_posts worksheet has the following columns in order: Title (the post's keyword/topic, called `Keyword/Topic` in older copies of this prompt), Generated Content, FAQs, Quality Score, Summary, Approve/Disapprove, Published. Two more columns are appended automatically at the end the first time they are needed: Created At, and Image Source (which AI model or stock provider the published post's image came from).
 
     **Output (JSON in Markdown):**  
 

@@ -47,11 +47,27 @@ class FallbackAgentRunner(AgentRunner):
             # 15 RPM each. Listing them as separate entries so the fallback
             # chain can exhaust one model's quota before moving to the next,
             # instead of sharing a single bucket.
-            {"name": "gemini-flash-latest", "model": "gemini-flash-latest", "provider": "gemini"},
-            {"name": "gemini-3.6-flash", "model": "gemini-3.6-flash", "provider": "gemini"},
-            {"name": "gemini-3.5-flash", "model": "gemini-3.5-flash", "provider": "gemini"},
+            #
+            # ORDER MATTERS: with empty provider_stats every model scores 0,
+            # so sorted() is stable and this declaration order IS the order
+            # run_with_fallback tries (agent.model is overwritten each time).
+            # Measured over 851 logged runs (2026-08-23 .. 2026-10-04):
+            #   gemini-3.5-flash-lite  9.34% error  (500 RPD / 15 RPM)
+            #   gemini-flash-latest   87.95% error  ( 20 RPD /  5 RPM)
+            #   gemini-3.5-flash      71.26% error  ( 20 RPD /  5 RPM)
+            #   gemini-3.6-flash      63.98% error  ( 20 RPD /  5 RPM)
+            # So the 500-RPD lite models lead the chain, and every model
+            # gets an independent quota bucket below.
             {"name": "gemini-3.5-flash-lite", "model": "gemini-3.5-flash-lite", "provider": "gemini"},
             {"name": "gemini-3.1-flash-lite", "model": "gemini-3.1-flash-lite", "provider": "gemini"},
+            # Additional Gemini Flash models with their own separate daily
+            # quotas (20 RPD / 5 RPM each) -- adding them buys more total
+            # headroom than reusing a single bucket.
+            {"name": "gemini-3.8-flash", "model": "gemini-3.8-flash", "provider": "gemini"},
+            {"name": "gemini-3.7-flash", "model": "gemini-3.7-flash", "provider": "gemini"},
+            {"name": "gemini-3.6-flash", "model": "gemini-3.6-flash", "provider": "gemini"},
+            {"name": "gemini-3.5-flash", "model": "gemini-3.5-flash", "provider": "gemini"},
+            {"name": "gemini-flash-latest", "model": "gemini-flash-latest", "provider": "gemini"},
             # DeepSeek V4 Flash via OpenRouter (paid, pay-per-token). Used as
             # the preferred evaluation model for cross-provider bias: when a
             # Gemini model writes content, DeepSeek evaluates it, and vice
@@ -78,22 +94,26 @@ class FallbackAgentRunner(AgentRunner):
 
         # Per-model daily request limits (RPD) from Google AI Studio dashboard.
         self.model_limits = {
-            "gemini-flash-latest": 20,
-            "gemini-3.6-flash": 20,
-            "gemini-3.5-flash": 20,
             "gemini-3.5-flash-lite": 500,
             "gemini-3.1-flash-lite": 500,
+            "gemini-3.8-flash": 20,
+            "gemini-3.7-flash": 20,
+            "gemini-3.6-flash": 20,
+            "gemini-3.5-flash": 20,
+            "gemini-flash-latest": 20,
             "deepseek-v4-flash": 1000,
             "openrouter-free": 50,
         }
 
         # Per-model requests-per-minute (RPM) limits.
         self.model_rpm_limits = {
-            "gemini-flash-latest": 5,
-            "gemini-3.6-flash": 5,
-            "gemini-3.5-flash": 5,
             "gemini-3.5-flash-lite": 15,
             "gemini-3.1-flash-lite": 15,
+            "gemini-3.8-flash": 5,
+            "gemini-3.7-flash": 5,
+            "gemini-3.6-flash": 5,
+            "gemini-3.5-flash": 5,
+            "gemini-flash-latest": 5,
             "deepseek-v4-flash": 60,
             "openrouter-free": 20,
         }
@@ -231,27 +251,17 @@ class FallbackAgentRunner(AgentRunner):
         self.rpm_timestamps.setdefault(model_name, []).append(datetime.now())
 
     async def _log_usage_to_sheet(self, model_name: str, agent_name: str, stage: str, success: bool, latency: float):
-        """Append one row to model_usage_log worksheet. Non-blocking:
+        """Append one row to the model usage worksheet. Non-blocking:
         failures are logged but never raise or break the pipeline."""
-        try:
-            from tools.sheet_tool import get_spreadsheet, ensure_worksheet_exists, resolve_worksheet
-            headers = ["Timestamp", "Model", "Agent", "Stage", "Status", "Latency (s)"]
-            ensure_worksheet_exists("usage logs", headers)
-            spreadsheet = get_spreadsheet()
-            worksheet = resolve_worksheet(spreadsheet, "usage logs")
-            worksheet.append_row(
-                [
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                    model_name,
-                    agent_name,
-                    stage,
-                    "success" if success else "error",
-                    f"{latency:.1f}",
-                ],
-                value_input_option="USER_ENTERED",
-            )
-        except Exception as e:
-            logger.warning(f"usage logs append failed (non-fatal): {e}")
+        from tools.sheet_tool import log_model_usage
+
+        log_model_usage(
+            model_name,
+            agent_name,
+            stage,
+            "success" if success else "error",
+            latency,
+        )
 
     def _seed_usage_from_sheet(self):
         """Read today's usage logs entries and seed model_usage so
@@ -389,6 +399,12 @@ class FallbackAgentRunner(AgentRunner):
                     if isinstance(input_data, list):
                         print(f"[Debug] Input length for agent '{agent_name}': {len(input_data)}")
 
+                    # Count this attempt against the RPD/RPM budget BEFORE
+                    # running. Previously usage was only incremented on
+                    # success, so a model Google was rejecting all day (e.g.
+                    # gemini-flash-latest at 87.95% error) kept reading as
+                    # "available" and got hammered on every retry.
+                    await self.increment_usage(model_config["name"])
                     start_time = datetime.now()
                     result = await self._execute_agent_run(
                         agent,
@@ -400,7 +416,6 @@ class FallbackAgentRunner(AgentRunner):
                     )
                     response_time = (datetime.now() - start_time).total_seconds()
                     await self._update_provider_stats(model_config["name"], True, response_time)
-                    await self.increment_usage(model_config["name"])
                     # Log success to sheet (non-blocking)
                     asyncio.create_task(
                         self._log_usage_to_sheet(model_config["name"], agent_name, stage, True, response_time)

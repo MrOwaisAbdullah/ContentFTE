@@ -9,6 +9,8 @@ import textstat
 from language_tool_python import LanguageTool
 import time
 from lib.sanity_adapter import SanityAdapter
+from lib import image_vision
+from tools.sheet_tool import log_image_usage
 from dotenv import load_dotenv
 import tempfile
 import logging
@@ -411,9 +413,65 @@ def grammar_check_tool(content: str):
     except Exception as e:
         return {"error": f"Grammar check failed: {str(e)}"}
 
+# --- Image provenance registry ---
+# The true origin of an image (which AI model produced it, or which stock
+# provider supplied it) is decided inside the two image tools below, but it
+# used to be lost by the time the post reached Sanity: post_to_sanity_tool
+# only ever received the final image_path/URL and had to guess from its
+# shape, so a Cloudflare-generated local .png was indistinguishable from any
+# other local file (it got reported as "Local"). Recording the id at
+# generation/fetch time and looking it up again at publish time keeps the
+# provenance authoritative without relying on an LLM echoing a `source`
+# field back through the Preparation -> Posting agent handoff.
+_IMAGE_SOURCE_REGISTRY: Dict[str, str] = {}
+
+
+def _image_source_key(value: Any) -> str:
+    """Normalizes an image id (local path or URL) so the same image is found
+    regardless of slash direction, query string, or letter case."""
+    v = str(value or "").strip()
+    if not v:
+        return ""
+    if v.lower().startswith(("http://", "https://")):
+        return v.split("?", 1)[0].rstrip("/").lower()
+    return os.path.normpath(v).lower()
+
+
+def record_image_source(image_id: Any, source: str) -> None:
+    key = _image_source_key(image_id)
+    if not key or not source:
+        return
+    # Bounded so a long-lived Discord bot process doesn't accumulate an entry
+    # per generated image forever. Evicts oldest-first; a run only ever
+    # generates a handful of images between selection and publish, so the
+    # 512-entry window is never close to being hit in practice.
+    if key not in _IMAGE_SOURCE_REGISTRY and len(_IMAGE_SOURCE_REGISTRY) >= 512:
+        _IMAGE_SOURCE_REGISTRY.pop(next(iter(_IMAGE_SOURCE_REGISTRY)))
+    _IMAGE_SOURCE_REGISTRY[key] = str(source)
+
+
+def lookup_image_source(image_id: Any) -> Optional[str]:
+    """Returns the recorded source for an image id, or None if unknown. Also
+    matches on basename, because the Preparation Agent re-echoes the path
+    through a plain-text block on its way to the Posting Agent and can still
+    alter separators or expand the 8.3 short name."""
+    key = _image_source_key(image_id)
+    if not key:
+        return None
+    if key in _IMAGE_SOURCE_REGISTRY:
+        return _IMAGE_SOURCE_REGISTRY[key]
+    base = os.path.basename(key)
+    if base:
+        for known_key, source in _IMAGE_SOURCE_REGISTRY.items():
+            if os.path.basename(known_key) == base:
+                return source
+    return None
+
+
 @function_tool
 def get_stock_image_tool(keyword: str):
     """Fetches a stock image with alt text from Pexels."""
+    started = time.time()
     try:
         url = f"https://api.pexels.com/v1/search?query={keyword}&per_page=1"
         headers = {"Authorization": os.environ['PEXELS_API_KEY']}
@@ -425,114 +483,446 @@ def get_stock_image_tool(keyword: str):
         # Validate that the URL is properly formatted
         if not image_url.startswith('http'):
             image_url = 'https://' + image_url.lstrip('https://').lstrip('http://')
+        record_image_source(image_url, STOCK_IMAGE_SOURCE_LABEL)
+        # Logged alongside the AI attempts so image_logs answers "what image
+        # source did this run actually end up with" for fallback runs too.
+        log_image_usage(STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "success", time.time() - started, detail="pexels")
         return {"image_url": image_url, "alt_text": f"{keyword} stock image", "source": "Pexels", "evaluation_score": 8.5, "feedback": "High quality stock photo from Pexels"}
     except Exception as e:
         logger.error(f"Failed to fetch stock image from Pexels: {e}")
+        log_image_usage(STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "error", time.time() - started, detail=str(e)[:500])
         return {"error": f"Failed to fetch stock image from Pexels: {str(e)}"}
 
-# Model choice backed by live leaderboard data (LM Arena / Artificial
-# Analysis Text-to-Image leaderboards), not marketing copy: FLUX.2 [dev]
-# ranks #8 overall on Artificial Analysis's leaderboard (ELO in the
-# 1149-1244 range depending on source/date) -- clearly ahead of the cheaper
-# FLUX.2 [klein] 4B/9B (ELO ~1030-1120) and legacy FLUX.1 [schnell] also
-# available on Workers AI's free tier. It costs more Neurons per image than
-# the klein tiers, but this is the primary/only AI image generator now
-# (Freepik was removed -- see the note near get_stock_image_tool below), and
-# one post's worth of images/day comfortably fits the free 10,000 Neuron/day
-# pool even at this model's higher per-image cost.
-CLOUDFLARE_IMAGE_MODEL = "@cf/black-forest-labs/flux-2-dev"
+# Default model: flux-2-klein-4b, overridable via CLOUDFLARE_IMAGE_MODEL so
+# swapping is an env change and not a code change.
+#
+# Why klein-4b: the free tier is 10,000 Neurons/day shared across all models,
+# and this pipeline now runs a generate -> VLM+Jev check -> regenerate loop,
+# so a post can consume 2-3 generations. Measured 2026-10-04 live costs for
+# one 1280x720 image:
+#   flux-2-klein-4b  ~110 n  -> ~90 generations/day
+#   flux-2-klein-9b ~1364 n  -> ~7/day
+#   flux-2-dev      ~2640 n  -> ~3/day
+# klein-4b is ~12x cheaper than dev and ~2.3s-30s per call, and klein-4b
+# also accepts an `image` reference (img2img), which the retry loop needs.
+#
+# KNOWN LIMITATION: klein-4b misspelled baked-in headline text in 3/3 live
+# tests ("SPEC-DRIFIEN" / "SPEC-DRITEN" / "DRVVIEN"). Its Qwen3-4B text
+# encoder is too weak for legible on-image titles. This is accepted because
+# the house prompt asks for minimal text (2-5 word hook at most) and the
+# article title is rendered as the page's own H1. If on-image text ever
+# matters, set CLOUDFLARE_IMAGE_MODEL=@cf/black-forest-labs/flux-2-klein-9b
+# (correct text, 2.3s, ~7/day) or .../flux-2-dev (~3/day, highest quality).
+CLOUDFLARE_IMAGE_MODEL = os.environ.get("CLOUDFLARE_IMAGE_MODEL") or "@cf/black-forest-labs/flux-2-klein-4b"
+
+# Max generate -> validate -> regenerate cycles per post before accepting
+# the best-scoring attempt or falling back to stock. Keeps worst-case
+# neuron spend bounded (3 x ~110 n ~= 330 n of the 10,000/day pool).
+IMAGE_MAX_REVISIONS = int(os.environ.get("IMAGE_MAX_REVISIONS") or "3")
+
+# Jev gate: VLM assessment passes only if BOTH the blog-topic match AND the
+# house-style match clear these floors. Below either floor, regenerate with
+# the previous image attached as reference plus the VLM's stated mismatches.
+# Thresholds live in lib/image_vision.py (single source of truth); re-exported
+# here because tools.py is where callers already look for image knobs.
+IMAGE_MATCH_THRESHOLD = image_vision.IMAGE_MATCH_THRESHOLD
+IMAGE_STYLE_THRESHOLD = image_vision.IMAGE_STYLE_THRESHOLD
+
+# Human-readable source labels written into the generated_posts "Image
+# Source" column. The AI label embeds the model id verbatim so "which model
+# made this image" is answerable from the sheet alone.
+STOCK_IMAGE_SOURCE_LABEL = "Pexels (stock photo)"
 
 
-def _generate_image_cloudflare(prompt: str, keyword: str) -> Optional[Dict[str, Any]]:
+def _cloudflare_source_label() -> str:
+    return f"Cloudflare Workers AI ({CLOUDFLARE_IMAGE_MODEL})"
+
+
+def _generate_image_cloudflare(
+    prompt: str, keyword: str, reference_b64: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """Primary AI image generator via Cloudflare Workers AI (10,000 free
     Neurons/day, no credit card required). If this fails or the credentials
-    aren't set, the caller (image_selection_agent) falls back to
-    get_stock_image_tool (Pexels) rather than this function retrying
-    internally."""
+    aren't set, the caller falls back to get_stock_image_tool (Pexels) rather
+    than this function retrying internally.
+
+    `reference_b64` is an optional base64 PNG/JPEG of the previous attempt.
+    FLUX.2 [klein] unifies generation and editing in one model, so passing it
+    lets the model revise toward the prompt instead of starting blind. If the
+    model rejects the reference, we retry once without it rather than failing
+    the whole post."""
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN")
     if not account_id or not api_token:
-        logger.info("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set; skipping Cloudflare Workers AI image fallback.")
+        logger.info("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set; skipping Cloudflare Workers AI image generation.")
         return None
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
+    headers = {"Authorization": f"Bearer {api_token}"}
+    # FLUX.2 requires multipart/form-data even for a text-only prompt (a
+    # documented quirk of this model family on Workers AI).
+    # (None, value) tuples send plain form fields without attaching a file.
+    base_fields = {
+        "prompt": prompt,
+        "width": "1280",   # 16:9 landscape, standard blog hero-image framing
+        "height": "720",   # both divisible by 16 as FLUX.2 requires
+    }
+
+    def _post(fields: Dict[str, str]):
+        body = b""
+        boundary = "----cf" + str(int(time.time() * 1000))
+        for name, value in fields.items():
+            body += (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
+        body += f"--{boundary}--\r\n".encode("utf-8")
+        return requests.post(
+            url,
+            headers={**headers, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+            data=body,
+            timeout=90,
+        )
+
+    attempts = []
+    if reference_b64:
+        attempts.append({**base_fields, "image": reference_b64})
+    attempts.append(base_fields)
+
+    last_error: Optional[str] = None
+
+    def _log_attempt(status: str, started: float, detail: str = "", with_ref: bool = False) -> None:
+        # One row per API attempt in image_logs, so "which image generation
+        # model ran, how long it took, and how many times the
+        # generate -> validate -> regenerate loop actually called it" is
+        # answerable from the sheet alone. Reference=yes marks the img2img
+        # revision attempts.
+        log_image_usage(
+            CLOUDFLARE_IMAGE_MODEL,
+            "generate",
+            keyword,
+            status,
+            time.time() - started,
+            reference="yes" if with_ref else "no",
+            detail=detail,
+        )
+
+    for idx, fields in enumerate(attempts):
+        with_ref = "image" in fields
+        attempt_started = time.time()
+        try:
+            response = _post(fields)
+            response.raise_for_status()
+            payload = response.json()
+            if not payload.get("success"):
+                last_error = json.dumps(payload.get("errors"))[:500]
+                logger.error(f"Cloudflare Workers AI image generation failed: {last_error}")
+                _log_attempt("error", attempt_started, detail=last_error, with_ref=with_ref)
+                continue
+            image_b64 = (payload.get("result") or {}).get("image")
+            if not image_b64:
+                last_error = "response missing image data"
+                logger.error(f"Cloudflare Workers AI {last_error}")
+                _log_attempt("error", attempt_started, detail=last_error, with_ref=with_ref)
+                continue
+            image_bytes = base64.b64decode(image_b64)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(image_bytes)
+                local_path = tmp.name
+            logger.info(
+                f"Successfully generated image via Cloudflare Workers AI ({CLOUDFLARE_IMAGE_MODEL}, "
+                f"reference={'yes' if with_ref else 'no'}): {local_path}"
+            )
+            source_label = _cloudflare_source_label()
+            record_image_source(local_path, source_label)
+            _log_attempt("success", attempt_started, detail="ok", with_ref=with_ref)
+            return {
+                "image_url": local_path,
+                "alt_text": f"{keyword} illustration",
+                "source": source_label,
+                "evaluation_score": 8.5,
+                "feedback": f"Generated via Cloudflare Workers AI {CLOUDFLARE_IMAGE_MODEL} (primary AI image generator, genuinely free tier)",
+            }
+        except Exception as e:
+            last_error = str(e)
+            _log_attempt("error", attempt_started, detail=str(e)[:500], with_ref=with_ref)
+            # A model that rejects the image reference is not a hard failure:
+            # fall through to the plain text-to-image attempt.
+            logger.warning(
+                f"Cloudflare Workers AI image generation failed"
+                f"{' with reference' if with_ref else ''}: {e}"
+            )
+    logger.error(f"Cloudflare Workers AI image generation gave up: {last_error}")
+    return None
+
+
+# The house thumbnail prompt, verbatim from the manual workflow that produced
+# every existing thumbnail on owaisabdullah.dev. Kept as one block so the
+# visual identity (cinematic 3D tech storytelling, deep-navy foundation with
+# electric blue/cyan plus violet or amber accents, expressive original
+# characters, minimal on-image text) stays identical across posts; only the
+# article-specific slots are filled per run.
+#
+# NOTE: ~4.1k chars. Workers AI does not publish a maxLength for the flux-2
+# family (flux-1-schnell caps prompts at 2048). If a model swap starts
+# rejecting prompts, trim this block first.
+_HOUSE_IMAGE_PROMPT_TEMPLATE = '''Create a premium cinematic hero thumbnail for a technical blog post on **owaisabdullah.dev**.
+
+**Visual identity:** Cinematic 3D tech storytelling, polished CGI, expressive original characters, sophisticated lighting, rich environments, and strong visual metaphors. The result should feel like high-end animated-film concept art blended with premium technology editorial artwork—not a generic SaaS advertisement.
+
+**Format and composition**
+- Landscape 16:9 aspect ratio, ideally 1600 × 900 pixels.
+- Compose for a website blog card and a full-width article hero.
+- Establish one unmistakable focal point with clear foreground, middle ground, and background.
+- Use dramatic perspective, cinematic depth of field, realistic material details, atmospheric lighting, and carefully controlled visual complexity.
+- Keep the main subject large, recognizable, and readable at small thumbnail sizes.
+- Reserve clean negative space for a short headline only when needed.
+
+**Color and lighting**
+- Use deep navy, midnight blue, and charcoal as the usual foundation.
+- Add electric blue and cyan lighting, with violet, magenta, or pink accents where they suit the subject.
+- Introduce warm amber, orange, or gold highlights to create contrast and depth.
+- Adapt the palette to the specific product, logo, or article topic rather than forcing identical colors onto every image.
+- Use luminous accents, subtle reflections, atmospheric haze, and rich shadows without excessive neon.
+
+**Character direction**
+- When a character helps tell the story, create a distinctive, expressive, high-quality 3D cartoon character designed specifically for this article.
+- Explore different character types, silhouettes, personalities, poses, facial expressions, costumes, and materials across different posts.
+- The character must embody the article's subject or represent its central conflict, transformation, tool, or outcome.
+- Characters can be cute, clever, mysterious, mischievous, intimidating, competitive, heroic, or humorous depending on the topic.
+- Do not automatically use robots, hoodie-wearing developers, people at desks, or the same mascot in every image.
+- For articles that work better with objects, creatures, environments, or abstract visual metaphors, do not force a human character into the composition.
+
+**Topic-specific storytelling**
+Before designing the image, identify the article's central idea and translate it into one memorable visual scene. Explore original concepts such as a character battle, a magical transformation, a miniature automated city, a branching decision system, a dramatic before-and-after scene, or a powerful symbolic object.
+Use the actual article topic and relevant brand identity to guide the imagery. Include recognizable logos only when appropriate, and preserve their supplied shapes and colors as closely as possible.
+
+**Typography**
+- Keep on-image text minimal: ideally a short title or 2-5-word hook.
+- Use bold, clean, legible typography with strong contrast.
+- Prioritize the visual story over explanatory text.
+- Do not invent product specifications, prices, performance numbers, or unsupported claims.
+- Avoid tiny labels, crowded UI panels, unnecessary slogans, and excessive text.
+
+**Avoid**
+Generic stock imagery, repetitive compositions, the same robot mascot across posts, generic people staring at laptops, cluttered floating dashboards, excessive icons, walls of text, flat corporate illustrations, cheap-looking plastic materials, oversaturated neon everywhere, watermarks, misspelled text, and irrelevant decorative technology.
+
+**Most important rule:** Every thumbnail must have its own original visual concept and character direction. Maintain the recognizable cinematic quality and overall visual polish of owaisabdullah.dev, but vary the subject, composition, color balance, setting, and storytelling from one article to the next.
+
+**Article title:** [INSERT TITLE]
+
+**Article URL or summary:** [INSERT URL OR SUMMARY]
+
+**Brand logo or reference image:** [ATTACH IF RELEVANT]'''
+
+# Exact slot markers from the original manual template, replaced per post.
+_TITLE_SLOT = "[INSERT TITLE]"
+_SUMMARY_SLOT = "[INSERT URL OR SUMMARY]"
+_LOGO_SLOT = "[ATTACH IF RELEVANT]"
+
+# Cap on an agent-supplied scene concept so a model that tries to write a
+# whole replacement prompt cannot blow past the flux-2 prompt limits.
+_SCENE_CONCEPT_MAX_CHARS = 600
+
+
+def _build_house_prompt(title: str, summary: str, scene_concept: str = None) -> str:
+    """Fill the house template's per-article slots and append the agent's
+    scene concept (if any) as an explicit direction, without letting it
+    replace the house style."""
+    prompt = _HOUSE_IMAGE_PROMPT_TEMPLATE
+    prompt = prompt.replace(_TITLE_SLOT, (title or "").strip() or "[Article title unavailable]")
+    prompt = prompt.replace(_SUMMARY_SLOT, (summary or "").strip() or "[Article summary unavailable]")
+    # No image can actually be attached over this tool boundary, so say so
+    # explicitly instead of leaving a placeholder that invites the model to
+    # invent a logo.
+    prompt = prompt.replace(_LOGO_SLOT, "none supplied - do not invent a brand logo or watermark")
+
+    concept = (scene_concept or "").strip()
+    if concept:
+        if len(concept) > _SCENE_CONCEPT_MAX_CHARS:
+            concept = concept[:_SCENE_CONCEPT_MAX_CHARS].rstrip() + "..."
+        prompt += f"\n\n**Scene concept chosen for this post:** {concept}"
+    return prompt
+
+
+def _file_to_b64(path: str) -> Optional[str]:
     try:
-        url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
-        headers = {"Authorization": f"Bearer {api_token}"}
-        # FLUX.2 [dev] requires multipart/form-data even for a text-only
-        # prompt (a documented quirk of this model family on Workers AI).
-        # (None, value) tuples send plain form fields without attaching a file.
-        files = {
-            "prompt": (None, prompt),
-            "width": (None, "1280"),  # 16:9 landscape, standard blog hero-image framing
-            "height": (None, "720"),
-            "steps": (None, "20"),
-        }
-        response = requests.post(url, headers=headers, files=files, timeout=90)
-        response.raise_for_status()
-        payload = response.json()
-        if not payload.get("success"):
-            logger.error(f"Cloudflare Workers AI image generation failed: {payload.get('errors')}")
-            return None
-        image_b64 = (payload.get("result") or {}).get("image")
-        if not image_b64:
-            logger.error("Cloudflare Workers AI response missing image data")
-            return None
-        image_bytes = base64.b64decode(image_b64)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            tmp.write(image_bytes)
-            local_path = tmp.name
-        logger.info(f"Successfully generated image via Cloudflare Workers AI ({CLOUDFLARE_IMAGE_MODEL}): {local_path}")
-        return {
-            "image_url": local_path,
-            "alt_text": f"{keyword} illustration",
-            "source": "Cloudflare Workers AI (FLUX.2 dev)",
-            "evaluation_score": 8.5,
-            "feedback": "Generated via Cloudflare Workers AI FLUX.2 [dev] (primary AI image generator, genuinely free tier)",
-        }
-    except Exception as e:
-        logger.error(f"Cloudflare Workers AI image generation failed: {e}")
+        with open(path, "rb") as fh:
+            return base64.b64encode(fh.read()).decode("ascii")
+    except OSError as e:
+        logger.warning(f"Cannot re-read generated image as reference: {path}: {e}")
         return None
+
+
+def _rank_image_verdict(verdict: Dict[str, Any]) -> float:
+    """Best-attempt scoring: a passing QA beats a failing one, then higher
+    Jev Noul scores win. Fallback (unjudgeable) scores lowest but still > 0
+    so we always keep something."""
+    blog = verdict.get("matches_blog")
+    style = verdict.get("matches_style")
+    score = 0.0
+    if isinstance(blog, (int, float)):
+        score += float(blog)
+    if isinstance(style, (int, float)):
+        score += float(style)
+    if verdict.get("passed"):
+        score += 1000.0
+    elif verdict.get("fallback") and blog is None:
+        score += 0.001
+    return score
 
 
 @function_tool
-def generate_image_tool(keyword: str, custom_prompt: str = None):
-    """Generates an image for a blog post using Cloudflare Workers AI
-    (genuinely free, no credit card, no per-key credential fragility). On
-    failure, returns an error dict -- the calling agent (image_selection_agent)
-    is instructed to fall back to get_stock_image_tool rather than this
-    function retrying internally."""
+def generate_image_tool(keyword: str, title: str = None, summary: str = None, custom_prompt: str = None):
+    """Generates the blog post's thumbnail image using Cloudflare Workers AI
+    (genuinely free, no credit card, no per-key credential fragility).
 
-    # Use custom prompt if provided, otherwise create a diverse, creative prompt
-    if custom_prompt:
-        prompt = custom_prompt
-    else:
-        # Create diverse prompts to avoid repetitive blue/futuristic themes
-        prompt_templates = [
-            f"Vibrant, colorful digital painting illustrating concepts related to {keyword}, with dynamic composition and rich textures",
-            f"Warm, inviting photograph of {keyword} with natural lighting, professional quality, and engaging visual storytelling",
-            f"Bold graphic design representing {keyword} with striking contrasts, modern typography, and eye-catching layout",
-            f"Artistic watercolor illustration of {keyword} with organic textures, flowing colors, and expressive brushwork",
-            f"Dynamic action shot featuring {keyword} with dramatic angles, cinematic lighting, and high energy",
-            f"Clean minimalist composition about {keyword} with ample white space, elegant design, and sophisticated aesthetics",
-            f"Rich, saturated colors depicting {keyword} with dramatic lighting and emotional impact",
-            f"Hand-drawn sketch of {keyword} with expressive linework, artistic flair, and creative interpretation",
-            f"Retro-inspired design representing {keyword} with vintage color palette and nostalgic elements",
-            f"Abstract geometric composition illustrating {keyword} with modern elements and innovative design"
-        ]
-        # Randomly select a template to add variety
-        import random
-        prompt = random.choice(prompt_templates)
-        logger.info(f"Generated diverse prompt for '{keyword}': {prompt}")
+    The image is ALWAYS built from owaisabdullah.dev's house cinematic
+    thumbnail prompt -- you do not write the image prompt yourself. Pass:
+
+    - keyword: the post's topic/keyword (also used for alt text)
+    - title: the post's article title (fills the house prompt's title slot)
+    - summary: the post's 50-160 char SEO summary (fills the summary slot)
+    - custom_prompt: OPTIONAL, one short sentence naming the specific visual
+      scene you want for THIS post (e.g. "two gears meshing, one cracked and
+      one new, showing legacy code being replaced"). It is appended as a
+      scene concept; it never replaces the house style.
+
+    Each attempt is checked by a VLM (which actually looks at the pixels)
+    plus Jev, which decides whether the image matches the article topic AND
+    the house style. If either check misses its threshold the image is
+    regenerated with the previous attempt attached as a reference and the
+    VLM's specific complaints written into the prompt -- up to
+    IMAGE_MAX_REVISIONS attempts. The best attempt is always returned.
+
+    Returns a dict with image_url/alt_text/source plus a `qa` block
+    {passed, matches_blog, matches_style, attempts, issues}. A non-passing
+    `qa.passed` is NOT an error -- an image is returned if any attempt
+    succeeded. On total failure, returns an error dict; the calling agent
+    (image_selection_agent) then falls back to get_stock_image_tool."""
+    base_prompt = _build_house_prompt(title, summary, custom_prompt)
+    if len(base_prompt) > 6000:
+        logger.warning(
+            f"Thumbnail prompt is {len(base_prompt)} chars; flux-2 prompt limits are unpublished "
+            f"and flux-1-schnell caps at 2048. If generation fails, trim _HOUSE_IMAGE_PROMPT_TEMPLATE."
+        )
+    logger.info(f"Building house thumbnail prompt for '{title or keyword}' ({len(base_prompt)} chars)")
+
+    best: Optional[Dict[str, Any]] = None
+    best_verdict: Dict[str, Any] = {}
+    best_rank = -1.0
+    reference_b64: Optional[str] = None
+    prompt = base_prompt
+    attempts = 0
+    qa_trace: List[Dict[str, Any]] = []
 
     # Freepik was removed as a provider here (persistent 401 -- an invalid/
     # expired key that was never rotated -- and a one-time trial credit
     # rather than an ongoing free tier to begin with). Cloudflare Workers AI
     # is the sole AI generator now; if it's not configured or fails, the
     # caller falls back to get_stock_image_tool (Pexels).
-    cloudflare_result = _generate_image_cloudflare(prompt, keyword)
-    if cloudflare_result:
-        return cloudflare_result
+    loop_started = time.time()
+    for attempt in range(1, IMAGE_MAX_REVISIONS + 1):
+        result = _generate_image_cloudflare(
+            prompt, title or keyword, reference_b64=reference_b64
+        )
+        if not result:
+            break
+        attempts = attempt
+        image_path = result["image_url"]
 
-    return {"error": "All image generation services failed"}
+        verdict = image_vision.validate_thumbnail(image_path, title, summary)
+        rank = _rank_image_verdict(verdict)
+        qa_trace.append(
+            {
+                "attempt": attempt,
+                "passed": verdict.get("passed"),
+                "matches_blog": verdict.get("matches_blog"),
+                "matches_style": verdict.get("matches_style"),
+                "issues": (verdict.get("issues") or [])[:5],
+                "vlm": (verdict.get("vlm") or {}).get("model"),
+                "fallback": verdict.get("fallback"),
+                "latency_ms": verdict.get("latency_ms"),
+            }
+        )
+        logger.info(
+            f"Image QA attempt {attempt}/{IMAGE_MAX_REVISIONS}: passed={verdict.get('passed')} "
+            f"matches_blog={verdict.get('matches_blog')} matches_style={verdict.get('matches_style')} "
+            f"issues={len(verdict.get('issues') or [])}"
+        )
+
+        if rank > best_rank:
+            # Keep the winner; discard any previous runner-up's temp file.
+            if best and best.get("image_url") and best["image_url"] != image_path:
+                try:
+                    os.remove(best["image_url"])
+                except OSError:
+                    pass
+            best, best_verdict, best_rank = result, verdict, rank
+
+        if verdict.get("passed"):
+            break
+
+        # Reject this attempt: use it as the edit reference for the next one.
+        next_reference = _file_to_b64(image_path)
+        if not next_reference:
+            break
+        guidance = image_vision.revision_guidance(verdict)
+        prompt = (
+            f"{base_prompt}\n\n"
+            f"**Revision required (attempt {attempt + 1} of {IMAGE_MAX_REVISIONS}). "
+            f"The previous image attached as a reference did not pass QA:**\n{guidance}\n\n"
+            f"Keep the same article subject but improve on the reference. "
+            f"The attached reference is the FAILED attempt, not an asset to preserve."
+        )
+        reference_b64 = next_reference
+
+    if not best:
+        log_image_usage(
+            CLOUDFLARE_IMAGE_MODEL,
+            "result",
+            title or keyword,
+            "failed",
+            time.time() - loop_started,
+            detail=f"attempts=0/{IMAGE_MAX_REVISIONS} all generation attempts failed",
+        )
+        return {"error": "All image generation services failed"}
+
+    # A non-passing QA is not an error: an image was produced and further
+    # attempts would only burn neuron quota. Report it for observability.
+    qa = {
+        "passed": bool(best_verdict.get("passed")),
+        "matches_blog": best_verdict.get("matches_blog"),
+        "matches_style": best_verdict.get("matches_style"),
+        "threshold_blog": image_vision.IMAGE_MATCH_THRESHOLD,
+        "threshold_style": image_vision.IMAGE_STYLE_THRESHOLD,
+        "attempts": attempts,
+        "max_revisions": IMAGE_MAX_REVISIONS,
+        "issues": best_verdict.get("issues") or [],
+        "text_seen": best_verdict.get("text_seen"),
+        "fallback": bool(best_verdict.get("fallback")),
+        "trace": qa_trace,
+    }
+    best["qa"] = qa
+    if title:
+        best["alt_text"] = title
+    # One summary row per call: the VLM/Jev verdict for the winning attempt,
+    # so image_logs answers "did it pass, and after how many tries" without
+    # having to join the per-attempt rows above it.
+    log_image_usage(
+        CLOUDFLARE_IMAGE_MODEL,
+        "result",
+        title or keyword,
+        "passed" if qa["passed"] else "failed",
+        time.time() - loop_started,
+        detail=(
+            f"attempts={attempts}/{IMAGE_MAX_REVISIONS} "
+            f"blog={qa['matches_blog']} style={qa['matches_style']} "
+            f"issues={'; '.join(str(i) for i in (qa['issues'] or [])[:3])}"
+        ),
+    )
+    return best
 
 @function_tool
 def post_to_sanity_tool(
@@ -677,11 +1067,18 @@ def post_to_sanity_tool(
 
         # --- Return Result ---
         if result["status"] == "success":
-            # Determine source based on image_path
-            if image_path and image_path.startswith('http'):
-                image_source = "Pexel" if 'pexels' in image_path.lower() else "Downloaded"
-            else:
-                image_source = "Local"
+            # Prefer the source recorded when the image was actually
+            # generated/fetched (see _IMAGE_SOURCE_REGISTRY) -- it is the
+            # only place that still knows the model id after the image has
+            # been reduced to a path. The shape heuristic below only exists
+            # as a fallback for images the registry never saw (older runs,
+            # or an image that arrived by some other route).
+            image_source = lookup_image_source(image_path)
+            if not image_source:
+                if image_path and image_path.startswith('http'):
+                    image_source = "Pexel" if 'pexels' in image_path.lower() else "Downloaded"
+                else:
+                    image_source = "Local"
                 
             return {
                 "status": "success",

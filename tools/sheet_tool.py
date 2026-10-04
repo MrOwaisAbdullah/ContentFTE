@@ -1,6 +1,7 @@
 import os
 import json
 import gspread
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 from typing import List, TypedDict, Optional, Union, Any, Dict, Literal
 import logging
@@ -132,6 +133,108 @@ def ensure_worksheet_exists(worksheet_name: str, headers: List[str]) -> bool:
         return True
     except Exception as e:
         logger.error(f"Failed to ensure worksheet '{worksheet_name}' exists: {e}")
+        return False
+
+
+# The model usage worksheet. The code asks for "usage logs" and
+# resolve_worksheet's alias set maps that onto the live sheet's
+# "model_usage_log" tab, so both names address the same place.
+MODEL_USAGE_WORKSHEET = "usage logs"
+MODEL_USAGE_HEADERS = ["Timestamp", "Model", "Agent", "Stage", "Status", "Latency (s)"]
+
+
+def log_model_usage(
+    model: str, agent: str, stage: str, status: str, latency: float
+) -> bool:
+    """Appends one row to the model usage worksheet, shared by the LLM
+    fallback runner so every row lands in the same six columns.
+
+    Best-effort and never raises -- a sheet hiccup must not fail the run that
+    triggered it. Returns True only if the row was actually written.
+
+    Deliberately synchronous: a deferred ``create_task()`` can be dropped if
+    the process exits right after the caller returns, which is exactly what
+    happens in a one-shot GitHub Actions run."""
+    try:
+        if not model:
+            return False
+        spreadsheet = get_spreadsheet()
+        ensure_worksheet_exists(MODEL_USAGE_WORKSHEET, MODEL_USAGE_HEADERS)
+        worksheet = resolve_worksheet(spreadsheet, MODEL_USAGE_WORKSHEET)
+        worksheet.append_row(
+            [
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                str(model),
+                str(agent or "unknown"),
+                str(stage or "unknown"),
+                str(status),
+                f"{float(latency or 0.0):.1f}",
+            ],
+            value_input_option="USER_ENTERED",
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"model usage log append failed (non-fatal): {e}")
+        return False
+
+
+# Dedicated image-audit worksheet, kept separate from model_usage_log so
+# "which image model ran, and did it pass" is a single readable tab instead of
+# being interleaved with hundreds of LLM rows. Created on first write.
+IMAGE_LOG_WORKSHEET = "image_logs"
+IMAGE_LOG_HEADERS = [
+    "Timestamp",
+    "Model",
+    "Stage",
+    "Subject",
+    "Status",
+    "Reference",
+    "Latency (s)",
+    "Detail",
+]
+
+
+def log_image_usage(
+    model: str,
+    stage: str,
+    subject: str,
+    status: str,
+    latency: float,
+    reference: str = "",
+    detail: str = "",
+) -> bool:
+    """Appends one row to the `image_logs` worksheet.
+
+    One row per actual image call -- every Cloudflare generation attempt
+    (Stage=`generate`, including the img2img revision attempts, which is what
+    `Reference=yes` marks), every Pexels fetch (Stage=`stock`), and one
+    summary row per `generate_image_tool` call (Stage=`result`) carrying the
+    VLM/Jev verdict so the loop's outcome is readable without joining rows.
+
+    Best-effort and never raises: a sheet hiccup must not fail an image
+    generation that already succeeded. Returns True only if the row landed."""
+    try:
+        if not model:
+            return False
+        spreadsheet = get_spreadsheet()
+        ensure_worksheet_exists(IMAGE_LOG_WORKSHEET, IMAGE_LOG_HEADERS)
+        worksheet = resolve_worksheet(spreadsheet, IMAGE_LOG_WORKSHEET)
+        worksheet.append_row(
+            [
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                str(model),
+                str(stage or ""),
+                str(subject or ""),
+                str(status or ""),
+                str(reference or ""),
+                f"{float(latency or 0.0):.1f}",
+                str(detail or "")[:500],
+            ],
+            value_input_option="USER_ENTERED",
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"image log append failed (non-fatal): {e}")
         return False
 
 

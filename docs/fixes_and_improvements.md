@@ -1234,3 +1234,109 @@ A cluster of related `edit_post` bugs, all following from the same root lesson a
 **`edit_post` failed outright on posts with no sheet row.** Even after the fuzzy-match fix above, `edit_post` still *required* a `generated_posts` row to find a post's content to edit in the first place -- posts published before that column existed, or edited directly in Sanity Studio, have no row at all, so editing them failed with a generic "not found" error. This directly blocked editing the exact post `search_performance_review` flagged for a low-CTR title/meta rewrite, confirmed live across two separate attempts. Added `SanityAdapter._portable_text_to_markdown` (renders Portable Text blocks -- headings, lists, bold/italic/code marks, links via `markDefs`, images via a CDN-URL builder from the asset `_ref` -- back to Markdown) and `get_post_content_markdown`, so `run_edit_post` falls back to reading a post's content directly from Sanity when no sheet row exists, then patches that document directly (it's definitionally already published if it's live in Sanity). The converter doesn't need to be lossless -- the edited result always goes back through the already-proven `markdown_to_sanity_blocks` on save, so an imperfectly rendered edge case degrades formatting fidelity, not data. Verified against real live post content before wiring in, then verified end-to-end live: the exact previously-failing post was found, edited, patched, and the new sentence confirmed present on the live page.
 
 **Known remaining gap:** `edit_post` can only change a post's body **content**, not its **title or meta description**. This matters concretely because `search_performance_review`'s actual suggested fix for a low-CTR post is "rewrite the title and/or meta description" -- so even with the fallback above, that specific class of requested edit still can't be fulfilled end-to-end yet. `update_post_content` only ever patches the `content` field, and `post_editor_agent`'s output contract is raw Markdown body text with no channel for returning a new title/summary alongside it. Not built yet since it wasn't explicitly requested -- would need either a structured output type for `post_editor_agent` or a lightweight sentinel-header convention, plus a new `SanityAdapter` method to patch `title`/`summary`, and (if the sheet row exists) updating those columns too.
+
+## 2026-10-04: thumbnail pipeline rebuilt (house prompt + pixel-level QA loop)
+
+**The agent was writing its own image prompt, and nothing ever looked at the image.**
+`image_selection_agent` assembled a prompt from a list of alternate style templates
+(watercolor, sketch, flat vector, ...) plus a hard `Never include faces/people/logos`
+ban -- none of which match the site's actual cinematic-3D identity -- and
+`image_quality_evaluation_agent` scored the result *from the filename alone*. It runs
+through `agent.as_tool()`, whose schema is fixed at `{"input": string}` with
+`required: ["input"]`, so there is no image input mechanism at all; every score it
+produced was a hallucination.
+
+**Fix:**
+
+- `_HOUSE_IMAGE_PROMPT_TEMPLATE` in `tools/tools.py` is the user's real manual
+  thumbnail prompt, verbatim. `_build_house_prompt(title, summary, scene_concept)`
+  fills the `[INSERT TITLE]` / `[INSERT URL OR SUMMARY]` / `[ATTACH IF RELEVANT]`
+  slots (asserted empty after fill; empty summary falls back to the keyword). The
+  agent no longer writes the prompt -- `generate_image_tool` takes
+  `keyword/title/summary/custom_prompt`, where `custom_prompt` is only a one-sentence
+  scene concept appended to the house style, never a replacement.
+- `lib/image_vision.py` sends the actual pixels to `gemini-3.5-flash-lite` (fallbacks:
+  `gemini-3.1-flash-lite`, `gemini-3.6-flash`, `gemini-3.5-flash`,
+  `gemini-flash-latest`) as a base64 `image_url` part on the Gemini OpenAI-compat
+  endpoint, and gets back a description, the on-image text it can read, style notes
+  and issues. Jev then turns that into `matches_blog` / `matches_style` decisions
+  against 0.65 / 0.6 floors, **fail-open** on `JevError` so a decision-service outage
+  can't block a publish.
+- `generate_image_tool` runs generate → validate → regenerate up to
+  `IMAGE_MAX_REVISIONS` (default 3), re-attaching the failed image as an img2img
+  reference and writing the VLM's specific complaints into the prompt. The best
+  attempt is kept (losers' temp files deleted), a non-passing QA returns as a `qa`
+  block rather than an error, and total failure returns
+  `{"error": "All image generation services failed"}` for the caller to fall back.
+- Default model switched `flux-2-dev` → `flux-2-klein-4b` via
+  `CLOUDFLARE_IMAGE_MODEL`, and `steps: 20` was dropped from the multipart payload
+  (klein fixes steps at 4 and the value was being ignored anyway).
+
+**Verified live** (Cloudflare quota already spent, so the gate was exercised with
+real generated images rather than a fresh generation): the VLM correctly described a
+thumbnail, read its headline, flagged "gibberish text" and "oversaturated neon", and
+Jev scored an off-topic image `matches_blog = 0.06` vs an on-topic one `0.66` --
+exactly the discrimination the old filename-based scorer could not do.
+
+**Known open item:** the filled prompt is ~4.1k chars and flux-2 publishes no
+`maxLength`; this has not yet been confirmed accepted by Cloudflare (the daily
+Neuron allocation was already spent while testing). Confirm with one live
+generation once it resets, before treating the prompt length as settled.
+
+## 2026-10-04: image provenance recorded (`Image Source` column + `image_logs`)
+
+**"Did this post get an AI image or a stock photo, and from which model" had no
+answer.** `post_to_sanity_tool` derived `image_source` from the shape of the local
+file path, so every Cloudflare-generated file collapsed to `"Local"` and nothing was
+ever written to the sheet.
+
+- `_stamp_image_source()` (scripts/run_stage.py) writes the real label into a new
+  `Image Source` column on `generated_posts`, found by `Title` and skipped if already
+  set. The column is appended **at the end** by `_ensure_column_header`, never
+  inserted mid-row -- `generated_posts` is appended positionally elsewhere and the
+  `approved_unpublished` `FILTER` formula pins `A2:G`, so a mid-row insert would
+  corrupt every later row's mapping. It is deliberately *not* a member of
+  `_GENERATED_POSTS_FIELDS`, which would have shifted the positional `append_row`.
+- Labels are produced by `_cloudflare_source_label()`
+  (`Cloudflare Workers AI (@cf/black-forest-labs/flux-2-klein-4b)`) and
+  `STOCK_IMAGE_SOURCE_LABEL`, and flow back through `post_to_sanity_tool`'s
+  `image_source` / `source_keyword_topic` return values.
+- The `image_logs` worksheet (auto-created, 8 columns: `Timestamp, Model, Stage,
+  Subject, Status, Reference, Latency (s), Detail`) records every image call:
+  `Stage=generate` per Cloudflare attempt with `Reference=yes` on img2img revisions
+  and the error text in `Detail`, `Stage=stock` for Pexels, and one `Stage=result`
+  row per tool call carrying the VLM/Jev verdict and attempts used.
+- `log_model_usage()` was extracted into `tools/sheet_tool.py` so the LLM runner and
+  the image tools share one implementation; `_log_usage_to_sheet` now delegates to it.
+
+Verified against the live sheet: worksheet auto-created with the right headers, 4
+test rows written through the real SDK tool path using an invalid Cloudflare account
+(so zero Neurons spent), all assertions passed, rows removed, sheet restored to its
+original 851 entries with headers intact.
+
+## 2026-10-04: fallback chain was retrying the worst model in the pool
+
+See [model_improvements.md](model_improvements.md) for the full analysis. Summary:
+`increment_usage()` only ran on success, so a quota-exhausted model read
+`available: true` forever; usage is now counted per attempt, `LLM_MODELS` leads with
+the 500-RPD lite models instead of `gemini-flash-latest` (87.95% error), and
+`gemini-3.7-flash` / `gemini-3.8-flash` were added as independent 20-RPD buckets.
+
+## 2026-10-04: OpenAI Agents SDK assumptions re-verified
+
+Several fixes this session depended on SDK behaviour that was checked against
+Context7 docs *and* the installed `openai-agents 0.19.2` at runtime rather than
+assumed:
+
+- `function_tool` exposes `params_json_schema`; passing `= None` defaults or
+  `Optional[...]` does **not** make a parameter optional -- the schema marks every
+  function-tool parameter `required`, so `generate_image_tool`'s instructions have to
+  tell the agent to supply `keyword/title/summary/custom_prompt`.
+- `agents.function_tool is agents.decorators.tool` -- True; `FunctionTool` has no
+  `.func` attribute, so invoking one directly requires
+  `on_invoke_tool(ToolContext(context=..., tool_name=..., tool_call_id=...,
+  tool_arguments=...), json_string)`.
+- `RunConfig(tool_not_found_behavior="return_error_to_model")` is passed via
+  `run_config=`; `AgentHooks.on_end` receives the output, `on_tool_end` the raw
+  Python return value (dicts work); `FunctionTool.params_json_schema` is the correct
+  attribute name, not `input_schema`.
