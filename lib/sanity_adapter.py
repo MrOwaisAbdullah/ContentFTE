@@ -7,8 +7,8 @@ import logging
 import json
 import uuid
 import re
-import mimetypes
 import urllib.parse
+from lib import image_format
 from typing import Dict, Any, Optional, List, Union
 from lib.markdown_parser import markdown_to_sanity_blocks
 # Configure logging for this module
@@ -349,11 +349,13 @@ class SanityAdapter:
         filename_encoded = urllib.parse.quote(os.path.basename(image_path))
         upload_url = f"{self.base_url}/assets/images/{self.dataset}?filename={filename_encoded}"
 
-        # Guess MIME type (from working snippet)
-        mime_type, _ = mimetypes.guess_type(image_path)
-        if not mime_type:
-            mime_type = "image/jpeg" # Default fallback (from working snippet)
-        logger.debug(f"[SanityAdapter.upload_image] Guessed MIME type: {mime_type}")
+        # Sniff the actual bytes rather than trusting the file extension --
+        # flux-2 hands back JPEG even for images written to a `.png` path,
+        # and a lying Content-Type makes Sanity store the asset under the
+        # wrong format.
+        with open(image_path, "rb") as fh:
+            mime_type = image_format.sniff_mime(fh.read(16), fallback="image/jpeg")
+        logger.debug(f"[SanityAdapter.upload_image] Sniffed MIME type: {mime_type}")
 
         # Prepare headers (from working snippet)
         headers = {

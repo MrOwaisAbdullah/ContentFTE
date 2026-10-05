@@ -62,19 +62,30 @@ the title, the SEO summary, and an optional one-sentence scene concept.
 
 Generation is a **generate → look → revise** loop, not a single shot:
 
-1. `_build_house_prompt()` fills the title/summary/scene-concept slots of the
-   house template (default model `@cf/black-forest-labs/flux-2-klein-4b`,
-   ~110 Neurons per 1280×720 image, overridable with `CLOUDFLARE_IMAGE_MODEL`).
-2. `lib/image_vision.py` sends the actual pixels to a VLM (`gemini-3.5-flash-lite`)
+1. `_image_plan(attempt)` picks the model *and* the typography for this attempt.
+   With `IMAGE_ROUTER` on (the default) attempt 1 uses the cheap model
+   (`@cf/black-forest-labs/flux-2-klein-4b`, ~110 Neurons per 1280×720 image,
+   overridable with `CLOUDFLARE_IMAGE_MODEL`) with **zero on-image text** — it
+   garbles baked-in words, so the cheapest pass never asks for any. Only if it
+   fails QA does attempt 2+ escalate to `IMAGE_TEXT_MODEL`
+   (`flux-2-klein-9b`, ~1,364 Neurons) with a headline. `IMAGE_ROUTER=0` pins
+   every attempt to `CLOUDFLARE_IMAGE_MODEL` with a headline.
+2. `_build_house_prompt()` fills the title/summary/scene-concept slots of the
+   house template and appends a closing rule: *no text at all* on the cheap
+   pass, *one short headline and no watermark* on the text pass.
+3. `lib/image_vision.py` sends the actual pixels to a VLM (`gemini-3.5-flash-lite`)
    which returns a description, the on-image text it can read, style notes, and
    issues — the image is never judged from its filename.
-3. Jev turns that into a decision: `matches_blog` and `matches_style` must both
+4. Jev turns that into a decision: `matches_blog` and `matches_style` must both
    clear their thresholds (0.65 / 0.6) to pass. Jev is **fail-open** — if the
    decision service is down the image is accepted rather than blocking a post.
-4. On a miss, the image is regenerated with the failed attempt attached as an
+5. On a miss, the image is regenerated with the failed attempt attached as an
    img2img reference and the VLM's specific complaints written into the prompt —
    up to `IMAGE_MAX_REVISIONS` (default 3) attempts. The best-scoring attempt is
-   always returned; a non-passing QA is reported, not raised.
+   always returned; a non-passing QA is reported, not raised. A router step that
+   produces no image (Workers AI's flaky content-moderation flag, a rate limit)
+   is retried once and then skipped rather than ending the loop, so a later step
+   still gets its turn.
 
 Pexels is only reached if Cloudflare is unset or every attempt fails.
 
@@ -146,6 +157,8 @@ CLOUDFLARE_API_TOKEN=your_cloudflare_workers_ai_token
 
 # Optional: Image generation knobs
 CLOUDFLARE_IMAGE_MODEL=@cf/black-forest-labs/flux-2-klein-4b
+IMAGE_TEXT_MODEL=@cf/black-forest-labs/flux-2-klein-9b
+IMAGE_ROUTER=1
 IMAGE_MAX_REVISIONS=3
 
 # Security
@@ -184,7 +197,9 @@ DEFAULT_MODEL=gemini-2.5-flash
 
 #### Image Generation Knobs (optional)
 - `CLOUDFLARE_IMAGE_MODEL` - Which Workers AI model makes the thumbnail. Defaults to `@cf/black-forest-labs/flux-2-klein-4b` (~110 Neurons → ~90 images/day, and it accepts an img2img reference, which the revision loop needs). Swap to `.../flux-2-klein-9b` for legible on-image text (~7/day) or `.../flux-2-dev` for highest quality (~3/day).
-- `IMAGE_MAX_REVISIONS` - Max generate → validate → regenerate cycles per post before the best attempt is accepted (default `3`, bounding worst-case spend at ~330 Neurons).
+- `IMAGE_TEXT_MODEL` - The text-capable model the router escalates to. Defaults to `@cf/black-forest-labs/flux-2-klein-9b` (~1,364 Neurons), which spells baked-in headlines correctly where klein-4b does not (3/3 live tests: `SPEC-DRIFIEN` / `SPEC-DRITEN` / `SPEC-DRVIEN`).
+- `IMAGE_ROUTER` - `1` (default) runs attempt 1 on `CLOUDFLARE_IMAGE_MODEL` with no on-image text and only escalates to `IMAGE_TEXT_MODEL` with a headline if QA fails — so a typical post costs ~110 Neurons, not ~1,364. `0` disables routing and sends every attempt to `CLOUDFLARE_IMAGE_MODEL` with a headline.
+- `IMAGE_MAX_REVISIONS` - Max generate → validate → regenerate cycles per post before the best attempt is accepted (default `3`, bounding worst-case spend at ~2,838 Neurons with the router on).
 
 #### Security
 - `API_KEY` - Custom API key for authenticating requests to the agent API

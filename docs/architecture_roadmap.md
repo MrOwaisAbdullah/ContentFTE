@@ -50,11 +50,42 @@ Changed 2026-10-04:
 - Every call is audited in the auto-created `image_logs` worksheet (one row per
   attempt, plus one summary row carrying the QA verdict).
 
-**Still open:** prompt length. The filled house prompt is ~4.1k chars and flux-2
-publishes no `maxLength` (flux-1-schnell caps at 2048) — unverified whether
-Cloudflare accepts it; a worker-community thread reports >6,144 chars rejected on
-some models. Trim `_HOUSE_IMAGE_PROMPT_TEMPLATE` first if generation starts failing,
-and confirm with one live generation once the daily Neuron allocation resets.
+Changed 2026-10-05:
+
+- **Model + typography router inside the revision loop.** `_image_plan(attempt)`
+  returns `(model, text_mode)`. With `IMAGE_ROUTER=1` (default) attempt 1 is
+  `CLOUDFLARE_IMAGE_MODEL` + `text_mode="none"` (~110 Neurons, and no text to
+  misspell); attempts 2+ are `IMAGE_TEXT_MODEL` (default `flux-2-klein-9b`,
+  ~1,364 Neurons) + `text_mode="headline"`. `IMAGE_ROUTER=0` pins everything to
+  `CLOUDFLARE_IMAGE_MODEL` + headline. A typical post therefore costs ~110
+  Neurons instead of ~1,364.
+- `_build_house_prompt(..., text_mode=)` swaps the template's `[INSERT
+  TYPOGRAPHY]` / `[INSERT HEADLINE SPACE LINE]` slots and closes the prompt with
+  a mode-specific hard rule, because mid-prompt rules were not enough:
+  - `none` → the `**Article title:**` label becomes *describe only, never write
+    it into the picture*, followed by a **FINAL RULE** forbidding all text.
+    Before this, klein-4b still baked the headline in (`Spec-Drivien Workom`).
+  - `headline` → a **FINAL RULE** allowing exactly one 2-5-word headline and
+    banning URLs/domains/logos/watermarks. Before it, klein-9b rendered
+    `owaisabdullah.dev` as a corner watermark (VLM: `blog=0.04`).
+- **Workers AI moderation is flaky and was losing attempts.** Cloudflare returns
+  HTTP 400 code 3030 (`"Your output has been flagged"`) on the *same* payload
+  that succeeded seconds earlier — seen live on both klein-4b and klein-9b, with
+  and without an input image. `_generate_image_cloudflare` now keeps the
+  response body (so the reason is in `image_logs`, not just `400 Client Error`),
+  retries a retryable error once per payload, and the caller **continues to the
+  next router step instead of breaking** when a generation returns nothing.
+  Worst case remains bounded: 3 steps × 2 payload variants × 2 tries.
+- flux-2 returns JPEG no matter what was asked for; `lib/image_format.py`
+  sniffs the bytes so the temp suffix, the VLM data URI and Sanity's
+  `Content-Type` all agree (previously a JPEG was written as `.png` and sent
+  as `image/png`).
+
+**Resolved 2026-10-05:** prompt length. The filled house prompt is now ~4.7k
+chars (was ~4.1k before the closing rules) and is accepted live by both
+klein-4b and klein-9b at 1280×720; flux-2 publishes no `maxLength`
+(flux-1-schnell caps at 2048). Keep `_HOUSE_IMAGE_PROMPT_TEMPLATE` under ~6k
+chars — if a model swap starts rejecting prompts, trim the template first.
 
 **Option 1 — Gemini "Nano Banana" family, via the `GEMINI_API_KEY` already configured.**
 This is the most immediately actionable option since it needs zero new signup/key — the

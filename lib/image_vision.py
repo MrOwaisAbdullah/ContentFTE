@@ -30,13 +30,13 @@ regenerating images we cannot judge. Never blocks the publish path.
 import base64
 import json
 import logging
-import mimetypes
 import os
 import time
 from typing import Any, Dict, List, Optional
 
 import requests
 
+from lib import image_format
 from lib.jev import JevError, call_jev_sync
 from lib.run_result_utils import loads_lenient
 
@@ -81,7 +81,7 @@ def _image_data_uri(image_path: str) -> Optional[str]:
     if len(raw) > _VLM_MAX_IMAGE_BYTES:
         logger.warning(f"Image too large for VLM ({len(raw)} bytes), skipping: {image_path}")
         return None
-    mime = mimetypes.guess_type(image_path)[0] or "image/png"
+    mime = image_format.sniff_mime(raw, fallback="image/png")
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 

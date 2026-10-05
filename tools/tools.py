@@ -10,6 +10,7 @@ from language_tool_python import LanguageTool
 import time
 from lib.sanity_adapter import SanityAdapter
 from lib import image_vision
+from lib import image_format
 from tools.sheet_tool import log_image_usage
 from dotenv import load_dotenv
 import tempfile
@@ -508,12 +509,25 @@ def get_stock_image_tool(keyword: str):
 #
 # KNOWN LIMITATION: klein-4b misspelled baked-in headline text in 3/3 live
 # tests ("SPEC-DRIFIEN" / "SPEC-DRITEN" / "DRVVIEN"). Its Qwen3-4B text
-# encoder is too weak for legible on-image titles. This is accepted because
-# the house prompt asks for minimal text (2-5 word hook at most) and the
-# article title is rendered as the page's own H1. If on-image text ever
-# matters, set CLOUDFLARE_IMAGE_MODEL=@cf/black-forest-labs/flux-2-klein-9b
-# (correct text, 2.3s, ~7/day) or .../flux-2-dev (~3/day, highest quality).
+# encoder is too weak for legible on-image titles. Handle it with the
+# router below rather than by paying the 9b price on every image.
 CLOUDFLARE_IMAGE_MODEL = os.environ.get("CLOUDFLARE_IMAGE_MODEL") or "@cf/black-forest-labs/flux-2-klein-4b"
+
+# Router: first attempt is textless on the cheap model; only when that fails
+# QA does the loop escalate to the text-capable model WITH a headline.
+# Measured 2026-10-04: klein-4b garbles text 3/3, klein-9b and flux-2-dev
+# spell "SPEC-DRIVEN WORKFLOW" correctly. Costs per 1280x720 image:
+#   klein-4b ~110 n (~90/day)   klein-9b ~1364 n (~7/day)
+# Worst case (all 3 attempts used) = 110 + 1364*2 ~= 2.8k n of 10k/day.
+IMAGE_TEXT_MODEL = (
+    os.environ.get("IMAGE_TEXT_MODEL") or "@cf/black-forest-labs/flux-2-klein-9b"
+)
+IMAGE_ROUTER = (os.environ.get("IMAGE_ROUTER") or "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 # Max generate -> validate -> regenerate cycles per post before accepting
 # the best-scoring attempt or falling back to stock. Keeps worst-case
@@ -534,12 +548,55 @@ IMAGE_STYLE_THRESHOLD = image_vision.IMAGE_STYLE_THRESHOLD
 STOCK_IMAGE_SOURCE_LABEL = "Pexels (stock photo)"
 
 
-def _cloudflare_source_label() -> str:
-    return f"Cloudflare Workers AI ({CLOUDFLARE_IMAGE_MODEL})"
+def _cloudflare_source_label(model: Optional[str] = None) -> str:
+    return f"Cloudflare Workers AI ({model or CLOUDFLARE_IMAGE_MODEL})"
+
+
+def _image_plan(attempt: int) -> tuple:
+    """Which model + typography this attempt should use.
+
+    Router off: every attempt uses the configured model with a headline.
+    Router on: attempt 1 is the cheap model with zero text (it cannot
+    misspell what it never renders); attempt 2+ escalate to IMAGE_TEXT_MODEL
+    with a headline."""
+    if not IMAGE_ROUTER:
+        return CLOUDFLARE_IMAGE_MODEL, "headline"
+    if attempt <= 1:
+        return CLOUDFLARE_IMAGE_MODEL, "none"
+    return IMAGE_TEXT_MODEL, "headline"
+
+
+# How many times _generate_image_cloudflare sends one payload before moving
+# to the next payload variant (reference image first, then none). Cloudflare
+# rejects before rendering on failure, so a wasted retry costs latency and
+# zero Neurons.
+_GEN_TRIES_PER_PAYLOAD = 2
+_GEN_RETRY_DELAY = 1.0
+
+# Errors worth resending verbatim. `"code":3030` is Workers AI content
+# moderation ("Your output has been flagged") and is demonstrably flaky: the
+# identical prompt succeeded, failed, then succeeded again within minutes.
+_RETRYABLE_ERROR_MARKERS = (
+    '"code":3030',
+    '"code": 3030',
+    "flagged",
+    "HTTP 429",
+    "HTTP 500",
+    "HTTP 502",
+    "HTTP 503",
+    "HTTP 504",
+    "timed out",
+    "Connection",
+)
+
+
+def _retryable_generation_error(detail: str) -> bool:
+    return any(marker in (detail or "") for marker in _RETRYABLE_ERROR_MARKERS)
 
 
 def _generate_image_cloudflare(
-    prompt: str, keyword: str, reference_b64: Optional[str] = None
+    prompt: str, keyword: str, reference_b64: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Primary AI image generator via Cloudflare Workers AI (10,000 free
     Neurons/day, no credit card required). If this fails or the credentials
@@ -556,8 +613,9 @@ def _generate_image_cloudflare(
     if not account_id or not api_token:
         logger.info("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set; skipping Cloudflare Workers AI image generation.")
         return None
+    model = model or CLOUDFLARE_IMAGE_MODEL
 
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}"}
     # FLUX.2 requires multipart/form-data even for a text-only prompt (a
     # documented quirk of this model family on Workers AI).
@@ -599,7 +657,7 @@ def _generate_image_cloudflare(
         # answerable from the sheet alone. Reference=yes marks the img2img
         # revision attempts.
         log_image_usage(
-            CLOUDFLARE_IMAGE_MODEL,
+            model,
             "generate",
             keyword,
             status,
@@ -608,51 +666,68 @@ def _generate_image_cloudflare(
             detail=detail,
         )
 
-    for idx, fields in enumerate(attempts):
+    for fields in attempts:
         with_ref = "image" in fields
-        attempt_started = time.time()
-        try:
-            response = _post(fields)
-            response.raise_for_status()
-            payload = response.json()
-            if not payload.get("success"):
-                last_error = json.dumps(payload.get("errors"))[:500]
-                logger.error(f"Cloudflare Workers AI image generation failed: {last_error}")
-                _log_attempt("error", attempt_started, detail=last_error, with_ref=with_ref)
+        for try_no in range(1, _GEN_TRIES_PER_PAYLOAD + 1):
+            attempt_started = time.time()
+            response = None
+            detail = ""
+            image_b64 = None
+            try:
+                response = _post(fields)
+                if not response.ok:
+                    # Keep the body: Cloudflare explains 400s as JSON there.
+                    detail = f"HTTP {response.status_code} :: {response.text[:400]}"
+                else:
+                    payload = response.json()
+                    if not payload.get("success"):
+                        detail = json.dumps(payload.get("errors"))[:500]
+                    else:
+                        image_b64 = (payload.get("result") or {}).get("image")
+                        if not image_b64:
+                            detail = "response missing image data"
+            except Exception as e:
+                detail = str(e)
+
+            if image_b64:
+                image_bytes = base64.b64decode(image_b64)
+                # flux-2 answers with JPEG regardless of what the caller asked
+                # for. Sniff the real format so the temp file's extension, the
+                # VLM data URI and Sanity's Content-Type all agree with the bytes.
+                suffix = image_format.sniff_ext(image_bytes, fallback=".jpg")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(image_bytes)
+                    local_path = tmp.name
+                logger.info(
+                    f"Successfully generated image via Cloudflare Workers AI ({model}, "
+                    f"reference={'yes' if with_ref else 'no'}): {local_path}"
+                )
+                source_label = _cloudflare_source_label(model)
+                record_image_source(local_path, source_label)
+                _log_attempt("success", attempt_started, detail="ok", with_ref=with_ref)
+                return {
+                    "image_url": local_path,
+                    "alt_text": f"{keyword} illustration",
+                    "source": source_label,
+                    "model": model,
+                    "evaluation_score": 8.5,
+                    "feedback": f"Generated via Cloudflare Workers AI {model} (primary AI image generator, genuinely free tier)",
+                }
+
+            last_error = detail
+            logger.error(f"Cloudflare Workers AI image generation failed: {detail}")
+            _log_attempt("error", attempt_started, detail=detail[:500], with_ref=with_ref)
+            # Workers AI's moderation flag (code 3030) fires intermittently on
+            # the very same prompt -- live evidence: the identical request
+            # succeeded seconds earlier and failed later. One blind retry is
+            # cheaper than abandoning the attempt.
+            if try_no < _GEN_TRIES_PER_PAYLOAD and _retryable_generation_error(detail):
+                time.sleep(_GEN_RETRY_DELAY)
                 continue
-            image_b64 = (payload.get("result") or {}).get("image")
-            if not image_b64:
-                last_error = "response missing image data"
-                logger.error(f"Cloudflare Workers AI {last_error}")
-                _log_attempt("error", attempt_started, detail=last_error, with_ref=with_ref)
-                continue
-            image_bytes = base64.b64decode(image_b64)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                tmp.write(image_bytes)
-                local_path = tmp.name
-            logger.info(
-                f"Successfully generated image via Cloudflare Workers AI ({CLOUDFLARE_IMAGE_MODEL}, "
-                f"reference={'yes' if with_ref else 'no'}): {local_path}"
-            )
-            source_label = _cloudflare_source_label()
-            record_image_source(local_path, source_label)
-            _log_attempt("success", attempt_started, detail="ok", with_ref=with_ref)
-            return {
-                "image_url": local_path,
-                "alt_text": f"{keyword} illustration",
-                "source": source_label,
-                "evaluation_score": 8.5,
-                "feedback": f"Generated via Cloudflare Workers AI {CLOUDFLARE_IMAGE_MODEL} (primary AI image generator, genuinely free tier)",
-            }
-        except Exception as e:
-            last_error = str(e)
-            _log_attempt("error", attempt_started, detail=str(e)[:500], with_ref=with_ref)
-            # A model that rejects the image reference is not a hard failure:
-            # fall through to the plain text-to-image attempt.
-            logger.warning(
-                f"Cloudflare Workers AI image generation failed"
-                f"{' with reference' if with_ref else ''}: {e}"
-            )
+            # Fall through to the next payload (i.e. drop the image reference,
+            # which some flags blame the input image for).
+            break
+
     logger.error(f"Cloudflare Workers AI image generation gave up: {last_error}")
     return None
 
@@ -664,10 +739,11 @@ def _generate_image_cloudflare(
 # characters, minimal on-image text) stays identical across posts; only the
 # article-specific slots are filled per run.
 #
-# NOTE: ~4.1k chars. Workers AI does not publish a maxLength for the flux-2
-# family (flux-1-schnell caps prompts at 2048). If a model swap starts
-# rejecting prompts, trim this block first.
-_HOUSE_IMAGE_PROMPT_TEMPLATE = '''Create a premium cinematic hero thumbnail for a technical blog post on **owaisabdullah.dev**.
+# NOTE: ~4.2k chars before the router's closing rule (~4.7k filled). Workers
+# AI does not publish a maxLength for the flux-2 family (flux-1-schnell caps
+# prompts at 2048); both klein-4b and klein-9b accept the filled prompt live.
+# If a model swap starts rejecting prompts, trim this block first.
+_HOUSE_IMAGE_PROMPT_TEMPLATE = '''Create a premium cinematic hero thumbnail for a technical blog post published on owaisabdullah.dev. The site name is context for the brand only -- never typeset it, never show it as a logo, badge or watermark.
 
 **Visual identity:** Cinematic 3D tech storytelling, polished CGI, expressive original characters, sophisticated lighting, rich environments, and strong visual metaphors. The result should feel like high-end animated-film concept art blended with premium technology editorial artwork—not a generic SaaS advertisement.
 
@@ -677,7 +753,7 @@ _HOUSE_IMAGE_PROMPT_TEMPLATE = '''Create a premium cinematic hero thumbnail for 
 - Establish one unmistakable focal point with clear foreground, middle ground, and background.
 - Use dramatic perspective, cinematic depth of field, realistic material details, atmospheric lighting, and carefully controlled visual complexity.
 - Keep the main subject large, recognizable, and readable at small thumbnail sizes.
-- Reserve clean negative space for a short headline only when needed.
+- [INSERT HEADLINE SPACE LINE]
 
 **Color and lighting**
 - Use deep navy, midnight blue, and charcoal as the usual foundation.
@@ -698,12 +774,7 @@ _HOUSE_IMAGE_PROMPT_TEMPLATE = '''Create a premium cinematic hero thumbnail for 
 Before designing the image, identify the article's central idea and translate it into one memorable visual scene. Explore original concepts such as a character battle, a magical transformation, a miniature automated city, a branching decision system, a dramatic before-and-after scene, or a powerful symbolic object.
 Use the actual article topic and relevant brand identity to guide the imagery. Include recognizable logos only when appropriate, and preserve their supplied shapes and colors as closely as possible.
 
-**Typography**
-- Keep on-image text minimal: ideally a short title or 2-5-word hook.
-- Use bold, clean, legible typography with strong contrast.
-- Prioritize the visual story over explanatory text.
-- Do not invent product specifications, prices, performance numbers, or unsupported claims.
-- Avoid tiny labels, crowded UI panels, unnecessary slogans, and excessive text.
+[INSERT TYPOGRAPHY]
 
 **Avoid**
 Generic stock imagery, repetitive compositions, the same robot mascot across posts, generic people staring at laptops, cluttered floating dashboards, excessive icons, walls of text, flat corporate illustrations, cheap-looking plastic materials, oversaturated neon everywhere, watermarks, misspelled text, and irrelevant decorative technology.
@@ -720,16 +791,79 @@ Generic stock imagery, repetitive compositions, the same robot mascot across pos
 _TITLE_SLOT = "[INSERT TITLE]"
 _SUMMARY_SLOT = "[INSERT URL OR SUMMARY]"
 _LOGO_SLOT = "[ATTACH IF RELEVANT]"
+_TYPOGRAPHY_SLOT = "[INSERT TYPOGRAPHY]"
+_HEADLINE_SPACE_SLOT = "[INSERT HEADLINE SPACE LINE]"
+
+# Typography directives the router swaps into the template.
+# "headline" is the original house wording, verbatim. "none" exists because
+# klein-4b's text encoder garbles baked-in words (3/3 live tests:
+# SPEC-DRIFIEN / SPEC-DRITEN / SPEC-DRVIEN), so the cheap first pass never
+# asks for text -- and therefore cannot misspell it.
+_HOUSE_TYPOGRAPHY = '''**Typography**
+- Keep on-image text minimal: ideally a short title or 2-5-word hook.
+- Use bold, clean, legible typography with strong contrast.
+- Prioritize the visual story over explanatory text.
+- Do not invent product specifications, prices, performance numbers, or unsupported claims.
+- Avoid tiny labels, crowded UI panels, unnecessary slogans, and excessive text.'''
+
+_NO_TEXT_TYPOGRAPHY = '''**Typography - NO TEXT AT ALL**
+- Render zero on-image words, letters, numbers, captions or labels.
+- No headline, no subtitle, no signboards, no screen UI text, no watermarks.
+- Tell the whole story with the scene; the page supplies the real title in HTML.
+- Anything that would normally carry writing should instead show abstract shapes, glow or texture.'''
+
+_TEXT_MODES = {
+    "headline": (
+        _HOUSE_TYPOGRAPHY,
+        "Reserve clean negative space for a short headline only when needed.",
+    ),
+    "none": (
+        _NO_TEXT_TYPOGRAPHY,
+        "Do not leave negative space for text; fill the frame with the scene.",
+    ),
+}
+
+# The mid-prompt "NO TEXT AT ALL" block is not enough on its own: klein-4b
+# still baked the article title into the frame (live run read back
+# "Spec-Drivien Workom ..."), which is exactly the garbling the cheap pass
+# exists to avoid. Mirrored at the END of the prompt, after the article
+# title it is copying, because last-instruction-wins is what these models
+# actually obey.
+_NO_TEXT_CLOSING_RULE = '''**FINAL RULE - this overrides every instruction above.**
+- The rendered image must contain ZERO text: no headline, no title, no subtitle, no sign, no label, no number, no caption, no watermark, no word-shaped logos.
+- Do not write the article title or anything else into the picture.
+- Everything written in this prompt describes the SUBJECT of the image; it is not copy to be typeset.
+- Where an object would naturally carry writing, show blank material, glowing lines or abstract glyph texture instead.'''
+
+# Headline mode needs the mirror-image guard. Live escalation run: klein-9b
+# obeyed "do not invent a brand logo or watermark" in the middle of the
+# prompt, then burned the domain into the corner as one anyway -- VLM read it
+# back as text_seen="owaisabdullah.dev", issue="watermark", blog score 0.04,
+# which throws away an otherwise good (style 0.81) image.
+_HEADLINE_CLOSING_RULE = '''**FINAL RULE - this overrides every instruction above.**
+- The image may carry exactly ONE piece of text: a short headline (2-5 words) taken from the article title below.
+- Never render a URL, the domain owaisabdullah.dev, a site name, an author name, a signature, a logo, a watermark, a badge or a corner label.
+- No subtitle, no body copy, no UI text, no prices or numbers, no credits.
+- Any surface that would normally hold a logo or URL stays blank or abstract.'''
 
 # Cap on an agent-supplied scene concept so a model that tries to write a
 # whole replacement prompt cannot blow past the flux-2 prompt limits.
 _SCENE_CONCEPT_MAX_CHARS = 600
 
 
-def _build_house_prompt(title: str, summary: str, scene_concept: str = None) -> str:
+def _build_house_prompt(
+    title: str,
+    summary: str,
+    scene_concept: str = None,
+    text_mode: str = "headline",
+) -> str:
     """Fill the house template's per-article slots and append the agent's
     scene concept (if any) as an explicit direction, without letting it
-    replace the house style."""
+    replace the house style.
+
+    `text_mode` picks the typography block: "headline" (original house
+    wording, used on the text-capable model) or "none" (zero on-image text,
+    used on the cheap model so it cannot misspell anything)."""
     prompt = _HOUSE_IMAGE_PROMPT_TEMPLATE
     prompt = prompt.replace(_TITLE_SLOT, (title or "").strip() or "[Article title unavailable]")
     prompt = prompt.replace(_SUMMARY_SLOT, (summary or "").strip() or "[Article summary unavailable]")
@@ -738,11 +872,28 @@ def _build_house_prompt(title: str, summary: str, scene_concept: str = None) -> 
     # invent a logo.
     prompt = prompt.replace(_LOGO_SLOT, "none supplied - do not invent a brand logo or watermark")
 
+    typography, space_line = _TEXT_MODES.get(text_mode, _TEXT_MODES["headline"])
+    prompt = prompt.replace(_TYPOGRAPHY_SLOT, typography)
+    prompt = prompt.replace(_HEADLINE_SPACE_SLOT, space_line)
+
     concept = (scene_concept or "").strip()
     if concept:
         if len(concept) > _SCENE_CONCEPT_MAX_CHARS:
             concept = concept[:_SCENE_CONCEPT_MAX_CHARS].rstrip() + "..."
         prompt += f"\n\n**Scene concept chosen for this post:** {concept}"
+
+    if text_mode == "none":
+        # "**Article title:** <headline>" is the single strongest instruction
+        # to typeset, so relabel it and close with the hard no-text rule.
+        prompt = prompt.replace(
+            "**Article title:**",
+            "**Article subject (describe only - never write it into the picture):**",
+        )
+        prompt += "\n\n" + _NO_TEXT_CLOSING_RULE
+    else:
+        # Allow the headline, but pin down exactly how much text is legal so
+        # the model cannot promote the brand line into a watermark.
+        prompt += "\n\n" + _HEADLINE_CLOSING_RULE
     return prompt
 
 
@@ -796,26 +947,27 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     VLM's specific complaints written into the prompt -- up to
     IMAGE_MAX_REVISIONS attempts. The best attempt is always returned.
 
-    Returns a dict with image_url/alt_text/source plus a `qa` block
-    {passed, matches_blog, matches_style, attempts, issues}. A non-passing
-    `qa.passed` is NOT an error -- an image is returned if any attempt
-    succeeded. On total failure, returns an error dict; the calling agent
-    (image_selection_agent) then falls back to get_stock_image_tool."""
-    base_prompt = _build_house_prompt(title, summary, custom_prompt)
-    if len(base_prompt) > 6000:
-        logger.warning(
-            f"Thumbnail prompt is {len(base_prompt)} chars; flux-2 prompt limits are unpublished "
-            f"and flux-1-schnell caps at 2048. If generation fails, trim _HOUSE_IMAGE_PROMPT_TEMPLATE."
-        )
-    logger.info(f"Building house thumbnail prompt for '{title or keyword}' ({len(base_prompt)} chars)")
+    A model router runs inside the loop (IMAGE_ROUTER, on by default):
+    attempt 1 uses the cheap model (flux-2-klein-4b, ~110 Neurons) with
+    ZERO on-image text, because that model garbles baked-in words. Only if
+    it fails QA does the loop escalate to IMAGE_TEXT_MODEL
+    (flux-2-klein-9b, ~1364 Neurons) WITH a headline, which spells
+    correctly. Set IMAGE_ROUTER=0 to pin everything to CLOUDFLARE_IMAGE_MODEL.
 
+    Returns a dict with image_url/alt_text/source plus a `qa` block
+    {passed, matches_blog, matches_style, attempts, model, router, issues}.
+    A non-passing `qa.passed` is NOT an error -- an image is returned if any
+    attempt succeeded. On total failure, returns an error dict; the calling
+    agent (image_selection_agent) then falls back to get_stock_image_tool."""
     best: Optional[Dict[str, Any]] = None
     best_verdict: Dict[str, Any] = {}
     best_rank = -1.0
     reference_b64: Optional[str] = None
-    prompt = base_prompt
+    revision_suffix = ""
+    previous_model: Optional[str] = None
     attempts = 0
     qa_trace: List[Dict[str, Any]] = []
+    router_plan: List[str] = []
 
     # Freepik was removed as a provider here (persistent 401 -- an invalid/
     # expired key that was never rotated -- and a one-time trial credit
@@ -824,11 +976,41 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     # caller falls back to get_stock_image_tool (Pexels).
     loop_started = time.time()
     for attempt in range(1, IMAGE_MAX_REVISIONS + 1):
+        model, text_mode = _image_plan(attempt)
+        router_plan.append(f"a{attempt}={model.rsplit('/', 1)[-1]}/{text_mode}")
+        base_prompt = _build_house_prompt(
+            title, summary, custom_prompt, text_mode=text_mode
+        )
+        if attempt == 1 and len(base_prompt) > 6000:
+            logger.warning(
+                f"Thumbnail prompt is {len(base_prompt)} chars; flux-2 prompt limits are unpublished "
+                f"and flux-1-schnell caps at 2048. If generation fails, trim _HOUSE_IMAGE_PROMPT_TEMPLATE."
+            )
+
+        # Escalating to a different model means starting clean: a textless
+        # 4b image is the wrong edit source for 9b's headline pass, and the
+        # two models do not share an img2img latent space.
+        switching = previous_model is not None and model != previous_model
+        if switching:
+            reference_b64 = None
+            revision_suffix = ""
+        previous_model = model
+        prompt = base_prompt + revision_suffix
+
         result = _generate_image_cloudflare(
-            prompt, title or keyword, reference_b64=reference_b64
+            prompt, title or keyword, reference_b64=reference_b64, model=model
         )
         if not result:
-            break
+            # This router step produced nothing (rate limit, Cloudflare's
+            # content-moderation flag -- seen live as HTTP 400 code 3030
+            # "Your output has been flagged" -- or a network blip). Keep the
+            # loop alive so the next plan step still runs instead of handing
+            # back an image that already failed QA.
+            logger.warning(
+                f"Image generation returned nothing on attempt {attempt} "
+                f"({model.rsplit('/', 1)[-1]}); continuing to the next plan step."
+            )
+            continue
         attempts = attempt
         image_path = result["image_url"]
 
@@ -837,6 +1019,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
         qa_trace.append(
             {
                 "attempt": attempt,
+                "model": model,
+                "text_mode": text_mode,
                 "passed": verdict.get("passed"),
                 "matches_blog": verdict.get("matches_blog"),
                 "matches_style": verdict.get("matches_style"),
@@ -847,7 +1031,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
             }
         )
         logger.info(
-            f"Image QA attempt {attempt}/{IMAGE_MAX_REVISIONS}: passed={verdict.get('passed')} "
+            f"Image QA attempt {attempt}/{IMAGE_MAX_REVISIONS} ({model.rsplit('/', 1)[-1]}, "
+            f"text={text_mode}): passed={verdict.get('passed')} "
             f"matches_blog={verdict.get('matches_blog')} matches_style={verdict.get('matches_style')} "
             f"issues={len(verdict.get('issues') or [])}"
         )
@@ -869,9 +1054,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
         if not next_reference:
             break
         guidance = image_vision.revision_guidance(verdict)
-        prompt = (
-            f"{base_prompt}\n\n"
-            f"**Revision required (attempt {attempt + 1} of {IMAGE_MAX_REVISIONS}). "
+        revision_suffix = (
+            f"\n\n**Revision required (attempt {attempt + 1} of {IMAGE_MAX_REVISIONS}). "
             f"The previous image attached as a reference did not pass QA:**\n{guidance}\n\n"
             f"Keep the same article subject but improve on the reference. "
             f"The attached reference is the FAILED attempt, not an asset to preserve."
@@ -885,10 +1069,11 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
             title or keyword,
             "failed",
             time.time() - loop_started,
-            detail=f"attempts=0/{IMAGE_MAX_REVISIONS} all generation attempts failed",
+            detail=f"attempts=0/{IMAGE_MAX_REVISIONS} router={','.join(router_plan)} all generation attempts failed",
         )
         return {"error": "All image generation services failed"}
 
+    best_model = best.get("model") or CLOUDFLARE_IMAGE_MODEL
     # A non-passing QA is not an error: an image was produced and further
     # attempts would only burn neuron quota. Report it for observability.
     qa = {
@@ -899,6 +1084,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
         "threshold_style": image_vision.IMAGE_STYLE_THRESHOLD,
         "attempts": attempts,
         "max_revisions": IMAGE_MAX_REVISIONS,
+        "model": best_model,
+        "router": router_plan,
         "issues": best_verdict.get("issues") or [],
         "text_seen": best_verdict.get("text_seen"),
         "fallback": bool(best_verdict.get("fallback")),
@@ -911,13 +1098,13 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     # so image_logs answers "did it pass, and after how many tries" without
     # having to join the per-attempt rows above it.
     log_image_usage(
-        CLOUDFLARE_IMAGE_MODEL,
+        best_model,
         "result",
         title or keyword,
         "passed" if qa["passed"] else "failed",
         time.time() - loop_started,
         detail=(
-            f"attempts={attempts}/{IMAGE_MAX_REVISIONS} "
+            f"attempts={attempts}/{IMAGE_MAX_REVISIONS} router={','.join(router_plan)} "
             f"blog={qa['matches_blog']} style={qa['matches_style']} "
             f"issues={'; '.join(str(i) for i in (qa['issues'] or [])[:3])}"
         ),
