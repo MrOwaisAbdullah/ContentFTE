@@ -27,11 +27,10 @@ Tactics library for ContentFTE's brief, draft, and eval agents — and for any h
 
 ## Sources
 
-Distilled from two practitioner systems — **Edward Sturm** (@buildinpublic,
-edwardsturm.com/articles) and **Daniel Agrici** (@AgriciDaniel; `claude-seo`
-18.2k★ / `claude-blog` 2.3k★, MIT) — plus general SEO practice where background
-knowledge was assumed (technical foundations, on-page basics). Human-readable
-master with per-tactic wiring tables and source dates:
+Distilled from practitioner SEO/AEO/GEO systems and open-source SEO skill
+implementations, plus general SEO practice where background knowledge was
+assumed (technical foundations, on-page basics). Human-readable master with
+per-tactic wiring tables and source dates:
 `docs/Content FTE Research/ContentFTE-Tactics-Playbook.md`.
 
 ## Merge notes
