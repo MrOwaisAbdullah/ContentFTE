@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -152,6 +153,27 @@ class SeoCache(Base):
     keyword: Mapped[str] = mapped_column(String(300), nullable=False)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ShareOfVoice(Base):
+    """§5.8 / §24 monthly AI share-of-voice log.
+
+    One row per (site, month, platform, prompt): whether the brand was cited
+    in the answer. Aggregated into share-of-voice % per month — the Factory
+    retainer report's proof metric."""
+
+    __tablename__ = "share_of_voice"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    month: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
+    platform: Mapped[str] = mapped_column(String(40), nullable=False)
+    prompt: Mapped[str] = mapped_column(String(500), nullable=False)
+    cited: Mapped[bool] = mapped_column(Boolean, default=False)
+    position: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    site: Mapped[Site] = relationship()
 
 
 _engine = None

@@ -2087,6 +2087,35 @@ async def run_log_coverage() -> None:
     print(f"[log_coverage] Committed and pushed {len(new_files)} coverage file(s).")
 
 
+async def run_decay() -> None:
+    """§5.10-1 monthly GSC decay scan → auto refresh briefs (+ §5.16 `lost`
+    write-back). Thin wrapper over scripts/decay_job.py's `run()`; the job
+    scans the Phase 1 article store, so this is a no-op until that store is
+    populated by the Sheets→Postgres cutover."""
+    import importlib.util
+    import pathlib
+
+    job_path = pathlib.Path(__file__).with_name("decay_job.py")
+    spec = importlib.util.spec_from_file_location("decay_job", job_path)
+    job = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(job)
+
+    res = job.run()
+    if res.get("status") != "ok":
+        raise RuntimeError(f"decay job failed: {res.get('message')}")
+    print(f"[decay] site={res['site']} scanned={res['pages_scanned']} "
+          f"refresh_briefs={res['refresh_count']}")
+    for b in res["refresh_briefs"]:
+        print(f"[decay]   {b['mode']:5} {b['page_url']} decay={b['decay_pct']}")
+    if res["refresh_count"]:
+        detail = (f"{res['refresh_count']} refresh brief(s): "
+                  + ", ".join(f"{b['mode']} {b['page_url']}"
+                              for b in res["refresh_briefs"][:5]))
+    else:
+        detail = "No decaying pages this run."
+    _notify_discord_status("decay", success=True, detail=detail)
+
+
 STAGE_HANDLERS = {
     "research": run_research,
     "brief": run_brief,
@@ -2099,6 +2128,7 @@ STAGE_HANDLERS = {
     "search_performance_review": run_search_performance_review,
     "mine_feedback": run_mine_feedback,
     "log_coverage": run_log_coverage,
+    "decay": run_decay,
 }
 
 
@@ -2124,6 +2154,7 @@ def main() -> None:
         if args.stage not in (
             "research", "brief", "content", "post", "edit_post", "repurpose",
             "freshness_sweep", "search_performance_review", "mine_feedback",
+            "decay",
         ):
             _notify_discord_status(args.stage, success=True)
 
