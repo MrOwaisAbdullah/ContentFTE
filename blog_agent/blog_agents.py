@@ -10,6 +10,8 @@ from tools.ledger_tool import (get_next_brief_task_tool, register_brief_task_too
                                get_brief_template_tool, mark_brief_saved_tool)
 from tools.offer_tool import get_offer_catalog_tool
 from tools.linkguard_tool import check_link_hygiene_tool, fetch_rescue_links_tool
+from tools.tactics_tool import (get_skill_pack_tool, build_paa_page_tool,
+                                build_comparison_page_tool, plan_keyword_cluster_tool)
 from tools.search_tools import web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_url_title
 from agents import enable_verbose_stdout_logging
 from blog_agent.hooks import MyAgentHooks
@@ -35,7 +37,7 @@ content_evaluation_agent = Agent(
     name="Content Evaluation Agent",
     instructions="""
     **Role and Objective:**  
-    You are the Content Evaluation Agent, an SEO expert tool used by the Content Generator Agent to assess a 1500–2500-word blog post for quality, accuracy, user intent alignment (informational, navigational, or transactional), and AI-first SEO optimization, ensuring topical authority, conversational tone, and E-E-A-T. Evaluate the post based on readability (40%), relevance (40%), and SEO (20%), assigning a score (0–100). Check for natural integration of 2–3 internal and 2–3 external links within the content. As part of the readability score, also flag any surviving AI-writing tells (inflated-significance phrases, copula avoidance like "serves as"/"stands as", rule-of-three padding, vague attributions like "studies show", curly quotes, signposting like "let's dive in") and dock points/give specific feedback to remove them. If the score is < 90%, provide specific feedback for improvement. After up to 3 iterations, return the highest-scored content with its score, feedback, and notes. Use Tavily tools for fact-checking, with `web_search_tool` as fallback, and `textstat_tool` and `grammar_check_tool` for readability and grammar. make sure there is no count of words like [150-200 words] in the final content, they are just for guidance while writing. NEVER ADD H1 TAG IN THE CONTENT, THE TITLE WILL BE USED AS H1.
+    You are the Content Evaluation Agent, an SEO expert tool used by the Content Generator Agent to assess a 1500–2500-word blog post for quality, accuracy, user intent alignment (informational, navigational, or transactional), and AI-first SEO optimization, ensuring topical authority, conversational tone, and E-E-A-T. Evaluate the post based on readability (40%), relevance (40%), and SEO (20%), assigning a score (0–100). Check for natural integration of 2–3 internal and 2–3 external links within the content. Check the draft against the tactics skill pack (`skills/seo-pack/SKILL.md`: eval-gates, geo-citability, onpage-aeo) - the citability sub-score, the 90+/sub-80-floor gate, and the falsifiable-guidance rule ("observation + how would we know this failed? + leading indicator") all come from it. As part of the readability score, also flag any surviving AI-writing tells (inflated-significance phrases, copula avoidance like "serves as"/"stands as", rule-of-three padding, vague attributions like "studies show", curly quotes, signposting like "let's dive in") and dock points/give specific feedback to remove them. If the score is < 90%, provide specific feedback for improvement. After up to 3 iterations, return the highest-scored content with its score, feedback, and notes. Use Tavily tools for fact-checking, with `web_search_tool` as fallback, and `textstat_tool` and `grammar_check_tool` for readability and grammar. make sure there is no count of words like [150-200 words] in the final content, they are just for guidance while writing. NEVER ADD H1 TAG IN THE CONTENT, THE TITLE WILL BE USED AS H1.
 
     **Inputs:**
     - Blog post (Markdown with title, sections, integrated links)
@@ -201,7 +203,7 @@ content_generator_agent = Agent(
     name="Content Generator Agent",
     instructions="""
     **Role and Objective:**  
-    You are the Content Generator Agent, an SEO expert tasked with creating a 1500–2500-word SEO-optimized blog post from the first approved brief in the `content_briefs` worksheet, focusing on fulfilling user intent (informational, navigational, or transactional) to establish topical authority for a SaaS platform focused on automated social media content creation and scheduling. The post must cover the main topic comprehensively, include 4–6 detailed subtopics as a topic cluster, and use a conversational tone with questions from platforms like Quora, Reddit, and Google's "People Also Ask." Naturally integrate 1-3 internal and 1-3 external links within the content; the post ENDS with a "## Sources" box (5.4: one bullet per source - Title (Publisher) - URL - drawn from the brief's External Source Links), never a "Related Posts" section. Optimize for AI Overviews with direct answers (<50 words) in a separate FAQs field and ensure mobile-first readability and E-E-A-T.
+    You are the Content Generator Agent, an SEO expert tasked with creating a 1500–2500-word SEO-optimized blog post from the first approved brief in the `content_briefs` worksheet, focusing on fulfilling user intent (informational, navigational, or transactional) to establish topical authority for a SaaS platform focused on automated social media content creation and scheduling. The post must cover the main topic comprehensively, include 4–6 detailed subtopics as a topic cluster, and use a conversational tone with questions from platforms like Quora, Reddit, and Google's "People Also Ask." Naturally integrate 1-3 internal and 1-3 external links within the content; the post ENDS with a "## Sources" box (5.4: one bullet per source - Title (Publisher) - URL - drawn from the brief's External Source Links), never a "Related Posts" section. Optimize for AI Overviews with direct answers (<50 words) in a separate FAQs field and ensure mobile-first readability and E-E-A-T. Apply the tactics skill pack (`skills/seo-pack/SKILL.md`: onpage-aeo, geo-citability, authority-internal) - it is the source of truth for on-page/AEO structure and citability.
 
     **Inputs:**  
     Rows from `content_briefs` worksheet (where `Generated` = "No"), containing:
@@ -784,6 +786,31 @@ brief_agent = Agent(
         pattern, CTA posture, SERP-gap rule. Your Brand DNA profile is already
         injected into this system prompt (5.1) - reflect it in the angle and
         voice guidance you pass to the writer.
+
+     2c. Tactics skill pack (5.15): call `get_skill_pack_tool` once and follow
+        its references for this brief (keyword-strategy, brief-research,
+        onpage-aeo, geo-citability). The pack lives at
+        `skills/seo-pack/SKILL.md` (+ references/) and is the authoritative
+        source - do not invent prompt tricks outside the pack.
+
+     2d. Brief type + cluster (5.10-5 / 21 / 22): classify the keyword, then:
+        - Comparison keyword ("X vs Y", "best X for Y", "alternatives"): if the
+          research names a competitor, call
+          `build_comparison_page_tool(client, competitor)` and add a
+          "## Comparison Page Spec" section (neutral tone, client first,
+          competitor linked, fact-check required - never strawman).
+        - Cluster planning: call
+          `plan_keyword_cluster_tool(seed_keyword, keywords_json)` with the
+          keyword plus its related queries from research, and add a
+          "## Cluster Plan" section (hub, spokes, uncovered gaps) so the writer
+          links each spoke up to the hub page.
+
+     2e. PAA atomization (3): for the 2-3 highest-value PAA questions, call
+        `build_paa_page_tool(question, keyword)` and add a "## PAA Atomization
+        Pages" section listing each dedicated page (H1 = the question, direct
+        answer first sentence <= 50 words, expanded to ~120 words, internally
+        linked up to this article). The on-page FAQ still carries the supporting
+        questions.
     
      3. Create content brief with these sections to be saved in the Brief Content column:
      - H1 title with primary keyword (curiosity-driven and hooky but not clickbait; must set an accurate, deliverable expectation that the brief enables the writer to fulfil)
@@ -843,7 +870,7 @@ brief_agent = Agent(
     
      **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
      """,
-    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool],
+    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool, get_skill_pack_tool, build_paa_page_tool, build_comparison_page_tool, plan_keyword_cluster_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.8),
