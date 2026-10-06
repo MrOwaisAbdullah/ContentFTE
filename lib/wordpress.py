@@ -8,6 +8,12 @@ Covers: HTML body, featured + in-post images, internal-link fetch via
 REST, Yoast/RankMath/AIOSEO meta, taxonomy on demand, dup/slug guards,
 outbound 200-check, draft vs auto modes, dateModified refresh.
 
+MCP interop (spec §5.13): deep, interactive site operations (page-builder
+edits, Elementor layouts, plugin settings) are delegated to the WordPress /
+Elementor MCP servers rather than re-implemented here. This connector owns only
+the *publish* path (create/update a post + media + terms + meta); anything that
+needs a live editor session is out of scope for it.
+
 No LLM calls — pure HTTP. Never touches the model router.
 """
 from __future__ import annotations
@@ -19,7 +25,8 @@ from dataclasses import dataclass, field
 
 import requests
 
-from lib.geo import next_available_slug
+from lib import wp_render
+from lib.geo import article_schema, faq_schema as build_faq_schema, next_available_slug
 from lib.link_validator import validate_links
 
 
@@ -63,6 +70,62 @@ class PreparedPost:
     status: str = "draft"  # draft|publish
 
 
+def build_prepared_post(
+    *,
+    title: str,
+    markdown: str,
+    url: str = "",
+    faqs: list | None = None,
+    categories: list | None = None,
+    tags: list | None = None,
+    meta_title: str = "",
+    meta_description: str = "",
+    canonical: str = "",
+    slug: str = "",
+    excerpt: str = "",
+    featured_image_path: str | None = None,
+    featured_alt: str = "",
+    inpost_images: list | None = None,
+    cta: dict | None = None,
+    entities: list | None = None,
+    date_published: str | None = None,
+    date_modified: str | None = None,
+    status: str = "draft",
+) -> PreparedPost:
+    """Compose a PreparedPost: markdown → WP HTML (+ CTA + FAQ) + meta + schema.
+
+    In-post images are injected at publish time (after they are uploaded, so
+    the HTML carries the real media URLs), but their placement spec is carried
+    on the post. No network here — pure composition.
+    """
+    body = wp_render.markdown_to_wp_html(markdown)
+    if cta:
+        body += "\n" + wp_render.render_cta_block(
+            cta.get("label", ""), cta.get("url", ""), cta.get("text", ""),
+            is_client_owned=cta.get("is_client_owned", True),
+        )
+    if faqs:
+        body += "\n" + wp_render.render_faq_block(faqs)
+    return PreparedPost(
+        title=title,
+        html=body,
+        markdown=markdown,
+        excerpt=excerpt or meta_description,
+        slug=slug or title,
+        categories=list(categories or []),
+        tags=list(tags or []),
+        meta_title=meta_title or title,
+        meta_description=meta_description,
+        canonical=canonical,
+        featured_image_path=featured_image_path,
+        featured_alt=featured_alt,
+        inpost_images=list(inpost_images or []),
+        faq_schema=build_faq_schema(faqs) if faqs else None,
+        article_schema=article_schema(title, url or canonical, date_published, date_modified, entities),
+        status=status,
+    )
+
+
 class WordPressConnector:
     def __init__(self, config: WPConfig):
         if not config.base_url or not config.username or not config.app_password:
@@ -70,7 +133,6 @@ class WordPressConnector:
         self.cfg = config
         self.session = requests.Session()
         self.session.headers.update(config.auth_header())
-
     def _url(self, path: str) -> str:
         return f"{self.cfg.base_url}/wp-json/wp/v2{path}"
 
@@ -149,13 +211,18 @@ class WordPressConnector:
         }
 
     def _meta_payload(self, post: PreparedPost) -> dict:
-        """Yoast / Rank Math / AIOSEO fields + JSON-LD via meta."""
+        """Yoast / Rank Math / AIOSEO fields + canonical. JSON-LD is injected
+        into the body (see publish) since WP REST won't render a schema meta)."""
         return {
             "meta": {
                 "_yoast_wpseo_title": post.meta_title,
                 "_yoast_wpseo_metadesc": post.meta_description,
+                "_yoast_wpseo_canonical": post.canonical,
                 "rank_math_title": post.meta_title,
                 "rank_math_description": post.meta_description,
+                "rank_math_canonical_url": post.canonical,
+                "_aioseo_title": post.meta_title,
+                "_aioseo_description": post.meta_description,
             }
         }
 
@@ -173,6 +240,22 @@ class WordPressConnector:
         if post.featured_image_path:
             media = self.upload_media(post.featured_image_path, post.featured_alt)
             featured_id = media["id"]
+
+        # §5.11 in-post images at H2 breaks: upload any local-path images,
+        # then inject at their placement; append Article + FAQ JSON-LD.
+        uploaded_inpost = []
+        for img in post.inpost_images:
+            src = img.get("url") or img.get("src")
+            if not src and img.get("path"):
+                src = self.upload_media(img["path"], img.get("alt", ""))["url"]
+            if src:
+                uploaded_inpost.append({
+                    "url": src, "alt": img.get("alt", ""), "after_h2": img.get("after_h2"),
+                })
+        body = wp_render.inject_inpost_images(body, uploaded_inpost)
+        body += "\n" + wp_render.jsonld_script(post.article_schema)
+        if post.faq_schema:
+            body += "\n" + wp_render.jsonld_script(post.faq_schema)
 
         cat_ids = [self._ensure_term("categories", c) for c in post.categories]
         tag_ids = [self._ensure_term("tags", t) for t in post.tags]
