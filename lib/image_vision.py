@@ -380,3 +380,123 @@ def revision_guidance(verdict: Dict[str, Any]) -> str:
     if not parts:
         parts.append("- Improve overall composition, focal clarity and palette contrast.")
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Stock-first in-post relevancy gate (spec 5.9)
+#
+# For each in-post slot: Pexels candidate -> VLM describes the pixels
+# against the SECTION topic -> ONE Jev Noul on topic relevancy -> score
+# 0-100. >= 90 keeps the free stock image; below 90 the caller generates
+# with Klein 4B instead.
+#
+# Deliberately NOT judge_image_fit: that gate has a style lane which
+# explicitly penalizes flat stock photography (house-style rule), which
+# would fail every stock image for being stock. Stock is judged on topic
+# relevancy alone; house style only applies to generated images (the
+# thumbnail lane above).
+# ---------------------------------------------------------------------------
+IMAGE_STOCK_RELEVANCY_THRESHOLD = float(
+    os.environ.get("IMAGE_STOCK_RELEVANCY_THRESHOLD") or "0.90"
+)
+
+_STOCK_TOPIC_INSTRUCTIONS = (
+    "Does the image clearly illustrate the given section topic? Judge ONLY "
+    "topic relevancy: art style, production quality, and whether the image "
+    "looks like stock photography are IRRELEVANT for this question. An image "
+    "whose subject directly depicts the topic scores high; generic-but-"
+    "adjacent imagery scores mid; off-topic or decorative imagery scores low. "
+    "Judge from `image.description` and `image.topic_connection`, not from "
+    "the topic text alone."
+)
+
+
+def score_topic_relevancy(
+    image_path: str, topic: str, context: str = ""
+) -> Dict[str, Any]:
+    """VLM + Jev topic-relevancy score (0-100) for one candidate image
+    against a section topic.
+
+    Returns {score, noul, threshold, passed, fallback, usage, vlm_model,
+    latency_ms, issues, topic_connection}. Fail-open like every other gate in
+    this module: a VLM or Jev outage returns score=100/fallback=True/passed=True
+    so an infrastructure blip never costs image generations or blocks a post.
+    Never raises.
+    """
+    started = time.perf_counter()
+    try:
+        report = describe_image_vlm(image_path, topic or "", context or "")
+        if report.get("fallback"):
+            return {
+                "score": 100,
+                "noul": None,
+                "threshold": IMAGE_STOCK_RELEVANCY_THRESHOLD,
+                "passed": True,
+                "fallback": True,
+                "reason": "vlm_unavailable",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "issues": [],
+            }
+
+        state = {
+            "section": {
+                "topic": (topic or "").strip(),
+                "summary": (context or "").strip()[:600],
+            },
+            "image": {
+                "description": (report.get("description") or "")[:2000],
+                "topic_connection": (report.get("topic_connection") or "")[:600],
+            },
+        }
+        questions = {
+            "matches_topic": {"type": "noul", "instructions": _STOCK_TOPIC_INSTRUCTIONS},
+        }
+        try:
+            resp = call_jev_sync(state, questions)
+        except Exception as e:
+            logger.warning(f"score_topic_relevancy Jev fallback (accept stock): {e}")
+            return {
+                "score": 100,
+                "noul": None,
+                "threshold": IMAGE_STOCK_RELEVANCY_THRESHOLD,
+                "passed": True,
+                "fallback": True,
+                "error": str(e),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "issues": report.get("issues") or [],
+            }
+
+        ans = resp.answers.get("matches_topic")
+        if isinstance(ans, dict):
+            noul = ans.get("noul")
+        else:
+            noul = getattr(ans, "noul", None)
+        try:
+            noul_f = float(noul) if noul is not None else 0.0
+        except (TypeError, ValueError):
+            noul_f = 0.0
+        score = int(round(noul_f * 100))
+        return {
+            "score": score,
+            "noul": round(noul_f, 4),
+            "threshold": IMAGE_STOCK_RELEVANCY_THRESHOLD,
+            "passed": bool(noul_f >= IMAGE_STOCK_RELEVANCY_THRESHOLD),
+            "fallback": False,
+            "usage": resp.usage.model_dump() if hasattr(resp.usage, "model_dump") else None,
+            "model": resp.model,
+            "vlm_model": report.get("model"),
+            "issues": report.get("issues") or [],
+            "topic_connection": report.get("topic_connection") or "",
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+    except Exception as e:
+        logger.warning(f"score_topic_relevancy unexpected fallback (accept stock): {e}")
+        return {
+            "score": 100,
+            "noul": None,
+            "threshold": IMAGE_STOCK_RELEVANCY_THRESHOLD,
+            "passed": True,
+            "fallback": True,
+            "error": str(e),
+            "issues": [],
+        }

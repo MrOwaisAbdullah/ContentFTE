@@ -1,7 +1,7 @@
 import logging
 import re
 from agents import Agent, ModelSettings, handoff, trace
-from tools.tools import post_to_sanity_tool, fetch_internal_links_tool, get_stock_image_tool, get_existing_categories_tool # Ensure correct import paths
+from tools.tools import post_to_sanity_tool, fetch_internal_links_tool, get_existing_categories_tool # Ensure correct import paths
 from tools.sheet_tool import manage_sheet_data_tool # Ensure correct import path
 from blog_agent.image_agent import image_selection_agent, contextual_image_insertion_agent  # Import the new image agent tools
 from blog_agent.hooks import MyAgentHooks
@@ -89,7 +89,7 @@ preparation_agent = Agent(
       character SEO-friendly meta description; use it when available to guide image
       selection. The labels matter -- the tool reads them from this text to build the
       image prompt, so do not pass a bare keyword with no labels.
-      - This tool will generate an AI image first, evaluate its quality, and use stock photos as fallback.
+      - This tool always generates an AI image and evaluates it (VLM + Jev). The featured slot is ALWAYS AI-generated for brand control -- there is no stock fallback for it.
       - **IMPORTANT**: The tool returns a JSON response. You MUST extract the `image_url` field from this JSON response.
       - Example JSON response format:
         ```json
@@ -101,7 +101,7 @@ preparation_agent = Agent(
           "feedback": "Quality assessment feedback"
         }
         ```
-      - **CRITICAL FALLBACK**: `get_blog_image_tool`'s internal quality evaluation step is pinned to a single provider and has no fallback of its own, so it can fail outright when that provider is out of quota (you may see an error mentioning "quota exceeded" or a status like `IMAGE_GENERATION_FAILED`). If `get_blog_image_tool` errors, returns no usable `image_url`, or reports any kind of failure, do NOT give up and do NOT report the whole task as failed over this -- immediately call `get_stock_image_tool` yourself directly, with a search query derived from `TITLE` (e.g. the main topic/keyword, without brand names). Use whatever `image_url`/`alt_text` it returns instead. A generic but real stock photo is always better than aborting the publish -- getting the post published is the priority, not having a perfect image.
+      - **CRITICAL FALLBACK**: if `get_blog_image_tool` errors, returns no usable `image_url`, or reports any kind of failure, do NOT abort the publish and do NOT substitute a stock photo (featured images are always AI-generated for brand control -- stock never fills the featured slot). Instead set `IMAGE_URL` to an empty string and `ALT_TEXT` to an empty string, and note "featured image failed" in your reasoning. The pipeline then publishes the post without a featured image and the sheet's Image Source records the flag.
       - Extract the `image_url` and `alt_text` values from this JSON response for use in later steps.
 
     5. **Derive Fields**
@@ -110,8 +110,8 @@ preparation_agent = Agent(
       - `SLUG`: Create a URL-friendly slug from `Keyword/Topic` (e.g., `brand-consistency-in-social-media`).
       - `CATEGORIES`: Call `get_existing_categories_tool` FIRST to get existing taxonomy (up to 255 titles). Then call `jev_classify_category_tool` with `keyword_topic=Keyword/Topic` and `existing_categories_json` (JSON string of the titles you just fetched) — Jev Choice (typed, no hallucination) picks which existing category best fits, or signals `propose_new` with low confidence. Prefer `action==reuse` (use that category) over inventing a new one; only propose a genuinely new category if `action==propose_new` (confidence<0.6) and none of the existing ones fit. Keep 1-3 categories; Jev prevents the `"AI Agent Tools"` vs `"AI-Powered Agents"` drift. If Jev returns `fallback==true`, fall back to picking the closest existing by lexical match or keep the prior manual logic, never invent without Jev/tool signal.
       - `CONTENT_WITH_LINKS`: Use `Generated Content`. TITLE is rendered as the page's own H1 above the content -- if `Generated Content` starts with a heading (`#`, `##`, or `###`) that repeats the title, remove that heading line before using it here so the title doesn't appear twice on the page. The content should start directly with the introduction, not a heading that restates the title.
-      - `IMAGE_URL`: Use the `image_url` extracted from the `get_blog_image_tool` response (NOT a default/example URL).
-      - `ALT_TEXT`: Use the `alt_text` extracted from the `get_blog_image_tool` response.
+      - `IMAGE_URL`: Use the `image_url` extracted from the `get_blog_image_tool` response (NOT a default/example URL). If featured generation failed, leave this empty (`IMAGE_URL:` with no value).
+      - `ALT_TEXT`: Use the `alt_text` extracted from the `get_blog_image_tool` response. Leave empty if there is no image.
 
     6. **Output Structured String**
       Output only this multi-line string, replacing placeholders with actual values:
@@ -152,15 +152,14 @@ preparation_agent = Agent(
     - `manage_sheet_data_tool`
     - `fetch_internal_links_tool`
     - `get_existing_categories_tool` (call before deciding CATEGORIES -- see step 5)
-    - `get_blog_image_tool` (try this first for an image)
-    - `get_stock_image_tool` (guaranteed fallback if `get_blog_image_tool` fails for any reason -- see step 4)
+    - `get_blog_image_tool` (the only image tool -- always AI-generated; no stock fallback for the featured slot)
 
     ## Critical Requirements
-    - **IMPORTANT**: You MUST extract the `image_url` from the JSON response of `get_blog_image_tool` (or `get_stock_image_tool` if you had to fall back to it).
+    - **IMPORTANT**: You MUST extract the `image_url` from the JSON response of `get_blog_image_tool`. If it returns no usable image, leave `IMAGE_URL` empty (do not substitute stock) -- the post publishes flagged without a featured image.
     - **IMPORTANT**: Do NOT use example URLs like `https://example.com/ai-smart-glasses.jpg`.
     - **IMPORTANT**: The `IMAGE_URL` field in your output MUST contain the actual path returned by the tool.
     """,
-    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, jev_classify_category_tool, get_stock_image_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
+    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, jev_classify_category_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.5),

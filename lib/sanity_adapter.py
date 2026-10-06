@@ -1159,12 +1159,20 @@ class SanityAdapter:
                             "error": f"Failed to handle image URL: {str(e)}"
                         }
             else:
-                # It's a local file path
+                # It's a local file path (or no image at all)
                 # Normalize the image path
                 normalized_image_path = os.path.normpath(local_image_path) if local_image_path else None
-                
-                # Check if file exists
-                if not os.path.exists(normalized_image_path):
+
+                if not normalized_image_path:
+                    # Spec 5.9 ultimate fallback: featured image generation
+                    # failed and stock must never substitute in the featured
+                    # slot. Publish the post without a mainImage (the caller
+                    # flags it in the sheet) instead of blocking the post.
+                    logger.warning("No featured image provided; publishing without a mainImage.")
+                    image_asset_id = None
+                    image_url = None
+                elif not os.path.exists(normalized_image_path):
+                    # Check if file exists
                     return {
                         "status": "error",
                         "post_id": None,
@@ -1172,20 +1180,20 @@ class SanityAdapter:
                         "image_url": None,
                         "error": f"Image file not found at path: {normalized_image_path}. Current working directory: {os.getcwd()}"
                     }
-                
-                # Use the normalized path
-                image_upload_result = self.upload_image(normalized_image_path)
-                if not image_upload_result.get("success"):
-                    return {
-                        "status": "error",
-                        "post_id": None,
-                        "image_id": None,
-                        "image_url": None,
-                        "error": f"Failed to upload image: {image_upload_result.get('error')}"
-                    }
+                else:
+                    # Use the normalized path
+                    image_upload_result = self.upload_image(normalized_image_path)
+                    if not image_upload_result.get("success"):
+                        return {
+                            "status": "error",
+                            "post_id": None,
+                            "image_id": None,
+                            "image_url": None,
+                            "error": f"Failed to upload image: {image_upload_result.get('error')}"
+                        }
 
-                image_asset_id = image_upload_result["asset_id"]
-                image_url = image_upload_result.get("url")
+                    image_asset_id = image_upload_result["asset_id"]
+                    image_url = image_upload_result.get("url")
 
             # 3-4. Prepare document content: Markdown -> Portable Text blocks,
             # with embedded images uploaded as real Sanity assets.
@@ -1236,15 +1244,21 @@ class SanityAdapter:
                 "summary": summary,
                 "slug": {"_type": "slug", "current": slug},
                 "author": {"_type": "reference", "_ref": author_id},
-                "mainImage": {
-                    "_type": "image",
-                    "asset": {"_type": "reference", "_ref": image_asset_id},
-                    "alt": alt_text or f"Image for {title}"
-                },
                 "categories": category_refs,
                 "content": content_blocks,
                 "faqs": formatted_faqs
             }
+            # mainImage only when an asset was actually uploaded. A
+            # `_ref: null` reference is invalid on publish, so the
+            # no-image case (spec 5.9 flag) simply omits the field.
+            if image_asset_id:
+                document["mainImage"] = {
+                    "_type": "image",
+                    "asset": {"_type": "reference", "_ref": image_asset_id},
+                    "alt": alt_text or f"Image for {title}"
+                }
+            else:
+                logger.warning(f"Document {doc_id} created without a mainImage (flagged no-image publish).")
 
             # 8. Create Document
             create_result = self.create_document(document)
