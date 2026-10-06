@@ -173,3 +173,8 @@ google-credentials.json
 service-account-key.json
 contentspark-service-account-key.json
 .claude
+# Phase 1 local artifacts
+.test-tmp-phase1/
+contentfte.db
+test_*.jpg
+tmp*.png

@@ -916,12 +916,19 @@ def _looks_like_unexecuted_tool_call(output: str) -> bool:
     )
 
 
-_GENERATED_POSTS_FIELDS = ["Title", "Generated Content", "FAQs", "Quality Score", "Summary", "Approve/Disapprove", "Published"]
+_GENERATED_POSTS_FIELDS = ["Title", "Generated Content", "FAQs", "Quality Score", "Summary", "Approve/Disapprove", "Published", "Repurpose Bundle", "Video Script Seed"]
 
 
 def _content_row_values(content: dict, title: str) -> dict:
     faqs = _get_field(content, "FAQs", [])
     faqs_str = faqs if isinstance(faqs, str) else json.dumps(faqs)
+
+    def _jsonish(field: str) -> str:
+        value = _get_field(content, field, "")
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False) if value else ""
+
     return {
         "Title": title,
         "Generated Content": str(_get_field(content, "Generated Content")),
@@ -930,6 +937,8 @@ def _content_row_values(content: dict, title: str) -> dict:
         "Summary": str(_get_field(content, "Summary")),
         "Approve/Disapprove": str(_get_field(content, "Approve/Disapprove", "Approved")),
         "Published": str(_get_field(content, "Published", "No")),
+        "Repurpose Bundle": _jsonish("Repurpose Bundle"),
+        "Video Script Seed": _jsonish("Video Script Seed"),
     }
 
 
@@ -1020,6 +1029,10 @@ def _ensure_content_persisted(content: dict) -> dict:
         return correct_values
 
     row_values = _content_row_values(content, title)
+    # Self-heal the two trailing headers (tactics pack) before the positional
+    # append - no-op when they already exist, never shifts existing columns.
+    _ensure_column_header("generated_posts", "Repurpose Bundle")
+    _ensure_column_header("generated_posts", "Video Script Seed")
     append_result = manage_sheet_data(
         worksheet_name="generated_posts",
         action="append_row",

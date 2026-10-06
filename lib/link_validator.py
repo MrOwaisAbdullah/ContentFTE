@@ -45,7 +45,7 @@ def _sanity_slug_exists(slug: str) -> bool:
         from lib.sanity_adapter import SanityAdapter
         adapter = SanityAdapter()
         q = '*[_type == "post" && slug.current == $slug][0]{slug}'
-        endpoint = adapter._build_query_endpoint(q, {"slug": slug})
+        endpoint = adapter._build_query_endpoint(q, {"slug": slug}, perspective="published")
         resp = adapter._make_request("GET", endpoint)
         resp.raise_for_status()
         result = resp.json().get("result")

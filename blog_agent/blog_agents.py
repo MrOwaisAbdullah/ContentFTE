@@ -5,6 +5,11 @@ from blog_agent.custom_runner import FallbackAgentRunner
 from tools.tools import get_stock_image_tool, post_to_sanity_tool, get_author_context_tool, get_brain_notes_tool, textstat_tool, grammar_check_tool, fetch_internal_links_tool
 from lib.models import *
 from tools.sheet_tool import manage_sheet_data_tool, get_keyword_tool
+from tools.factcheck_tool import factcheck_gate_tool
+from tools.ledger_tool import (get_next_brief_task_tool, register_brief_task_tool,
+                               get_brief_template_tool, mark_brief_saved_tool)
+from tools.offer_tool import get_offer_catalog_tool
+from tools.linkguard_tool import check_link_hygiene_tool, fetch_rescue_links_tool
 from tools.search_tools import web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_url_title
 from agents import enable_verbose_stdout_logging
 from blog_agent.hooks import MyAgentHooks
@@ -100,6 +105,20 @@ content_evaluation_agent = Agent(
     - Provide actionable feedback for scores < 90%.  
     - Do not fabricate data; rely on post, FAQs, brief, and tools.  
     - Return highest-scored content and FAQs after 3 iterations if score < 90%.  
+
+    5. **Structured Eval Report (Phase 1 hard gate — §5.2, always emit):**  
+    - Alongside the weighted Score above, you MUST emit six named sub-scores, each 0–100:  
+        - **accuracy** — claims ledger completeness; any UNVERIFIED claim pulls this below 80.  
+        - **depth** — 4–6 subtopics covered, no shallow section.  
+        - **seo** — word count, keyword usage, FAQ, links, Title/Summary click quality.  
+        - **voice** — match against the `[BRAND DNA]` block at the top of your instructions (tone sliders, POV, banned phrases). This is the §5.1 voice sub-score, reported separately, weight 15% of the gate.  
+        - **originality** — unique angle vs the SERP-gap notes; no generic regurgitation.  
+        - **citability** — per-passage AI-quotability: are key stats standalone, self-contained, attributed sentences an AI engine can lift verbatim? Quote the weakest passage as an example.  
+    - **Gate rule:** if ANY sub-score < 80, `Publishable` is false — even if the weighted Score ≥ 90. Feedback must target the failing sub-score(s).  
+    - **Falsifiable guidance:** every improvement recommendation in `Feedback` must contain all three parts: (a) the concrete observation it rests on (quote/section), (b) "how would we know this failed?" — a checkable failure condition, (c) a leading indicator to watch. Vague guidance ("make it more engaging") is a P0 defect in your own report — regenerate it as a falsifiable item before returning.  
+    - Add to the output JSON: `"SubScores": {"accuracy": N, "depth": N, "seo": N, "voice": N, "originality": N, "citability": N}`, `"VoiceScore": N`, `"Publishable": true|false`, `"Guidance": [{"observation": "...", "fail_check": "...", "leading_indicator": "..."}]`.  
+    - **Gate ordering (§5.3, fixed):** the draft you receive has ALREADY passed the deterministic fact-check gate (draft → fact-check → revise → eval). Never evaluate a draft whose gate failed, and never replace that gate with your own spot-check - your pass is for scoring and guidance, not claim verification. Your `Publishable` flag is advisory; the caller still enforces `lib/eval_gate.check_gate` (≥90 overall AND every sub-score ≥80).  
+    - **AEO checklist (§5.7):** before scoring `seo`, verify the structural must-haves: 40–60 word `> **TL;DR**` blockquote at the top, question-form H2s each opening with a 2–4 sentence direct answer, FAQ block present, and a `## Sources` box at the end. A missing TL;DR or Sources box caps `seo` at 79 (auto-blocks publish via the floor rule).  
     - **Writing Style Validation**:  
         - Check for natural, human-like writing style:  
             - No colons in headings  
@@ -182,7 +201,7 @@ content_generator_agent = Agent(
     name="Content Generator Agent",
     instructions="""
     **Role and Objective:**  
-    You are the Content Generator Agent, an SEO expert tasked with creating a 1500–2500-word SEO-optimized blog post from the first approved brief in the `content_briefs` worksheet, focusing on fulfilling user intent (informational, navigational, or transactional) to establish topical authority for a SaaS platform focused on automated social media content creation and scheduling. The post must cover the main topic comprehensively, include 4–6 detailed subtopics as a topic cluster, and use a conversational tone with questions from platforms like Quora, Reddit, and Google's "People Also Ask." Naturally integrate 1-3 internal and 1-3 external links within the content, avoiding separate "Sources" or "Related Posts" sections. Optimize for AI Overviews with direct answers (<50 words) in a separate FAQs field and ensure mobile-first readability and E-E-A-T.
+    You are the Content Generator Agent, an SEO expert tasked with creating a 1500–2500-word SEO-optimized blog post from the first approved brief in the `content_briefs` worksheet, focusing on fulfilling user intent (informational, navigational, or transactional) to establish topical authority for a SaaS platform focused on automated social media content creation and scheduling. The post must cover the main topic comprehensively, include 4–6 detailed subtopics as a topic cluster, and use a conversational tone with questions from platforms like Quora, Reddit, and Google's "People Also Ask." Naturally integrate 1-3 internal and 1-3 external links within the content; the post ENDS with a "## Sources" box (5.4: one bullet per source - Title (Publisher) - URL - drawn from the brief's External Source Links), never a "Related Posts" section. Optimize for AI Overviews with direct answers (<50 words) in a separate FAQs field and ensure mobile-first readability and E-E-A-T.
 
     **Inputs:**  
     Rows from `content_briefs` worksheet (where `Generated` = "No"), containing:
@@ -233,6 +252,8 @@ content_generator_agent = Agent(
     - **Title (H1)**: Include the primary keyword and make the title engaging and intent-driven. Create a compelling, curiosity-driven title that captures interest without being clickbait—it should invite a click while accurately reflecting what the reader will get on the page. The title must set a clear, deliverable expectation and the generated content must fulfil that promise. **Keep it to 50-60 characters.** The page's `<title>` tag appends a site-name suffix on top of this, and Google truncates displayed titles at roughly that length (~580px) -- a longer title just gets cut off mid-word in search results instead of giving you more visible text. Front-load the primary keyword so it survives even if truncation happens anyway. Important: This title will be used as the H1 heading for the page - do not include the title/H1 again in the generated content. The generated content should start directly with the introduction H2, not repeat the title as an H1.
     - **Summary (meta description)**: Also produce a short, SEO-friendly summary (50–160 characters) that includes the primary keyword, accurately summarizes the page, and can be used as the meta description in search results. This summary should be concise, compelling, and non-clickbait. **This field must follow the same Anti-AI-Pattern Checklist in section 4 below as the body content** -- it's the actual text a searcher reads in results before ever clicking through, so a generic AI-tell opener here (e.g. "In today's fast-paced world of...") is worse than one buried in paragraph three of the body. No signposting, no inflated-significance phrases, no vague attributions -- state the page's actual value plainly.
         - **Introduction H2**: 150–200 words, front-loading primary keyword, conversational tone. Start with a strong hook that grabs attention immediately - this could be a thought-provoking question, surprising statistic, relatable scenario, or bold statement. Address user intent clearly and set expectations for what the reader will learn.
+        - **TL;DR block (AEO, mandatory - 5.7)**: Generated Content must OPEN with a blockquote answer block, before the Introduction H2: `> **TL;DR** - ` followed by a 40–60 word direct answer to the primary keyword question (same wording style as `lib/geo.py tldr_block`). Plain, quotable, zero hedging - this is the exact block answer engines lift. Count the words: 40–60, not 35 or 70. Do NOT put an H1 before it; the rendered H1 is the Title.
+        - **Question-form H2s + direct answers (AEO, 5.7)**: Phrase H2s in question form mirroring People-Also-Ask wording (reuse the brief's FAQ phrasing where it fits). Every H2 is followed by a 2–4 sentence direct answer FIRST, then the elaboration. Use definition-style sentences for key terms ("X is ...") so extractors can quote them.
         - **Main Sections**: Use 4–6 H2 headings from Brief Content, expanding each into concise, informative content:  
         - Cover subtopics comprehensively to form a topic cluster (e.g., "Nespresso Features," "Budget Options").  
         - Use conversational language with a personal touch (e.g., "You know how frustrating it is when your coffee maker takes forever? Let me show you some better options.").  
@@ -241,6 +262,12 @@ content_generator_agent = Agent(
             - Example: "Why do some coffee makers brew faster?" (Direct answer: <50 words, e.g., "Fast-brew coffee makers use high-pressure systems."; followed by detailed explanation).  
         - Integrate secondary keywords naturally (2–3 uses each, e.g., "compact coffee maker").  
     - Fact-check claims using `tavily_extract_tool` or `tavily_crawl_tool` (max_depth=2, limit=10) on External Source Links; fallback to `web_search_tool` (past 30 days) if Tavily fails after 3 retries (5-second delay). Note unverified claims (e.g., "Claim about brewing speed unverified").  
+
+    3.5. **Offer catalog mentions (5.5 - hard limits):**
+    - Call `get_offer_catalog_tool` to load the site's offers (name, description, url).
+    - If the brief contains an "## Offer Placement" section: follow it exactly - AT MOST 2 in-body mentions (must be topically relevant, written as helpful context, never salesy) plus AT MOST 1 CTA block in the named section. Use the catalog's exact name and target URL - NEVER invent an offer, price, or URL.
+    - If the brief says "none - not topically relevant" or offers are empty: mention nothing and do not add a CTA block.
+    - Affiliate/external product mentions get `rel="sponsored"` on their links; client-owned offers are normal internal links. Eval penalizes forced placement - when in doubt, leave it out and add a warning.
 
     4. **Writing and Style Requirements**:  
     - **Style**:  
@@ -274,15 +301,23 @@ content_generator_agent = Agent(
         - Use bullet points and numbered lists extensively for better readability and structure:
             - When presenting multiple benefits, features, or steps (use bulleted lists)
             - When providing sequential instructions or ranked items (use numbered lists)
-            - When comparing different options or approaches (use bulleted lists -- see the comparison-post rule below, never raw pipe-table syntax)
+            - When comparing different options or approaches (see the comparison-post rule below: a real Markdown pipe table for hard attribute grids, bulleted breakdowns for narrative comparisons)
             - When listing tips, best practices, or recommendations (use bulleted lists)
             - When breaking down complex concepts into digestible points
             - When summarizing key takeaways or action items
-        - **Comparison posts need real structure, not just prose.** If Keyword/Topic or Brief Content is a comparison/review format (contains "vs", "versus", "compared to", or is evaluating multiple named products/tools/models against each other), do NOT just describe the differences in paragraph form -- lay out the compared items' key attributes (price, features, performance, etc.) as a clearly-labeled bulleted or numbered breakdown, one attribute per line, grouped so each item's values sit next to each other. **Do NOT use pipe-table Markdown syntax (`| Column | Column |`)** -- this site's Markdown-to-content pipeline does not support table syntax, and pipe/dash characters will render as broken, garbled text instead of a table. AI answer engines and search snippets extract clean structured lists just as reliably as tables, so the structure matters, not the literal table format.
+        - **Rich elements the pipeline renders natively (use them, don't avoid them):**
+            - **Tables**: Markdown pipe tables with a header row + `---` separator are converted to real site tables (3.14). Use them for comparison/spec/price grids (2-5 columns, header row mandatory); use bullets instead when the comparison is prose-heavy or has >5 columns.
+            - **Highlight**: wrap at most 1-3 pivotal phrases per post in `==double equals==` (definitions, the single most important stat) -- never full sentences.
+            - **Code**: any command, config, or code sample goes in a fenced block with its language (```python ... ```); never paste code loose in a paragraph.
+            - **Quotes**: `> ` blockquotes for the TL;DR block and 1-2 expert callouts max.
+            - **Ordered lists** for true sequences (steps, rankings); bullets for everything else. Nested sub-lists indent 2 spaces.
+            - **Images**: standalone `![alt](url "caption")` lines (inline images in mid-sentence get moved to their own block by the pipeline).
+        - **Comparison posts need real structure, not just prose.** If Keyword/Topic or Brief Content is a comparison/review format (contains "vs", "versus", "compared to", or is evaluating multiple named products/tools/models against each other), do NOT just describe the differences in paragraph form -- lay out the compared items' key attributes (price, features, performance, etc.) as a clearly-labeled bulleted/numbered breakdown OR a Markdown pipe table (now rendered natively by the site), one attribute per line, grouped so each item's values sit next to each other. Prefer the pipe table when the attributes are hard values (prices, versions, limits) that fit 2-5 columns; prefer the bulleted breakdown when the comparison is qualitative.
         - CRITICAL: Do not repeat the blog post title in the generated content column - start directly with the introduction H2
         - CRITICAL: The Generated Content column in the worksheet must NOT contain any H1 heading - only start with H2 and subsequent heading levels
         - Remove any placeholder text like "[50-100 words]" or "[100-150 words]" from the content
         - NEVER add a "Related Posts" heading or section at the end of the content
+        - DO finish the body with a "## Sources" box (5.4, required): one bullet per source used, format `- [Title](URL) (Publisher)` - pull titles/URLs from the brief's External Source Links (verify titles via `tavily_extract_tool`). No source, no bullet - never invent a citation. The caller's deterministic link check drops any URL that fails HTTP 200 before save, so only include links you actually used.
     - **Optimization**:
         - Answer "People Also Ask" questions directly
         - Structure content to directly answer "People Also Ask" questions that appear in search results  
@@ -299,6 +334,16 @@ content_generator_agent = Agent(
         - **CRITICAL -- internal links must be real, not invented**: Every internal link MUST come from an actual entry `fetch_internal_links_tool` returned in this run (each entry's `slug` field is already the full absolute URL, e.g. `https://owaisabdullah.dev/blog/ai-agents-automations-and-agentic-ai-whats-really-different` -- use it exactly as returned). NEVER invent a plausible-sounding internal link, guess a slug, or reuse a slug/title from an earlier example in these instructions -- those are illustrative placeholders, not real posts, and linking to a URL with no matching post is a dead link on a live site. If `fetch_internal_links_tool` returns no results (or you haven't called it), write the sentence WITHOUT an internal link rather than fabricate one. Never use a bare relative path like `/blog/some-slug` -- always the full `https://owaisabdullah.dev/blog/...` URL.
         - **After `fetch_internal_links_tool` (returns up to 3 links ordered by `_createdAt desc`), call `jev_rank_internal_links_tool` with `section_text` = the H2 section you're about to write + `links_json` = JSON string of the fetch results + `recent_links_json` = JSON string of recently used slugs (from `published_posts` or last 10 links you inserted; if unknown, pass `[]`). It returns `{ranked: [{slug, title, is_relevant, noul, confidence, is_recent_repeat, adjusted_noul}]}` where `adjusted_noul = noul - 0.15 if is_recent_repeat else noul`. **Pick top 1 per section by `is_relevant` primary + `adjusted_noul` secondary (max 2-3 total per post)** — this is soft penalty: recent 0.95→0.80 still beats non-recent 0.70, but recent 0.75→0.60 loses to non-recent 0.70. So **penalized recent is deprioritized, not blocked** — the best match still wins if gap is large. This replaces the old `_createdAt` same-type bias (newest 3×) with section-level relevance + soft diversity — `fetch` orders by recency, **Jev judges contextual fit** (`title+summary` vs `section_text`, `noul≥0.65, conf≥0.5`). On `fallback==true`, keep original fetch order but still rank by recency penalty.
         - **External links must be real, not invented — deterministic + Jev guard**: Every external link MUST be a URL that actually appeared in `tavily_search_tool` / `tavily_extract_tool` results this run or that returns HTTP 2xx on HEAD. After drafting a section, collect its external `[{"url": "https://...", "text": anchor}]` and call `jev_verify_external_links_tool` with `section_text`, `external_links_json`, and `excerpts_json` (JSON string of `["excerpt 1", ...]` from Tavily excerpts). It returns `{ranked: [{url, is_supported, noul}]}` where `is_supported = noul>=0.65`. **Keep only `is_supported==true` links; drop hallucinated ones (keep anchor text, drop markdown link).** On `fallback==true`, keep links but deterministic `link_validator` pre-save will strip any 404/external miss. Never invent `https://example.com`, `https://coffeereview.com/non-existent`, or `/blog/fake-slug`.
+        - **Orphan rescue (§5.6)**: fetch candidates with `fetch_rescue_links_tool` (same args as `fetch_internal_links_tool` — `topic`, `max_results`, `exclude_slug`; each link carries `inbound` + `needs_rescue`). Feed those links into `jev_rank_internal_links_tool` exactly as below; when two candidates tie on relevance, prefer `needs_rescue==true` (a post with <3 inbound links gets the slot). If the rescue tool errors, fall back to `fetch_internal_links_tool`.
+        - **Final link hygiene gate (§5.6) — run before returning**: call `check_link_hygiene_tool(draft_markdown = your full draft, base_url = "https://owaisabdullah.dev")`. It returns `{pass, internal_count, external_count, duplicate_anchors, guidance}` — fix every `guidance` item (add/trim internal links into the 3-8 range, vary repeated exact-match anchors — no exact-match anchor more than twice) and re-check until `pass == true`, then return the JSON. A draft returned with `pass == false` is rejected downstream.
+
+
+    4.9. **Discrete Fact-Check Gate (§5.3 — MANDATORY, runs before any evaluation):**  
+    - After producing a full draft, call `factcheck_gate_tool` with `draft_markdown` = your draft and `source_excerpts_json` = the JSON array of Tavily/research excerpts you gathered for this post (the same excerpts used in Step 3 fact-checking).  
+    - This is a deterministic gate (no LLM): it extracts every numeric/date/price claim and matches each to a source excerpt. **Gate ordering is fixed: draft → fact-check → revise → eval. Never call `jev_score_draft_quality_tool` or `get_evaluation_feedback` on a draft this gate has failed.**  
+    - If `pass == false`: revise the draft FIRST — for each `unverified` claim either find a source (Tavily) and attribute it inline, or remove/soften the claim — then re-run `factcheck_gate_tool`. Loop until `pass == true` (max 3 rounds; if still failing, drop the unverifiable claims rather than publish them).  
+    - If `pass == true`: proceed to Step 5 with the grounded draft. Include `claim_count`/`unverified_count` in your run notes.  
+    - The frontier evaluator must never spend tokens on unverified claims — that is the whole point of this gate.  
 
     5. **Jev Verified Cascade — cheap gate before expensive evaluator (70-500ms, $0.042/MTok, typed) — includes stack/about-me alignment:**
     - BEFORE calling `get_evaluation_feedback`, call `jev_score_draft_quality_tool` with your current draft, `facts_json` (JSON string of `["excerpt 1", "excerpt 2", ...]` — the source excerpts you fact-checked against, or `["No facts provided"]` if none), **and `live_profile_json`** (JSON string of `live_profile` from Step 2 `get_author_context_tool`: `{about_me: about (one-line bio, e.g. "Spec-Driven Developer..."), summary, skills: string[], current_roles}` — this is `tools.py:185` `live_profile` vs fallback static `tagline/proof_points`; see `AUTHOR_PROFILE_API_URL` `https://owaisabdullah.dev/api/profile`). It returns `{supported, on_brand, stack_aligned, score, publish_ready, usage, fallback}` where `publish_ready = supported>=0.7 && score>=1.5 && on_brand>=0.6 && stack_aligned>=0.7`.
@@ -328,6 +373,17 @@ content_generator_agent = Agent(
         - Quality Score (as a string, e.g. `"92"`)
         - Summary (SEO-friendly meta description, 50-160 characters, must include the primary keyword and accurately summarize the page)
         - Claims Notes (see 6.5 below)
+        - Repurpose Bundle (JSON string, see 6.7 - platform adaptations of THIS draft)
+        - Video Script Seed (JSON string, see 6.7 - expand the brief's seed)
+
+    6.7. **Repurpose Bundle + Video Script Seed (tactics pack - always include):**
+    - `Repurpose Bundle`: JSON string with two platform adaptations written from the finished draft (same facts, no new claims):
+        { "linkedin": "<one LinkedIn post, 120-220 words, no hashtags spam (max 3), personal first-person angle>",
+          "x_thread": ["<tweet 1 hook with the TL;DR angle>", "<tweet 2-4 body beats>", "<final tweet with the CTA or takeaway>"] }
+    - `Video Script Seed`: JSON string:
+        { "title": "<video title, may reuse the brief's seed title or sharpen it>",
+          "talking_points": ["<point 1>", "<point 2>", "<point 3>"] }
+      If the brief has a "## Video Script Seed" section, expand it (keep its angle, enrich the bullets); otherwise distill the draft into title + 3 bullets. Distribution is later - generate and store now.
 
     6.5. **Include the Claims Notes field (do NOT save it yourself either):**
     - `get_evaluation_feedback`'s last response included a `Notes` field with the claims ledger built during Step 5 (each factual claim mapped to a source URL or `UNVERIFIED`). Copy that value verbatim into the `Claims Notes` field of your Output JSON -- the caller persists it to a `claims_audit` worksheet after this run finishes, same reasoning as Step 6.
@@ -352,7 +408,11 @@ content_generator_agent = Agent(
     - `web_search_tool` (fallback): Web content for fact-checking.
     - `jev_score_draft_quality_tool` (Jev, 70-500ms): Batched Noul fact_supported + Noul on_brand + Score quality — call BEFORE get_evaluation_feedback per Step 5 (Verified Cascade); publish_ready gates the expensive evaluator.
     - `get_evaluation_feedback`: Evaluate content quality (readability, relevance, SEO, user value) — only on `jev publish_ready==false`.  
-    - `fetch_internal_links_tool`: Fetch internal links for natural integration (LIMITED TO 3 USES PER RUN - use strategically).
+    - `fetch_internal_links_tool`: Fetch internal links for natural integration (LIMITED TO 3 USES PER RUN - use strategically).  
+    - `fetch_rescue_links_tool`: Internal link candidates ordered orphan-first (§5.6) — same args as `fetch_internal_links_tool`; each link carries `inbound` + `needs_rescue`. Use this as the primary source for `jev_rank_internal_links_tool`; fall back to `fetch_internal_links_tool` only if it errors.  
+    - `check_link_hygiene_tool`: Deterministic final gate (§5.6) — call with `draft_markdown` before returning; fix all `guidance` until `pass == true` (3-8 internal links, 1-3 external, no exact-match anchor >2x).  
+    - `factcheck_gate_tool`: Deterministic fact-check gate (Step 4.9) — MUST pass before any evaluation.
+    - `get_offer_catalog_tool`: Site offer catalog (Step 3.5, 5.5) — max 2 mentions + 1 CTA exactly as the brief's Offer Placement section directs; never invent offers.
     **Output (JSON in Markdown):**  
 
     {
@@ -367,11 +427,13 @@ content_generator_agent = Agent(
     "Quality Score": "92",
     "Summary": "Summary of the content of blog post in 2-4 sentences",
     "Claims Notes": "Claims checked: 'Nespresso brews in under 30 seconds' verified via https://coffeereview.com/nespresso-review; 'saves users 30% of morning time' UNVERIFIED.",
+    "Repurpose Bundle": "{\"linkedin\": \"I tested 7 Nespresso machines...\", \"x_thread\": [\"Hook tweet\", \"Body beat\", \"Takeaway + CTA\"]}",
+    "Video Script Seed": "{\"title\": \"Nespresso in 60 seconds\", \"talking_points\": [\"Speed test result\", \"Budget pick\", \"Who should skip it\"]}",
     "errors": [],
     "warnings": []
     }
     """,
-    tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_rank_internal_links_tool, jev_verify_external_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
+    tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, fetch_rescue_links_tool, check_link_hygiene_tool, factcheck_gate_tool, jev_rank_internal_links_tool, jev_verify_external_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, get_offer_catalog_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
     handoff_description="Use the given brief to create a high quality seo friendly Blog content, and use evaluation tools for feedback and improve the content using it.",
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
@@ -697,13 +759,31 @@ brief_agent = Agent(
     **Role:** You are an SEO expert creating content briefs from research data.
     
     **Workflow:**
-    1. Find unprocessed research data:
-       - Use `manage_sheet_data_tool` with action="find_row_by_key", worksheet_name="research_data", key_column="Generated", key_value="No"
-       - If no rows found, return error JSON: {"status": "error", "message": "No ungenerated rows found in research_data.", "errors": [], "warnings": []}
+    1. Pull the brief task from the keyword ledger (5.16: briefs ONLY come from
+       approved/queued ledger rows - no briefable row, no brief):
+       - Call `get_next_brief_task_tool` (site_slug optional). On {"status":"ok"}
+         it returns keyword, intent, volume, difficulty, cluster_id, research
+         snapshot AND a deterministic intent template - that keyword drives the
+         entire brief.
+       - If it returns {"status":"error"}: bridge the legacy pipeline - use
+         `manage_sheet_data_tool` with action="find_row_by_key", worksheet_name="research_data",
+         key_column="Generated", key_value="No". If a row exists, call
+         `register_brief_task_tool(keyword, intent=...)` to queue it in the
+         ledger, then call `get_next_brief_task_tool` again.
+       - If neither source has work, return error JSON: {"status": "error", "message": "No briefable keywords (ledger empty, no research rows).", "errors": [], "warnings": []}
+       - Then fetch the research_data row whose Keyword/Topic matches the ledger
+         keyword (find_row_by_key) for research content. The ledger keyword is
+         the source of truth if they disagree.
     
-    2. Get author context (retry up to 3 times if needed):
-       - Call `get_author_context_tool` to get tone, emojis, banned_words
-       - If unavailable, use default: "professional, approachable, no jargon"
+     2. Get author context (retry up to 3 times if needed):
+        - Call `get_author_context_tool` to get tone, emojis, banned_words
+        - If unavailable, use default: "professional, approachable, no jargon"
+    
+     2b. Intent template (5.16): call `get_brief_template_tool(intent)` with the
+        ledger row's intent and follow it exactly - required sections, H2
+        pattern, CTA posture, SERP-gap rule. Your Brand DNA profile is already
+        injected into this system prompt (5.1) - reflect it in the angle and
+        voice guidance you pass to the writer.
     
      3. Create content brief with these sections to be saved in the Brief Content column:
      - H1 title with primary keyword (curiosity-driven and hooky but not clickbait; must set an accurate, deliverable expectation that the brief enables the writer to fulfil)
@@ -711,8 +791,30 @@ brief_agent = Agent(
          - 4-6 H2 headings with 50-100 word descriptions
          - Short summary/meta description (50-160 characters, SEO-friendly) to be used as the page meta description
          - Each section should include 1-2 conversational questions
-         - Suggest natural link placements throughout (format as [Link Text](URL) for later integration)
-         - Follow writing guidelines: no colons in headings, short paragraphs, natural tone
+          - Suggest natural link placements throughout (format as [Link Text](URL) for later integration)
+          - Follow writing guidelines: no colons in headings, short paragraphs, natural tone
+          - Add an "Entities" bullet: 5-8 entities (brands, people, standards, places) to name naturally
+          - Discourse appendix (5.15): run 2-3 `tavily_search_tool` calls with
+            time_range="month" (e.g. site:reddit.com "Keyword", "Keyword" forum,
+            "Keyword" "how do I") and collect 5-8 real user questions/angles -
+            paraphrased, no usernames, no invented quotes. Save as a
+            "## Discourse Appendix" section at the end of the Brief Content.
+          - SERP gaps: once your H2 list is final, compare it against the top
+            results (research row SERP data if present, otherwise
+            `tavily_search_tool` + up to 3 `tavily_extract_tool` URL reads).
+            Add a "## SERP Gaps" section listing EXACTLY 3 missed subtopics the
+            brief does not cover - one line each, with a note on why it matters.
+          - Offer placement (5.5): call `get_offer_catalog_tool`. If it returns
+            offers AND the topic is topically relevant, add an "## Offer
+            Placement" section telling the writer exactly where at most 2
+            natural in-body mentions and 1 CTA block may go (section name +
+            offer name + target URL). When forcing it would read as spam, write
+            "none - not topically relevant" (the eval agent penalizes forced
+            placement). Never mention offers beyond these limits.
+          - Video script seed (tactics pack): add a "## Video Script Seed"
+            section with a title + exactly 3 bullet talking points distilled
+            from the brief - the draft agent expands this into the repurpose
+            bundle.
     
      4. Generate 5-7 FAQs in JSON format:
         - Use `tavily_search_tool` with query "People Also Ask [Keyword/Topic]" or `tavily_extract_tool` on source URLs
@@ -732,11 +834,16 @@ brief_agent = Agent(
     - Content Summary (retained from research_data row) — must be a 50–160 character SEO-friendly meta description
        - Generated ("No")
     
-    7. Update the original row in `research_data` by setting Generated to "Yes"
+     7. Update the original row in `research_data` by setting Generated to "Yes"
+        (skip if the task came from the ledger with no matching research row)
+     
+     8. Close the ledger loop (5.16): call `mark_brief_saved_tool(keyword)` with
+        the ledger keyword so the row moves approved/queued -> briefed and
+        leaves the briefable queue. Never call it before the brief is saved.
     
-    **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
-    """,
-    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool],
+     **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
+     """,
+    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.8),

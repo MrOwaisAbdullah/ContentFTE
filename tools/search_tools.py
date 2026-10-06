@@ -17,7 +17,7 @@ tavily_client = AsyncTavilyClient(TAVILY_API_KEY)
 
 # --- Tool Functions ---
 @function_tool
-async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic") -> Dict[str, Any]:
+async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic", time_range: str = "") -> Dict[str, Any]:
     """
     Execute a Tavily search query and return structured results.
 
@@ -26,18 +26,23 @@ async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "gen
         max_results (int, optional): Maximum number of results to return. Defaults to 5.
         topic (str, optional): The search topic ('general', 'news'). Defaults to "general".
         search_depth (str, optional): Depth of the search ('basic', 'advanced'). Defaults to "basic".
+        time_range (str, optional): Recency window — 'day', 'week', or 'month'.
+            Empty string (default) searches all time. Use 'month' for the
+            discourse appendix (real user questions from the last 30 days).
 
     Returns:
         Dict[str, Any]: A dictionary containing the query, results (list of dicts with url, title, content, score), and response_time.
                         Returns a dict with an 'error' key if an exception occurs.
     """
     try:
-        response = await tavily_client.search(
-            query,
+        kwargs: Dict[str, Any] = dict(
             max_results=max_results,
             topic=topic,
-            search_depth=search_depth
+            search_depth=search_depth,
         )
+        if time_range:
+            kwargs["time_range"] = time_range
+        response = await tavily_client.search(query, **kwargs)
         return {
             "query": response.get("query", query),
             "results": [

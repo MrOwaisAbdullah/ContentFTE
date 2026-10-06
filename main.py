@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Security, Depends, Body
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from contextlib import asynccontextmanager
+import logging
 import os
 from dotenv import load_dotenv
 
@@ -8,7 +10,11 @@ from dotenv import load_dotenv
 # at import time reads API keys from the environment).
 load_dotenv()
 
-from blog_agent.blog_agents import content_generator_agent, brief_agent
+from blog_agent.blog_agents import (
+    brief_agent,
+    content_evaluation_agent,
+    content_generator_agent,
+)
 from typing import Any, Dict, Optional, Union
 import asyncio
 from blog_agent.research_agent import combined_research_workflow
@@ -16,6 +22,13 @@ from blog_agent.posting_agent import run_posting_workflow
 from blog_agent.custom_runner import FallbackAgentRunner
 from agents.run import set_default_agent_runner
 from agents import set_tracing_disabled
+
+# Phase 1 SDK REST API (§5.12) — thin routes over sdk.service.
+from sdk.server import router as sdk_router
+from sdk import service as sdk_service
+# Phase 1 MCP (§5.13) — thin consumer of the same service, mounted on this
+# FastAPI app (single-server architecture; API first, MCP second).
+from mcp_server.server import mcp as contentfte_mcp
 
 custom_runner = FallbackAgentRunner()
 
@@ -29,10 +42,64 @@ async def lifespan(app: FastAPI):
     # Register the custom fallback runner as the default before any request
     # can trigger an agent run.
     set_default_agent_runner(custom_runner)
-    yield
+
+    # --- Phase 1 engine wiring (additive; model router untouched) ---
+    # §5.1 Brand DNA: auto-load profile at system-prompt level for brief,
+    # draft, and eval agents (never an optional parameter). Eval is exposed
+    # to the generator via .as_tool(), which holds a live reference, so it
+    # inherits the injected profile automatically.
+    try:
+        sdk_service.init()
+        from lib.brand_dna import apply_brand_dna, load_profile
+        from lib.db import get_session
+
+        session = get_session()
+        try:
+            from sqlalchemy import select
+
+            from lib.db import Site
+            site = session.execute(
+                select(Site).order_by(Site.id.asc()).limit(1)).scalar_one_or_none()
+            profile = load_profile(session, site.id) if site else None
+        finally:
+            session.close()
+        if profile:
+            injected = apply_brand_dna(
+                [brief_agent, content_generator_agent, content_evaluation_agent],
+                profile)
+            if injected:
+                logging.getLogger("contentfte").info(
+                    "Brand DNA injected into: %s", ", ".join(injected))
+    except Exception as exc:  # startup must never die on DB/profile issues
+        logging.getLogger("contentfte").warning("Brand DNA injection skipped: %s", exc)
+
+    # CRITICAL: MCP session manager must run for the app's lifetime or the
+    # /mcp endpoint 404s (mcp-builder lesson).
+    async with contentfte_mcp.session_manager.run():
+        yield
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(sdk_router)
+
+# --- CORS: the SDK's primary consumers are browser apps (React/Next/Astro),
+# so /sdk/v1 needs preflight (X-Site-Key + Idempotency-Key are non-simple
+# headers). Auth is header-based, never cookies, so open origins are safe
+# from CSRF; tighten with SDK_CORS_ORIGINS (comma-separated) if desired.
+_sdk_cors_origins = [o.strip() for o in
+                     os.environ.get("SDK_CORS_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_sdk_cors_origins,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["Idempotency-Key"],
+    max_age=600,
+)
+
+# MCP mounted at /mcp (streamable_http_path="/" was set at FastMCP init).
+# POST /mcp (no trailing slash) 307s to /mcp/ — normal, harmless.
+app.mount("/mcp", contentfte_mcp.streamable_http_app(), name="mcp")
 
 # Define API key header
 API_KEY_NAME = "Authorization"
