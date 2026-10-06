@@ -35,6 +35,12 @@ async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "gen
                         Returns a dict with an 'error' key if an exception occurs.
     """
     try:
+        from lib.tavily_meter import meter
+        status = meter()
+        if not status.get("allowed"):
+            return {"error": "Tavily budget exhausted for this site this month — "
+                             "pause and flag; do not publish under-researched content.",
+                    "paused": True, **status}
         kwargs: Dict[str, Any] = dict(
             max_results=max_results,
             topic=topic,
@@ -73,6 +79,11 @@ async def tavily_extract_tool(urls: List[str], include_images: bool = False) -> 
                                                      or a dict with an 'error' key if an exception occurs.
     """
     try:
+        from lib.tavily_meter import meter
+        status = meter(n=max(1, len(urls)))
+        if not status.get("allowed"):
+            return {"error": "Tavily budget exhausted for this site this month — "
+                             "pause and flag.", "paused": True, **status}
         response = await tavily_client.extract(urls=urls, include_images=include_images)
 
         # tavily-python 0.7.x always returns a dict:
@@ -112,6 +123,11 @@ async def tavily_crawl_tool(start_url: str, max_depth: int = 2, limit: int = 10,
                                                      or a dict with an 'error' key if an exception occurs.
     """
     try:
+        from lib.tavily_meter import meter
+        status = meter()
+        if not status.get("allowed"):
+            return {"error": "Tavily budget exhausted for this site this month — "
+                             "pause and flag.", "paused": True, **status}
         response = await tavily_client.crawl(
             url=start_url,
             max_depth=max_depth,

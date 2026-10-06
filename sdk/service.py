@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select
 
 from lib.db import Article, Article as ArticleModel, AuditLog, Site, get_session, init_db
+from lib.cost_ledger import finalize
 from lib.ledger import INTENT_VALUE, briefable_rows
 
 
@@ -168,9 +169,12 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
         art.status = "published"
         s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.publish",
                        payload={"mode": mode, "via": via}))
+        # §5.10-6 finalize the per-post cost ledger at publish.
+        totals = finalize(s, art.id)
+        art.cost_usd = totals["total_usd"]
         s.commit()
         return {"id": art.id, "status": art.status, "mode": mode,
-                "event": "article.published"}
+                "cost_usd": totals["total_usd"], "event": "article.published"}
     finally:
         s.close()
 

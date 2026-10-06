@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from lib.brief_templates import template_for, template_text
 from lib.db import KeywordLedger, Site, get_session, init_db
+from lib.ledger import check_cannibalization as _check_cannibalization
 from lib.ledger import next_keyword, set_status, upsert_keyword
 
 
@@ -206,3 +207,44 @@ get_next_brief_task_tool = function_tool(get_next_brief_task, name_override="get
 register_brief_task_tool = function_tool(register_brief_task, name_override="register_brief_task_tool")
 get_brief_template_tool = function_tool(get_brief_template, name_override="get_brief_template_tool")
 mark_brief_saved_tool = function_tool(mark_brief_saved, name_override="mark_brief_saved_tool")
+
+
+def check_cannibalization(keyword: str, site_slug: str = "") -> Dict[str, Any]:
+    """§5.3/§5.16 intent-overlap triage — run BEFORE queueing/approving a keyword.
+
+    Compares the candidate against every non-retired ledger row. A high
+    intent-overlap means two pages would compete for the same query, so the
+    keyword must be merged into the existing row or the angle differentiated —
+    never two competing rows.
+
+    Args:
+        keyword: The candidate keyword.
+        site_slug: Optional site slug; defaults to the first configured site.
+
+    Returns:
+        {"status": "ok", "keyword", "overlap", "with_keyword", "overlap_ratio",
+         "decision": "write"|"differentiate"|"merge"} or {"status": "error", ...}.
+        decision: write (no overlap), differentiate (0.6-0.8 — keep but angle
+        it apart), merge (>=0.8 — near-duplicate, collapse into the existing row).
+    """
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return {"status": "error", "message": "keyword is required"}
+    init_db()
+    s = get_session()
+    try:
+        site_id, err = _resolve_site_id(s, site_slug)
+        if site_id is None:
+            return {"status": "error", "message": err}
+        res = _check_cannibalization(s, site_id, keyword)
+        if not res["overlap"]:
+            decision = "write"
+        else:
+            decision = "merge" if res["overlap_ratio"] >= 0.8 else "differentiate"
+        return {"status": "ok", "keyword": keyword, **res, "decision": decision}
+    finally:
+        s.close()
+
+
+check_cannibalization_tool = function_tool(
+    check_cannibalization, name_override="check_cannibalization_tool")

@@ -7,7 +7,9 @@ from lib.models import *
 from tools.sheet_tool import manage_sheet_data_tool, get_keyword_tool
 from tools.factcheck_tool import factcheck_gate_tool
 from tools.ledger_tool import (get_next_brief_task_tool, register_brief_task_tool,
-                               get_brief_template_tool, mark_brief_saved_tool)
+                               get_brief_template_tool, mark_brief_saved_tool,
+                               check_cannibalization_tool)
+from tools.seo_tool import get_keyword_metrics_tool
 from tools.offer_tool import get_offer_catalog_tool
 from tools.linkguard_tool import check_link_hygiene_tool, fetch_rescue_links_tool
 from tools.tactics_tool import (get_skill_pack_tool, build_paa_page_tool,
@@ -811,7 +813,20 @@ brief_agent = Agent(
         answer first sentence <= 50 words, expanded to ~120 words, internally
         linked up to this article). The on-page FAQ still carries the supporting
         questions.
-    
+
+     2f. Keyword metrics (5.14): call `get_keyword_metrics_tool(keyword, volume,
+        difficulty, intent, serp_notes)`. When SEO_DATA_PROVIDER=off (default)
+        pass the research row's manual volume/difficulty/intent so the brief
+        carries real fields at zero data cost; when a provider is on it returns
+        cached volume/difficulty/intent and the top-10 SERP gaps. Reflect these
+        numbers in the brief.
+
+     2g. Cannibalization triage (5.3/5.16): call `check_cannibalization_tool(keyword)`.
+        decision=merge -> do NOT create a competing brief (two pages on one
+        intent); report the existing row and stop. decision=differentiate ->
+        proceed but state explicitly how this angle differs from `with_keyword`.
+        decision=write -> proceed.
+
      3. Create content brief with these sections to be saved in the Brief Content column:
      - H1 title with primary keyword (curiosity-driven and hooky but not clickbait; must set an accurate, deliverable expectation that the brief enables the writer to fulfil)
          - 100-150 word intro with keyword, addressing user intent
@@ -870,7 +885,7 @@ brief_agent = Agent(
     
      **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
      """,
-    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool, get_skill_pack_tool, build_paa_page_tool, build_comparison_page_tool, plan_keyword_cluster_tool],
+    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool, get_skill_pack_tool, build_paa_page_tool, build_comparison_page_tool, plan_keyword_cluster_tool, get_keyword_metrics_tool, check_cannibalization_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.8),

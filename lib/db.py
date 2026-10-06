@@ -176,6 +176,25 @@ class ShareOfVoice(Base):
     site: Mapped[Site] = relationship()
 
 
+class TavilyUsage(Base):
+    """§5.10-7 Tavily metering per site per month.
+
+    Guards against publishing under-researched content: when a site's monthly
+    Tavily budget is exhausted, research tools pause-and-flag rather than
+    silently degrade."""
+
+    __tablename__ = "tavily_usage"
+    __table_args__ = (UniqueConstraint("site_id", "month", name="uq_site_tavily_month"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    month: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    site: Mapped[Site] = relationship()
+
+
 _engine = None
 _SessionLocal = None
 
