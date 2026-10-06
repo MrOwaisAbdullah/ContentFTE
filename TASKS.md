@@ -91,9 +91,9 @@ Update this file on every commit: `[ ]` → `[x]` + date + commit hash.
 ## Phase 1.5 — Local Business Factory upsell (spec §7, after engine live)
 
 - [x] 2026-10-07 — Converted tenants → ContentFTE sites (business profile/services/location → Brand DNA + offer catalog): `lib/factory.py` (`build_brand_profile`/`build_offer_catalog`/`provision_site`) + `tools/factory_tool.py` (`provision_factory_site_tool`)
-- [ ] Publish via SDK against Astro renderer; visual editor stays human touch-up
-- [ ] Pexels wiring shared with §5.9 VLM gate (wire once)
-- [ ] JEV reuse for triage/publish routing
+- [x] 2026-10-07 — Publish via SDK against Astro renderer; visual editor stays human touch-up (`lib/custom_site.py` payload + `SITE_PUBLISH_WEBHOOK` push; SDK pull route `GET /articles/{id}/content`)
+- [x] 2026-10-07 — Pexels wiring shared with §5.9 VLM gate (wire once) (`_fetch_stock_image` is the single stock source used by `select_inpost_image_tool`)
+- [x] 2026-10-07 — JEV reuse for triage/publish routing (`check_cannibalization`, `jev_classify_category_tool` at triage; `jev_gate_tool_call` before publish)
 - [ ] Package: website + 8–12 posts/mo retainer + monthly proof report (posts, GSC movement, AI citations, cost ledger)
 - [ ] Sell service first (revenue + training data) before self-serve SaaS
 
@@ -145,3 +145,4 @@ Spec §9 preview only. Allowed now: minimal internal run console (CLI/local sing
 | 2026-10-07 | Phase 1A acceptance wiring (A1 lines 43-60): `lib/tavily_meter.py` + `TavilyUsage` table (per-site monthly counter, `TAVILY_MONTHLY_BUDGET`, fail-open) guarding all 3 Tavily tools with pause-and-flag; `tools/seo_tool.py` `get_keyword_metrics_tool` (5.14 — off=manual fields / provider=cached) + `tools/ledger_tool.py` `check_cannibalization_tool` (write/differentiate/merge) wired into the brief agent (steps 2f/2g); `lib/cost_ledger.finalize` + `record_article_costs` called from `sdk/service.publish_article` (writes per-post total row + `Article.cost_usd`). Acceptance A1: lines 43-48, 50, 53-55, 58-60 → `[x]`; 42 (cutover flip), 49 (lineage enforcement), 56 (fixed 3-image count) left open with reasons. 155/155 tests (`tests/test_acceptance_wiring.py` +9) |
 | 2026-10-07 | Ledger guarantees (A1 line 49) + image count decision: `sdk/service.submit_article` resolves/creates the ledger row and binds `Article.keyword_id` (zero articles without a keyword row); `lib/ledger.queue_health` (queue size + has-next guarantee); `lib/ledger.rotation_review` now persists a dated `AuditLog` decision row. Operator confirmed 2-4 images/post is correct → A1 line 56 reworded + `[x]`. 158/158 tests |
 | 2026-10-07 | Factory upsell (Phase 1.5 line 92): `lib/factory.py` — business profile → Brand DNA profile (voice/reading-level/entities) + offer catalog (`offer_tool`-compatible {name,description,url,cta}) + `provision_site` (upserts Site + versioned Brand DNA); `tools/factory_tool.py` `provision_factory_site_tool`. 162/162 tests (`tests/test_factory.py` +4) |
+| 2026-10-07 | Custom-site delivery (Phase 1.5 lines 93-95): `lib/custom_site.py` (`build_delivery_payload` — rendered html + `.md` alternate + Article/FAQ JSON-LD; `deliver` POSTs to `SITE_PUBLISH_WEBHOOK`, best-effort) for the SDK frontend-pull / webhook-push routes; confirmed Pexels single-source (§5.9 gate) + JEV triage/publish reuse. 166/166 tests (`tests/test_custom_site.py` +4) |
