@@ -169,3 +169,59 @@ def test_brief_agent_has_acceptance_tools():
     txt = brief_agent.instructions
     assert "get_keyword_metrics_tool" in txt
     assert "check_cannibalization_tool" in txt
+
+
+# ---------------------------------------------------------------------------
+# Ledger guarantees (acceptance line 49)
+# ---------------------------------------------------------------------------
+def test_submit_article_binds_keyword_row(temp_db):
+    from sdk import service
+    from lib.db import Article as Art, KeywordLedger as KW
+
+    out = service.submit_article("t", keyword="crm software")
+    assert out["keyword_id"] is not None
+    s = temp_db.get_session()
+    try:
+        assert s.execute(select(KW).where(KW.keyword == "crm software")).scalar_one()
+        art = s.get(Art, out["id"])
+        assert art.keyword_id == out["keyword_id"]
+    finally:
+        s.close()
+
+
+def test_queue_health_reports_next(temp_db):
+    from lib.ledger import queue_health, set_status, upsert_keyword
+
+    s = temp_db.get_session()
+    try:
+        site = store.get_or_create_site(s, "t")
+        assert queue_health(s, site.id)["has_next"] is False
+        row = upsert_keyword(s, site.id, "kw one")
+        set_status(s, row.id, "queued")
+        health = queue_health(s, site.id)
+        assert health["has_next"] is True
+        assert health["next_keyword"] == "kw one"
+        assert health["queue_size"] == 1
+    finally:
+        s.close()
+
+
+def test_rotation_review_writes_dated_audit_log(temp_db):
+    from datetime import datetime, timedelta, timezone
+    from lib.db import AuditLog
+    from lib.ledger import rotation_review, upsert_keyword
+
+    s = temp_db.get_session()
+    try:
+        site = store.get_or_create_site(s, "t")
+        row = upsert_keyword(s, site.id, "due kw")
+        row.review_at = datetime.now(timezone.utc) - timedelta(days=1)
+        s.commit()
+        report = rotation_review(s, site.id)
+        assert report["due_count"] == 1
+        logs = list(s.execute(select(AuditLog).where(AuditLog.action == "rotation_review")).scalars())
+        assert len(logs) == 1
+        assert logs[0].payload["due_count"] == 1
+    finally:
+        s.close()
+

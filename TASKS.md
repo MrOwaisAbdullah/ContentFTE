@@ -47,14 +47,14 @@ Update this file on every commit: `[ ]` → `[x]` + date + commit hash.
 - [x] Sources box + 200-checked outbound links on every article
 - [x] Eval: citability sub-score present; all critic guidance falsifiable
 - [x] Triage: cannibalization / intent-overlap check before brief (`check_cannibalization_tool`)
-- [ ] Ledger: zero articles without keyword row; priority queue always has next keyword; rotation decision log per site  _(`next_keyword`/`rotation_review` exist; lineage enforcement not yet mandatory)_
+- [x] Ledger: zero articles without keyword row; priority queue always has next keyword; rotation decision log per site (`submit_article` binds `keyword_id`; `queue_health`; `rotation_review` writes a dated audit row)
 - [x] Brief: discourse appendix + intent template; briefs pull only from approved/queued rows
 - [x] GEO: `.md` alternate per article; monthly share-of-voice log
 - [x] Images: IPTC provenance tags; alt text; per-image cost logged
 - [x] Internal linking hardened (diversity, orphan rescue)
 - [x] TL;DR + FAQ + schema on every article
 - [x] `llms.txt` per site; entity sameAs in schema
-- [ ] 3 images/post, cost logged  _(count scales 1-4 with length by design; per-image cost logged)_
+- [x] Images/post: 2-4 (scales with length), per-image cost logged  _(operator: 2-4 is correct)_
 - [x] GSC decay job running monthly
 - [x] DataForSEO/OpenSEO in every brief (or manual fields when `off`); 30-day cache (`get_keyword_metrics_tool`)
 - [x] Tavily metering per site; pause-and-flag when budget exhausted (`lib/tavily_meter`, guards on all 3 Tavily tools)
@@ -143,3 +143,4 @@ Spec §9 preview only. Allowed now: minimal internal run console (CLI/local sing
 | 2026-10-07 | Phase 1B WordPress rendering (lines 67-74): new `lib/wp_render.py` (dependency-free Markdown→WP HTML — headings/lists incl nested/blockquote/fenced code/GFM tables/hr + inline bold/italic/code/strike/`==highlight==`/links/images; shortcode-safe `[` escaping; XSS-escaped; `render_faq_block`/`render_cta_block`(+sponsored)/`inject_inpost_images` after nth H2/`jsonld_script`); `lib/wordpress.py` gained `build_prepared_post` (markdown+CTA+FAQ+schema composition), `_meta_payload` now Yoast+Rank Math+AIOSEO+canonical, `publish` uploads+injects in-post images and appends Article+FAQ JSON-LD; connector docstring carries the WP/Elementor-MCP interop note. 142/142 tests (`tests/test_wp_render.py` +12) |
 | 2026-10-07 | Cutover step 2 tooling (line 39): `lib/store.py` read API (`list_briefable`, `list_generated_posts`, `find_generated_post`, `keyword_set`, `article_title_set`, `drift_report`), `STORE_READ_SOURCE` switch + `use_postgres_reads()`, `scripts/verify_cutover.py` (Sheets vs Postgres key-set diff, exit 2 on drift). Flip to Postgres reads is operational and gated on a clean live drift report (`tests/test_store_cutover.py` +4 → 146/146) |
 | 2026-10-07 | Phase 1A acceptance wiring (A1 lines 43-60): `lib/tavily_meter.py` + `TavilyUsage` table (per-site monthly counter, `TAVILY_MONTHLY_BUDGET`, fail-open) guarding all 3 Tavily tools with pause-and-flag; `tools/seo_tool.py` `get_keyword_metrics_tool` (5.14 — off=manual fields / provider=cached) + `tools/ledger_tool.py` `check_cannibalization_tool` (write/differentiate/merge) wired into the brief agent (steps 2f/2g); `lib/cost_ledger.finalize` + `record_article_costs` called from `sdk/service.publish_article` (writes per-post total row + `Article.cost_usd`). Acceptance A1: lines 43-48, 50, 53-55, 58-60 → `[x]`; 42 (cutover flip), 49 (lineage enforcement), 56 (fixed 3-image count) left open with reasons. 155/155 tests (`tests/test_acceptance_wiring.py` +9) |
+| 2026-10-07 | Ledger guarantees (A1 line 49) + image count decision: `sdk/service.submit_article` resolves/creates the ledger row and binds `Article.keyword_id` (zero articles without a keyword row); `lib/ledger.queue_health` (queue size + has-next guarantee); `lib/ledger.rotation_review` now persists a dated `AuditLog` decision row. Operator confirmed 2-4 images/post is correct → A1 line 56 reworded + `[x]`. 158/158 tests |

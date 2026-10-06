@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lib.db import Article, KeywordLedger, get_session, init_db
+from lib.db import Article, AuditLog, KeywordLedger, get_session, init_db
 
 VALID_STATUSES = {
     "researched",
@@ -183,8 +183,23 @@ def cluster_coverage(session: Session, site_id: int, cluster_id: str) -> dict:
     }
 
 
+def queue_health(session: Session, site_id: int) -> dict:
+    """§5.16 guarantee the engine always has a 'work this next'.
+
+    Returns {queue_size, has_next, next_keyword}. `has_next` False means the
+    pipeline must research/approve more keywords before it can brief again."""
+    rows = briefable_rows(session, site_id, limit=1000)
+    nxt = next_keyword(session, site_id)
+    return {
+        "queue_size": len(rows),
+        "has_next": nxt is not None,
+        "next_keyword": nxt.keyword if nxt is not None else "",
+        "priority_score": nxt.priority_score if nxt is not None else 0.0,
+    }
+
+
 def rotation_review(session: Session, site_id: int) -> dict:
-    """30/60-day batch rotation ritual — dated decision log per site."""
+    """30/60-day batch rotation ritual — writes a dated decision log per site."""
     now = datetime.now(timezone.utc)
     due = list(
         session.execute(
@@ -196,12 +211,16 @@ def rotation_review(session: Session, site_id: int) -> dict:
             )
         ).scalars()
     )
-    return {
+    report = {
         "reviewed_at": now.isoformat(),
         "site_id": site_id,
         "due_count": len(due),
         "due": [{"id": r.id, "keyword": r.keyword, "status": r.status} for r in due],
     }
+    # Dated decision log: the ritual leaves a durable audit row per review.
+    session.add(AuditLog(site_id=site_id, action="rotation_review", payload=report))
+    session.commit()
+    return report
 
 
 def link_article(session: Session, article_id: int, keyword_id: int) -> Article:

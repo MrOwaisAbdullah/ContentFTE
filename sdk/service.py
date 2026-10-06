@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from lib.db import Article, Article as ArticleModel, AuditLog, Site, get_session, init_db
 from lib.cost_ledger import finalize
-from lib.ledger import INTENT_VALUE, briefable_rows
+from lib.ledger import INTENT_VALUE, briefable_rows, upsert_keyword
 
 
 def _err(message: str, nxt: str = "") -> dict:
@@ -85,7 +85,11 @@ def get_brief(site_slug: str) -> dict:
 
 
 def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None) -> dict:
-    """Create an article in 'briefed' state. Idempotent per (site, keyword)."""
+    """Create an article in 'briefed' state. Idempotent per (site, keyword).
+
+    §5.16 lineage: when a keyword is given, the article is bound to its ledger
+    row (resolved or created), so "zero articles without a keyword row" holds
+    for anything submitted through the SDK/MCP."""
     init_db()
     s = get_session()
     try:
@@ -103,15 +107,22 @@ def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None)
         if existing is not None:
             return {"id": existing.id, "status": existing.status, "deduplicated": True,
                     "event": "article.ready"}
-        art = ArticleModel(site_id=site.id, title=title, status="briefed",
+        keyword_id = None
+        if (keyword or "").strip():
+            kw_row = upsert_keyword(s, site.id, keyword.strip())
+            keyword_id = kw_row.id
+        art = ArticleModel(site_id=site.id, keyword_id=keyword_id, title=title,
+                           status="briefed",
                            meta={"brief": brief or {}, "keyword": keyword})
         s.add(art)
         s.flush()
         s.add(AuditLog(article_id=art.id, site_id=site.id, action="article.submit",
-                       payload={"keyword": keyword, "title": title}))
+                       payload={"keyword": keyword, "title": title,
+                                "keyword_id": keyword_id}))
         s.commit()
         s.refresh(art)
-        return {"id": art.id, "status": art.status, "event": "article.ready"}
+        return {"id": art.id, "status": art.status, "event": "article.ready",
+                "keyword_id": keyword_id}
     finally:
         s.close()
 
