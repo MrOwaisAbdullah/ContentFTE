@@ -206,3 +206,86 @@ def test_backfill_dry_run_writes_nothing(temp_db):
 def test_sheet_tool_append_hooks_mirror():
     src = open(os.path.join(REPO_ROOT, "tools", "sheet_tool.py"), encoding="utf-8").read()
     assert "mirror_sheet_append" in src
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — read API + drift verification
+# ---------------------------------------------------------------------------
+def test_read_defaults_to_sheets():
+    assert store.read_source() == "sheets"
+    assert store.use_postgres_reads() is False
+
+
+def test_read_api_lists_and_finds(temp_db):
+    from lib.ledger import set_status
+
+    s = temp_db.get_session()
+    try:
+        store.mirror_keyword(s, keyword="queued kw", site_slug="t")
+        row = store.keyword_set("t")
+        assert "queued kw" in row
+        # move it into the briefable queue
+        kw = s.execute(select(temp_db.KeywordLedger)).scalar_one()
+        set_status(s, kw.id, "approved")
+        assert [b["keyword"] for b in store.list_briefable("t")] == ["queued kw"]
+
+        store.mirror_article(s, title="Post A", content="body", approved=True,
+                             published=True, site_slug="t")
+        assert store.article_title_set("t") == {"Post A"}
+        assert [p["title"] for p in store.list_generated_posts("t", published=True)] == ["Post A"]
+        assert store.list_generated_posts("t", published=False) == []
+        found = store.find_generated_post("Post A", "t")
+        assert found["markdown"] == "body"
+        assert store.find_generated_post("nope", "t") is None
+    finally:
+        s.close()
+
+
+def test_drift_report_clean_and_mismatch(temp_db):
+    s = temp_db.get_session()
+    try:
+        store.mirror_keyword(s, keyword="k1", site_slug="t")
+        store.mirror_article(s, title="P1", site_slug="t")
+    finally:
+        s.close()
+    clean = store.drift_report({"k1"}, {"P1"}, "t")
+    assert clean["keywords"]["missing_in_postgres"] == []
+    assert clean["articles"]["missing_in_sheets"] == []
+
+    drifted = store.drift_report({"k1", "k2"}, {"P1"}, "t")
+    assert drifted["keywords"]["missing_in_postgres"] == ["k2"]
+
+
+def test_verify_cutover_script(temp_db):
+    path = os.path.join(REPO_ROOT, "scripts", "verify_cutover.py")
+    spec = importlib.util.spec_from_file_location("verify_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    s = temp_db.get_session()
+    try:
+        store.mirror_keyword(s, keyword="k1", site_slug="t")
+        store.mirror_article(s, title="P1", site_slug="t")
+    finally:
+        s.close()
+
+    def fetch(ws):
+        return {
+            "research_data": [{"Keyword/Topic": "k1"}],
+            "content_briefs": [],
+            "generated_posts": [{"Title": "P1"}],
+        }.get(ws, [])
+
+    rep = mod.verify(fetch_records=fetch, site_slug="t")
+    assert rep["in_sync"] is True
+
+    def fetch_extra(ws):
+        rows = fetch(ws)
+        if ws == "research_data":
+            rows = rows + [{"Keyword/Topic": "k2"}]
+        return rows
+
+    rep2 = mod.verify(fetch_records=fetch_extra, site_slug="t")
+    assert rep2["in_sync"] is False
+    assert rep2["keywords"]["missing_in_postgres"] == ["k2"]
+

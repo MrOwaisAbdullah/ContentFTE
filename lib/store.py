@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lib.db import Article, KeywordLedger, Site, get_session, init_db
-from lib.ledger import upsert_keyword
+from lib.ledger import briefable_rows, upsert_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,9 @@ DUALWRITE_ENABLED = os.environ.get("DUALWRITE_ENABLED", "1").strip().lower() not
     "0", "false", "no", "off",
 )
 DEFAULT_SITE_SLUG = os.environ.get("DEFAULT_SITE_SLUG") or "owaisabdullah-dev"
+# Step 2 switch: when "postgres", read APIs below serve the pipeline; the
+# default stays "sheets" until a clean drift report justifies the flip.
+STORE_READ_SOURCE = os.environ.get("STORE_READ_SOURCE", "sheets").strip().lower()
 
 # Which worksheet maps to which Postgres entity. Unknown worksheets are ignored.
 SHEET_TARGETS: Dict[str, str] = {
@@ -256,3 +259,108 @@ def verify_cutover(session: Session, site_slug: str = "") -> Dict[str, Any]:
         select(func.count()).select_from(Article).where(Article.site_id == site.id)
     ).scalar_one()
     return {"site": site.slug, "keywords": keywords, "articles": articles}
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — retire Sheets reads (read API; gated by STORE_READ_SOURCE)
+# ---------------------------------------------------------------------------
+def read_source() -> str:
+    return STORE_READ_SOURCE
+
+
+def use_postgres_reads() -> bool:
+    return STORE_READ_SOURCE == "postgres"
+
+
+def list_briefable(site_slug: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    """Approved/queued ledger rows — the brief queue, from Postgres."""
+    init_db()
+    session = get_session()
+    try:
+        site = get_or_create_site(session, site_slug)
+        return [
+            {"keyword": r.keyword, "intent": r.intent, "status": r.status,
+             "cluster_id": r.cluster_id, "priority_score": r.priority_score}
+            for r in briefable_rows(session, site.id, limit=limit)
+        ]
+    finally:
+        session.close()
+
+
+def list_generated_posts(site_slug: str = "", published: Optional[bool] = None) -> List[Dict[str, Any]]:
+    """Article rows (optionally filtered by published status), from Postgres."""
+    init_db()
+    session = get_session()
+    try:
+        site = get_or_create_site(session, site_slug)
+        q = select(Article).where(Article.site_id == site.id)
+        if published is True:
+            q = q.where(Article.status == "published")
+        elif published is False:
+            q = q.where(Article.status != "published")
+        return [
+            {"id": a.id, "title": a.title, "slug": a.slug, "status": a.status,
+             "quality": (a.scores or {}).get("quality")}
+            for a in session.execute(q).scalars()
+        ]
+    finally:
+        session.close()
+
+
+def find_generated_post(title: str, site_slug: str = "") -> Optional[Dict[str, Any]]:
+    init_db()
+    session = get_session()
+    try:
+        site = get_or_create_site(session, site_slug)
+        art = session.execute(
+            select(Article).where(Article.site_id == site.id, Article.title == (title or "").strip())
+        ).scalars().first()
+        if art is None:
+            return None
+        return {"id": art.id, "title": art.title, "status": art.status,
+                "markdown": art.content_md, "scores": art.scores or {}}
+    finally:
+        session.close()
+
+
+def keyword_set(site_slug: str = "") -> set:
+    init_db()
+    session = get_session()
+    try:
+        site = get_or_create_site(session, site_slug)
+        return {r for (r,) in session.execute(
+            select(KeywordLedger.keyword).where(KeywordLedger.site_id == site.id)
+        )}
+    finally:
+        session.close()
+
+
+def article_title_set(site_slug: str = "") -> set:
+    init_db()
+    session = get_session()
+    try:
+        site = get_or_create_site(session, site_slug)
+        return {r for (r,) in session.execute(
+            select(Article.title).where(Article.site_id == site.id)
+        )}
+    finally:
+        session.close()
+
+
+def drift_report(sheets_keywords: set, sheets_titles: set, site_slug: str = "") -> Dict[str, Any]:
+    """Compare the two stores' key sets. Empty lists on both sides == in sync."""
+    pg_kw = keyword_set(site_slug)
+    pg_titles = article_title_set(site_slug)
+    return {
+        "site": site_slug or DEFAULT_SITE_SLUG,
+        "keywords": {
+            "sheets": len(sheets_keywords), "postgres": len(pg_kw),
+            "missing_in_postgres": sorted(sheets_keywords - pg_kw)[:50],
+            "missing_in_sheets": sorted(pg_kw - sheets_keywords)[:50],
+        },
+        "articles": {
+            "sheets": len(sheets_titles), "postgres": len(pg_titles),
+            "missing_in_postgres": sorted(sheets_titles - pg_titles)[:50],
+            "missing_in_sheets": sorted(pg_titles - sheets_titles)[:50],
+        },
+    }
