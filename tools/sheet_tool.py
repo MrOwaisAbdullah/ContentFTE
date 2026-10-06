@@ -523,6 +523,14 @@ def manage_sheet_data(
                 logger.info(f"Appending row to {worksheet_name}: {row_values}")
                 worksheet.append_row(row_values, value_input_option=value_input_option)
                 time.sleep(0.5)  # Small delay to ensure update is processed
+                # §5.16 Sheets→Postgres cutover, step 1: dual-write mirror.
+                # Best-effort -- a mirror failure must not break the Sheets
+                # write that triggered it (lib.store never raises).
+                try:
+                    from lib.store import mirror_sheet_append
+                    mirror_sheet_append(worksheet_name, list(row_values))
+                except Exception as _mirror_err:
+                    logger.warning(f"postgres mirror skipped ({worksheet_name}): {_mirror_err}")
                 logger.info(f"Successfully appended row to {worksheet_name}")
                 return {"status": "success", "message": f"Row appended to {worksheet_name}."}
 
