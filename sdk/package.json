@@ -45,22 +45,42 @@
         "default": "./dist/renderer.cjs"
       }
     },
-    "./contentfte-prose.css": "./contentfte-prose.css",
+    "./contentfte-prose.css": {
+      "import": {
+        "types": "./contentfte-prose.css.d.ts",
+        "default": "./contentfte-prose.css"
+      },
+      "require": {
+        "types": "./contentfte-prose.css.d.cts",
+        "default": "./contentfte-prose.css"
+      }
+    },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "renderer": [
+        "./dist/renderer.d.ts"
+      ]
+    }
   },
   "files": [
     "dist",
     "contentfte.ts",
     "ContentFTEArticle.tsx",
     "contentfte-prose.css",
+    "contentfte-prose.css.d.ts",
+    "contentfte-prose.css.d.cts",
     "quickstart.md",
+    "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "smoke": "node smoke.mjs",
-    "prepublishOnly": "npm run typecheck && npm run build && npm run smoke"
+    "test": "npm run typecheck && npm run build && npm run smoke",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "react-markdown": "^10.1.0",

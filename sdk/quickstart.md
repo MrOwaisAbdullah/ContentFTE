@@ -156,7 +156,10 @@ No React needed: the payload already ships server-rendered HTML.
 import { ContentFTEClient } from "contentfte";
 import "contentfte/contentfte-prose.css";
 
-const client = new ContentFTEClient(PUBLIC_CONTENTFTE_URL, CONTENTFTE_SITE_KEY);
+const client = new ContentFTEClient(
+  import.meta.env.PUBLIC_CONTENTFTE_URL,
+  import.meta.env.CONTENTFTE_SITE_KEY,
+);
 const payload = await client.getContent(Astro.params.id);
 const jsonLd = (o: unknown) => JSON.stringify(o).replace(/</g, "\\u003c");
 ---
