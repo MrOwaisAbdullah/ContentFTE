@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -147,7 +151,7 @@ def run(dry_run: bool = False, site_slug: str = "",
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ap = argparse.ArgumentParser(description="Monthly GSC decay → refresh briefs job")
+    ap = argparse.ArgumentParser(description="Monthly GSC decay -> refresh briefs job")
     ap.add_argument("--dry-run", action="store_true", help="scan and report only; write nothing")
     ap.add_argument("--site", default="", help="site slug (default: first site)")
     args = ap.parse_args()
@@ -160,7 +164,7 @@ def main() -> None:
           f"refresh_briefs={res['refresh_count']} dry_run={res['dry_run']}")
     for b in res["refresh_briefs"]:
         print(f"  - {b['mode']:5} {b['page_url']} (decay={b['decay_pct']}) "
-              f"→ {b['actions'][0]}")
+              f"-> {b['actions'][0]}")
 
 
 if __name__ == "__main__":

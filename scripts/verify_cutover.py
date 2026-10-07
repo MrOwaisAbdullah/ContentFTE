@@ -16,7 +16,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import sys
 from typing import Any, Callable, Dict, List
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.store import drift_report
 

@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 from typing import Any, Callable, Dict, List
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.db import get_session, init_db
 from lib.store import (
