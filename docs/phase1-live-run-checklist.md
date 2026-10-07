@@ -72,6 +72,12 @@ PASS/FAIL checklist (start the LocalWP site and export `WP_*` first):
 ```bash
 python scripts/acceptance_wp.py
 ```
+
+> **Status (2026-10-07):** PASSED on LocalWP `speedline` (WP 7.1 + Yoast 28.6) —
+> 14/14 checks, post 97 (20 blocks, Article + FAQPage JSON-LD, 5 `<details>`
+> FAQ items, featured 1280×720, in-post image, category SEO,
+> `_yoast_wpseo_metadesc`). Manual Gutenberg check: opens with **no "Attempt
+> Block Recovery"**, 5 `core/details` parsed. Full log: `docs/dev-log.md`.
 Manual equivalent: with `WP_*` set, build a prepared post and publish as a draft:
 ```python
 from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
@@ -82,9 +88,11 @@ post = build_prepared_post(title="Test", markdown="# H\n\nBody",
                            inpost_images=[{"path":"in.jpg","alt":"x","after_h2":1}])
 print(conn.publish(post, mode="draft"))
 ```
-✅ In WP admin the draft has: rendered headings/lists/table/FAQ/CTA, a
+✅ In WP admin the draft has: rendered headings/lists/table/FAQ accordion/CTA, a
 featured image + thumbnail set, in-post image at the H2, Yoast/Rank Math/
 AIOSEO title+description, and an Article + FAQPage JSON-LD block in the body.
+FAQs are a native `core/details` accordion (5 `<details>` items share
+`name="contentfte-faq"`).
 
 ✅ **Block editability:** open the draft in the block editor — it must appear
 as real Heading/Paragraph/List/Table/Image/Code blocks with **no "Attempt
@@ -109,9 +117,10 @@ export WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 #    (equivalent: WP_RENDER_TARGET=elementor on the publish path)
 ```
 ✅ Probe returns `{"available": true, "meta_keys": ["_elementor_data", …]}`;
-the draft opens in Elementor as container > heading (H1) + html widgets
-(WP title hidden via page settings), body plain HTML — no block comments —
-with Article/FAQ JSON-LD intact. Re-run the build → same `wp_post_id`
+the draft opens in Elementor as container > heading (H1) + html widget + a
+native **Accordion widget** for the FAQs (WP title hidden via page settings),
+body plain HTML — no block comments — with Article/FAQ JSON-LD intact. Re-run
+the build → same `wp_post_id`
 (stored in `article.meta`) — **no duplicate posts**; an Elementor write
 failure reports `elementor.ok=false` while the post remains valid
 (fail-open).

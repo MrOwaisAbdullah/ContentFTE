@@ -26,7 +26,7 @@ and why it matters. **72 files added · 18 modified · 4 removed · +9,751 lines
 | `tavily_meter.py`, `seo_provider.py` | API budget metering, keyword metrics | Cost-bounded research |
 
 ### 1.2 Access layers (new — repo had none)
-- **`sdk/`** — REST service (`service.py` → `server.py`), Python client, and the **npm package `@owais-abdullah/contentfte`** (`sdk/package.json`, one `npm install @owais-abdullah/contentfte`): typed TS client + React renderer (`ContentFTEArticle` — title `<h1>`, GFM, `==highlight==` → `<mark>`, heading ids, FAQ section, Article+FAQPage JSON-LD, sanitized via rehype-sanitize) + framework-agnostic `contentfte-prose.css`. Built with tsup (ESM+CJS+`.d.ts`), smoke-tested via `react-dom/server`. Quickstart in `sdk/quickstart.md` (React/Next/Astro/plain-HTML patterns).
+- **`sdk/`** — REST service (`service.py` → `server.py`), Python client, and the **npm package `@owais-abdullah/contentfte`** (`sdk/package.json`, one `npm install @owais-abdullah/contentfte`): typed TS client + React renderer (`ContentFTEArticle` — title `<h1>`, GFM, `==highlight==` → `<mark>`, heading ids, FAQ section, Article+FAQPage JSON-LD, sanitized via rehype-sanitize) + framework-agnostic `contentfte-prose.css`. Built with tsup (ESM+CJS+`.d.ts`), smoke-tested via `react-dom/server`. Quickstart in `sdk/quickstart.md` (React/Next/Astro/plain-HTML patterns). **Published:** [`@owais-abdullah/contentfte@0.1.0`](https://www.npmjs.com/package/@owais-abdullah/contentfte) on npm.
 - **`mcp_server/`** — `contentfte_*` tools over Streamable HTTP → Claude Code/any agent drives the pipeline.
 
 ### 1.3 Agent wiring (modified)

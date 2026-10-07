@@ -1,5 +1,10 @@
 # contentfte
 
+[![npm version](https://img.shields.io/npm/v/@owais-abdullah/contentfte.svg?logo=npm)](https://www.npmjs.com/package/@owais-abdullah/contentfte)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](./LICENSE)
+
+Published on npm as **`@owais-abdullah/contentfte`** — https://www.npmjs.com/package/@owais-abdullah/contentfte
+
 One `npm install` gives you the ContentFTE engine SDK: a typed HTTP client
 plus a React renderer that turns the unified `/content` delivery payload into
 a fully SEO'd article page (title H1, GFM, FAQ section, Article + FAQPage
