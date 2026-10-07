@@ -271,3 +271,180 @@ def site_health(site_slug: str) -> dict:
                 "wp_configured": wp_ok, "checks": checks}
     finally:
         s.close()
+
+
+# --- Elementor render target (native REST, §5.11/§5.13) ----------------
+# Elementor >= 3.27 exposes document meta over show_in_rest, so these ops
+# ride the same WP application-password connection — no MCP dependency.
+
+
+def _elementor_client():
+    """ElementorClient bound to WPConfig.from_env(). Raises when unconfigured
+    (callers wrap into _err)."""
+    from lib.elementor import ElementorClient
+    from lib.wordpress import WPConfig
+    cfg = WPConfig.from_env()
+    if not (cfg.base_url and cfg.username and cfg.app_password):
+        raise ValueError(
+            "WordPress not configured — set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
+    return ElementorClient(cfg)
+
+
+def _check_post_type(post_type: str) -> dict | None:
+    if post_type not in ("posts", "pages"):
+        return _err(f"invalid post_type '{post_type}'",
+                    "use 'posts' (default) or 'pages' — the whitelist prevents path injection")
+    return None
+
+
+def elementor_available() -> dict:
+    """Preflight: does the site expose _elementor_data over REST? (OPTIONS probe)"""
+    try:
+        return _elementor_client().available()
+    except Exception as exc:  # noqa: BLE001 — service never raises
+        return _err(f"elementor probe failed: {type(exc).__name__}: {exc}",
+                    "set WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD (Administrator app "
+                    "password) and confirm Elementor >= 3.27 is active")
+
+
+def elementor_document(post_id: int, post_type: str = "posts") -> dict:
+    """Read the current Elementor document (root elements + page settings)."""
+    bad = _check_post_type(post_type)
+    if bad:
+        return bad
+    try:
+        return _elementor_client().get_document(post_id, post_type=post_type)
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"elementor document read failed: {type(exc).__name__}: {exc}",
+                    "check the post id and that Elementor >= 3.27 is active on the site")
+
+
+def elementor_save(post_id: int, elements: list, post_type: str = "posts",
+                   page_settings: dict | None = None) -> dict:
+    """Replace a post's Elementor document (full-document write). Audited."""
+    bad = _check_post_type(post_type)
+    if bad:
+        return bad
+    if not isinstance(elements, list) or not elements:
+        return _err("elements must be a non-empty array of root element objects",
+                    'fetch GET /sdk/v1/elementor/posts/{post_id} for the current shape, '
+                    'or pass [{"id","elType","settings","elements"}]')
+    try:
+        result = _elementor_client().save_document(
+            post_id, elements, post_type=post_type, page_settings=page_settings)
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"elementor save failed: {type(exc).__name__}: {exc}",
+                    "confirm the post exists, Elementor >= 3.27 is active, and the "
+                    "app password belongs to an Administrator")
+    init_db()
+    s = get_session()
+    try:
+        s.add(AuditLog(action="elementor.save",
+                       payload={"post_id": post_id, "post_type": post_type,
+                                "elements": len(elements)}))
+        s.commit()
+    finally:
+        s.close()
+    result["post_id"] = post_id
+    return result
+
+
+def elementor_build(article_id: int, post_id: int | None = None,
+                    mode: str = "draft") -> dict:
+    """Compose the article as an Elementor document (§5.11 elementor target).
+
+    - post_id or meta.wp_post_id present → save the layout onto that post.
+    - otherwise → create the WP post first with plain-HTML fallback content
+      (render_target="elementor"; publish() writes the Elementor doc right
+      after creation, fail-open), store meta.wp_post_id, audit.
+
+    meta.wp_post_id is always reused → builds never duplicate posts.
+    Local imports keep WordPressConnector/ElementorClient patchable in tests.
+    """
+    if mode not in ("draft", "auto"):
+        return _err(f"invalid mode '{mode}'", "use 'draft' (default) or 'auto'")
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run generate_article first")
+        if not (art.content_md or "").strip():
+            return _err(f"article {article_id} has no content yet",
+                        "run the content stage first (content_md is empty)")
+
+        from lib.elementor import ElementorClient, build_blog_page_data
+        from lib import wp_render
+        from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
+
+        # copy BEFORE mutating — in-place JSON mutation defeats SQLAlchemy
+        # change tracking when the same object is reassigned
+        meta = dict(art.meta) if isinstance(art.meta, dict) else {}
+        brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
+        if post_id is None and meta.get("wp_post_id"):
+            post_id = int(meta["wp_post_id"])
+
+        cfg = WPConfig.from_env()
+        if not (cfg.base_url and cfg.username and cfg.app_password):
+            return _err("WordPress not configured",
+                        "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
+
+        slug = _resolve_slug(art)
+        base = ((art.site.base_url if art.site else "") or "").strip().rstrip("/")
+        url = f"{base}/{slug}" if base else ""
+        post = build_prepared_post(
+            title=art.title or slug,
+            markdown=art.content_md,
+            url=url,
+            faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
+            meta_description=str(brief.get("description") or meta.get("summary") or ""),
+            slug=slug,
+            cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
+            entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
+            date_published=_iso(art.created_at),
+            date_modified=_iso(art.published_at or art.created_at),
+            render_target="elementor",
+        )
+
+        if post_id is None:
+            try:
+                result = WordPressConnector(cfg).publish(post, mode=mode)
+            except Exception as exc:  # noqa: BLE001
+                return _err(f"wp publish failed: {type(exc).__name__}: {exc}",
+                            "check WP config, outbound links (pre_publish_checks), "
+                            "and site reachability")
+            elementor_state = result.get("elementor") or {
+                "ok": False, "error": "publish did not report an elementor write"}
+            meta["wp_post_id"] = result["id"]
+            art.meta = meta
+            s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                           action="article.elementor_build",
+                           payload={"wp_post_id": result["id"], "mode": mode,
+                                    "elementor": elementor_state}))
+            s.commit()
+            return {"article_id": art.id, "wp_post_id": result["id"],
+                    "url": result.get("url", ""), "status": result.get("status", ""),
+                    "render_target": "elementor", "elementor": elementor_state}
+
+        # existing post: compose the body + save the document directly
+        body = post.html + "\n" + wp_render.jsonld_script(post.article_schema)
+        if post.faq_schema:
+            body += "\n" + wp_render.jsonld_script(post.faq_schema)
+        try:
+            res = ElementorClient(cfg).save_document(
+                post_id, build_blog_page_data(post.title, body),
+                page_settings={"hide_title": "yes"})
+        except Exception as exc:  # noqa: BLE001
+            return _err(f"elementor save failed: {type(exc).__name__}: {exc}",
+                        "confirm the post id, Elementor >= 3.27, and an "
+                        "Administrator app password")
+        meta["wp_post_id"] = post_id
+        art.meta = meta
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.elementor_build",
+                       payload={"wp_post_id": post_id, "mode": mode, "elementor": res}))
+        s.commit()
+        return {"article_id": art.id, "wp_post_id": post_id, "url": res.get("url", ""),
+                "render_target": "elementor", "elementor": res}
+    finally:
+        s.close()

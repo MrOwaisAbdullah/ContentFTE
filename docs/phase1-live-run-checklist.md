@@ -87,21 +87,35 @@ which one (that is the block-serialization validation gate) and we adjust its
 markup in `lib/wp_render.py`. Also confirm `SITE`-published frontend output
 is unchanged (block comments never render on the front end).
 
-## 7. Elementor blog design (EMCP Tools MCP)
-For sites that design blog pages in Elementor (`msrbuilds/elementor-mcp`):
+## 7. Elementor blog design (native REST, Elementor >= 3.27)
+For sites that design blog pages in Elementor — **no MCP plugin required**
+(Elementor 3.27+ registers document meta with `show_in_rest`; feature-map §4):
 ```bash
-# 1. On the WP site: install emcp-tools-*.zip (Releases) -> activate
-#    -> EMCP Tools -> Page Builders -> Elementor
-# 2. Export env BEFORE starting opencode (opencode.json interpolates them):
+# 1. WP app password from an Administrator (meta writes; JSON-LD in meta is
+#    not kses-filtered — a lower role can fail the meta update)
 export WP_BASE_URL=https://your-site.com
 export WP_USERNAME=admin
 export WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
-# 3. restart opencode -> emcp-tools MCP connects (npx @msrbuilds/emcp-proxy)
-# 4. EMCP Tools -> Tools: enable needed layout/widget WRITE tools -> Save
-#    -> reconnect the client so the tool list refreshes
+# 2. preflight probe (service: elementor_available / MCP:
+#    contentfte_elementor_available / GET /sdk/v1/elementor/available)
+# 3. build an article as an Elementor document:
+#    POST /sdk/v1/elementor/articles/{id}/build {"mode":"draft"}
+#    (equivalent: WP_RENDER_TARGET=elementor on the publish path)
 ```
-✅ `emcp-tools-list-widgets` answers; build a test container+heading, verify with
-the page-snapshot tool, then roll back via the change ledger.
+✅ Probe returns `{"available": true, "meta_keys": ["_elementor_data", …]}`;
+the draft opens in Elementor as container > heading (H1) + html widgets
+(WP title hidden via page settings), body plain HTML — no block comments —
+with Article/FAQ JSON-LD intact. Re-run the build → same `wp_post_id`
+(stored in `article.meta`) — **no duplicate posts**; an Elementor write
+failure reports `elementor.ok=false` while the post remains valid
+(fail-open).
+
+⚠️ Cache caveat: REST meta writes bypass `Document::save()` invalidation of
+`_elementor_css` (Elementor 4.2) — if styles look stale, re-save once inside
+Elementor (the API response carries `cache_note`).
+
+Note: the earlier EMCP/opencode wiring (`mcp.emcp-tools` in `opencode.json`)
+was adopted, then **reverted** — native REST covers the automated path.
 
 ## Rollback
 - Reads: unset `STORE_READ_SOURCE` (back to Sheets) — dual-write keeps both in sync.

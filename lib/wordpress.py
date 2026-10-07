@@ -8,11 +8,16 @@ Covers: HTML body, featured + in-post images, internal-link fetch via
 REST, Yoast/RankMath/AIOSEO meta, taxonomy on demand, dup/slug guards,
 outbound 200-check, draft vs auto modes, dateModified refresh.
 
-MCP interop (spec §5.13): deep, interactive site operations (page-builder
-edits, Elementor layouts, plugin settings) are delegated to the WordPress /
-Elementor MCP servers rather than re-implemented here. This connector owns only
-the *publish* path (create/update a post + media + terms + meta); anything that
-needs a live editor session is out of scope for it.
+Render targets (spec §5.11): `WP_RENDER_TARGET=blocks` (default) serializes
+Gutenberg block markup; `elementor` keeps the post body as plain HTML and,
+after the post exists, writes an Elementor document via REST meta
+(`lib.elementor.ElementorClient`, Elementor >= 3.27) — fail-open: an
+Elementor write failure never re-creates the post.
+
+MCP interop (spec §5.13): interactive page-builder/plugin settings work
+still belongs to MCP editors; the automated Elementor layout write is
+native here (no MCP dependency). This connector owns the *publish* path
+(create/update a post + media + terms + meta).
 
 No LLM calls — pure HTTP. Never touches the model router.
 """
@@ -68,6 +73,17 @@ class PreparedPost:
     faq_schema: dict | None = None
     article_schema: dict | None = None
     status: str = "draft"  # draft|publish
+    render_target: str = "blocks"  # blocks|elementor (see _resolve_render_target)
+
+
+def _resolve_render_target(override: str | None = None) -> str:
+    """blocks (Gutenberg default) | elementor (plain HTML + REST doc write).
+
+    `override` (build_prepared_post arg) beats WP_RENDER_TARGET; unknown
+    values fall back to blocks so a typo never yields an unrenderable body.
+    """
+    raw = (override or os.environ.get("WP_RENDER_TARGET") or "blocks").strip().lower()
+    return raw if raw in ("blocks", "elementor") else "blocks"
 
 
 def build_prepared_post(
@@ -91,21 +107,28 @@ def build_prepared_post(
     date_published: str | None = None,
     date_modified: str | None = None,
     status: str = "draft",
+    render_target: str | None = None,
 ) -> PreparedPost:
     """Compose a PreparedPost: markdown → WP HTML (+ CTA + FAQ) + meta + schema.
 
     In-post images are injected at publish time (after they are uploaded, so
     the HTML carries the real media URLs), but their placement spec is carried
     on the post. No network here — pure composition.
+
+    `render_target` (blocks|elementor, default from WP_RENDER_TARGET): in
+    elementor mode the body is plain HTML (no Gutenberg block comments) so
+    it can live inside an Elementor html widget; FAQ/CTA render unwrapped.
     """
-    body = wp_render.markdown_to_wp_html(markdown)
+    blocks = _resolve_render_target(render_target) == "blocks"
+    body = wp_render.markdown_to_wp_html(markdown, blocks=blocks)
     if cta:
         body += "\n" + wp_render.render_cta_block(
             cta.get("label", ""), cta.get("url", ""), cta.get("text", ""),
             is_client_owned=cta.get("is_client_owned", True),
+            blocks=blocks,
         )
     if faqs:
-        body += "\n" + wp_render.render_faq_block(faqs)
+        body += "\n" + wp_render.render_faq_block(faqs, blocks=blocks)
     return PreparedPost(
         title=title,
         html=body,
@@ -123,6 +146,7 @@ def build_prepared_post(
         faq_schema=build_faq_schema(faqs) if faqs else None,
         article_schema=article_schema(title, url or canonical, date_published, date_modified, entities),
         status=status,
+        render_target=_resolve_render_target(render_target),
     )
 
 
@@ -275,7 +299,29 @@ class WordPressConnector:
         resp = self.session.post(self._url("/posts"), json=payload, timeout=self.cfg.timeout)
         resp.raise_for_status()
         doc = resp.json()
-        return {"id": doc["id"], "url": doc.get("link", ""), "slug": post.slug, "status": payload["status"]}
+        result = {"id": doc["id"], "url": doc.get("link", ""), "slug": post.slug, "status": payload["status"]}
+        if post.render_target == "elementor":
+            # Post exists first (content = plain HTML fallback) → an Elementor
+            # failure leaves a valid standard post, never a duplicate.
+            result["elementor"] = self._write_elementor(doc["id"], post.title, body)
+        return result
+
+    def _write_elementor(self, post_id: int, title: str, body_html: str) -> dict:
+        """Elementor document write. Fail-open by design: the post already
+        exists — report the error, never re-create or raise."""
+        from lib.elementor import ElementorClient, build_blog_page_data  # local: no import cycle
+        try:
+            return ElementorClient(self.cfg).save_document(
+                post_id,
+                build_blog_page_data(title, body_html),
+                page_settings={"hide_title": "yes"},  # heading widget carries the H1
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open contract
+            return {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "fallback": "post content already saved as standard HTML — edit in Gutenberg or retry the elementor write",
+            }
 
     def refresh(self, post_id: int, html: str | None = None, featured_image_path: str | None = None) -> dict:
         """Refresh path: bumps dateModified signal via modified update."""

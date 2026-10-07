@@ -7,9 +7,11 @@ DB directly, so the API contract stays the single source of truth and the
 two surfaces cannot drift.
 
 Spec tools: list_sites, get_brief, generate_article, get_article_status,
-get_image, publish_article, site_health — prefixed `contentfte_` per MCP
-naming convention so they never collide with other servers (e.g. WordPress's
-own MCP adapter, which stays the route for deep site ops per §5.11).
+get_image, publish_article, site_health, elementor_available/_document/
+_save/_build — prefixed `contentfte_` per MCP naming convention so they
+never collide with other servers (e.g. WordPress's own MCP adapter). The
+elementor_* tools ride native REST document meta (Elementor >= 3.27,
+§5.13) — no third-party MCP server is required for layout writes.
 
 Transport: FastAPI-mounted streamable HTTP at `/mcp` (see main.py, single-
 server architecture; `streamable_http_path="/"` set at init) or stdio via
@@ -45,6 +47,10 @@ mcp = FastMCP(
         "images, publishing. Workflow: contentfte_list_sites -> "
         "contentfte_get_brief -> contentfte_generate_article -> "
         "contentfte_get_article_status -> contentfte_publish_article. "
+        "Elementor (native REST, Elementor >= 3.27): "
+        "contentfte_elementor_available -> contentfte_elementor_document -> "
+        "contentfte_elementor_save (or contentfte_elementor_build to compose "
+        "an article as a document). "
         "Same operations are exposed as REST under /sdk/v1/."
     ),
     streamable_http_path="/",
@@ -87,6 +93,40 @@ class PublishArticleInput(BaseModel):
     mode: Literal["draft", "auto"] = Field(
         default="draft",
         description="'draft' = create as WP draft (default for new sites); 'auto' = publish live")
+
+
+class ElementorPostInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    post_id: int = Field(..., ge=1, description="WordPress post/page ID to read the Elementor document from")
+    post_type: Literal["posts", "pages"] = Field(
+        default="posts", description="WP REST resource type ('posts' default, or 'pages')")
+
+
+class ElementorSaveInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    post_id: int = Field(..., ge=1, description="WordPress post/page ID to write the document to")
+    post_type: Literal["posts", "pages"] = Field(
+        default="posts", description="WP REST resource type ('posts' default, or 'pages')")
+    elements_json: str = Field(
+        ..., min_length=2,
+        description='JSON array string of root elements, e.g. '
+                    '[{"id":"a1b2c3d","elType":"container","settings":{},"elements":[],"isInner":false}] '
+                    '(fetch the current shape via contentfte_elementor_document)')
+    page_settings_json: str = Field(
+        default="",
+        description='Optional JSON object string, e.g. {"hide_title":"yes"} — '
+                    'omit/empty to keep the settings the editor owns')
+
+
+class ElementorBuildInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    article_id: int = Field(..., ge=1, description="Numeric article ID to render as an Elementor document")
+    post_id: int | None = Field(
+        default=None, ge=1,
+        description="Existing WP post ID — omit to create one (or reuse the article's meta.wp_post_id)")
+    mode: Literal["draft", "auto"] = Field(
+        default="draft",
+        description="'draft' (default for new sites) | 'auto' = publish live")
 
 
 def _out(data: dict) -> str:
@@ -238,6 +278,122 @@ async def site_health(params: SiteSlugInput) -> str:
         actionable ("EMPTY queue — approve keywords"). Errors: {"error", "next"}.
     """
     return _out(service.site_health(params.site_slug))
+
+
+@mcp.tool(
+    name="contentfte_elementor_available",
+    annotations={"title": "Probe Elementor REST Meta", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def elementor_available() -> str:
+    """Probe the connected WordPress for Elementor document meta (Elementor
+    >= 3.27 registers _elementor_data with show_in_rest).
+
+    Returns:
+        str: JSON {"available": bool, "meta_keys": [str, ...], "hint": str}
+        — hint explains why availability is false (e.g. Elementor too old).
+        Config problems come back as {"error", "next"}.
+    """
+    return _out(service.elementor_available())
+
+
+@mcp.tool(
+    name="contentfte_elementor_document",
+    annotations={"title": "Read Elementor Document", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def elementor_document(params: ElementorPostInput) -> str:
+    """Read the current Elementor document (root elements + page settings).
+
+    Element shape: {"id": 7-char hex, "elType": "container"|"widget",
+    "widgetType"?, "settings": {...}, "elements": [...], "isInner": bool}.
+    Use this output as elements_json for contentfte_elementor_save edits.
+
+    Args:
+        params (ElementorPostInput): post_id + post_type.
+
+    Returns:
+        str: JSON {"id", "url", "status", "is_elementor", "elements": [...],
+        "element_count", "page_settings", "template_type"} — plus
+        "parse_error" when _elementor_data could not be decoded.
+        Errors: {"error", "next"}.
+    """
+    return _out(service.elementor_document(params.post_id, post_type=params.post_type))
+
+
+@mcp.tool(
+    name="contentfte_elementor_save",
+    annotations={"title": "Write Elementor Document", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def elementor_save(params: ElementorSaveInput) -> str:
+    """Replace a post's Elementor document (full-document write, audited).
+
+    Complex inputs arrive as JSON strings (strict tool schema):
+        elements_json — JSON ARRAY of root elements (fetch the current
+            shape via contentfte_elementor_document first).
+        page_settings_json — optional JSON OBJECT; leave empty to keep
+            the settings the Elementor editor owns.
+
+    Args:
+        params (ElementorSaveInput): post_id, post_type, elements_json,
+        page_settings_json.
+
+    Returns:
+        str: JSON {"ok": true, "id", "url", "saved_elements", "cache_note",
+        "post_id"} — cache_note warns that REST meta writes may leave the
+        Elementor CSS stale until the next in-editor save. Errors:
+        {"error", "next"}.
+    """
+    try:
+        elements = json.loads(params.elements_json)
+    except (ValueError, TypeError) as exc:
+        return _out({"error": f"elements_json is not valid JSON: {exc}",
+                     "next": 'expected a JSON array string, e.g. '
+                             '[{"id":"a1b2c3d","elType":"container","settings":{},"elements":[]}]'})
+    if not isinstance(elements, list):
+        return _out({"error": "elements_json must decode to an array of root elements",
+                     "next": "fetch the current shape via contentfte_elementor_document"})
+    page_settings: dict | None = None
+    if params.page_settings_json:
+        try:
+            page_settings = json.loads(params.page_settings_json)
+        except (ValueError, TypeError) as exc:
+            return _out({"error": f"page_settings_json is not valid JSON: {exc}",
+                         "next": 'expected a JSON object string, e.g. {"hide_title":"yes"}'})
+        if not isinstance(page_settings, dict):
+            return _out({"error": "page_settings_json must decode to a JSON object",
+                         "next": 'e.g. {"hide_title":"yes"}'})
+    return _out(service.elementor_save(params.post_id, elements,
+                                       post_type=params.post_type,
+                                       page_settings=page_settings))
+
+
+@mcp.tool(
+    name="contentfte_elementor_build",
+    annotations={"title": "Compose Article as Elementor Document", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def elementor_build(params: ElementorBuildInput) -> str:
+    """Compose an article's content as an Elementor document (WP render
+    target "elementor", §5.11).
+
+    Behavior: post_id (or the article's stored meta.wp_post_id) → save the
+    layout onto that existing post; otherwise create the WP post first with
+    plain-HTML fallback content (an Elementor write failure never
+    re-creates/duplicates the post — it fails open and reports
+    elementor.ok=false). Subsequent builds reuse meta.wp_post_id.
+
+    Args:
+        params (ElementorBuildInput): article_id, post_id?, mode.
+
+    Returns:
+        str: JSON {"article_id", "wp_post_id", "url", "status",
+        "render_target": "elementor", "elementor": {...}} or
+        {"error", "next"} (article missing, no content, WP not configured).
+    """
+    return _out(service.elementor_build(params.article_id, post_id=params.post_id,
+                                        mode=params.mode))
 
 
 def main() -> None:

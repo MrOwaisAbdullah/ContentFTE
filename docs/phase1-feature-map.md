@@ -93,25 +93,40 @@ verifies a clean open on a real WP; `blocks=False` is the escape hatch.
    template** with a **Post Content** widget. Our block HTML renders inside the
    template, styled by the design; the writer edits in the WP block editor
    (Edit with WordPress). Elementor's own JSON is untouched.
-2. **Native Elementor editing — ADOPTED:** [`msrbuilds/elementor-mcp`](https://github.com/msrbuilds/elementor-mcp)
-   (**EMCP Tools** WP plugin, 526 tools / 231 free) is wired in:
-   - `opencode.json` → `mcp.emcp-tools` = local stdio proxy
-     (`npx @msrbuilds/emcp-proxy`) with `{env:WP_BASE_URL|WP_USERNAME|WP_APP_PASSWORD}`
-     interpolation; also registers the tracked `skills/` dir as opencode skills.
-   - `skills/elementor-publish/SKILL.md` — the workflow skill: prerequisites
-     (WP 6.9+/PHP 8.1, plugin install, enable write tools), the
-     **discover → inspect → act** widget pattern (`list-widgets` →
-     `get-widget-schema` → `add-free-widget`/`update-widget`), blog-template
-     structure (containers + Post Content widget), snapshot/verify + change-ledger
-     rollback, capability/`confirm: true` safety model.
-   - Post body stays Gutenberg blocks (`lib/wp_render.py`); EMCP owns the
-     Elementor *design* — nothing hand-writes `_elementor_data`.
-   - Alternative: official Elementor MCP (Elementor → Elementor MCP dashboard).
-   - This matches the spec §5.13 split already in `lib/wordpress.py`: the
-     connector owns *publish* (post + media + meta); page-builder layouts go
-     through MCP.
-- Rule of thumb: **blog posts → WP block editor; landing pages → Elementor
-  (MCP or manual).**
+2. **Native Elementor documents — BUILT:** since Elementor 3.27 its document
+   meta is registered with `show_in_rest`, so the same WP application-password
+   connection reads/writes layouts — **no MCP server, no plugin of ours**:
+   - Switch: `WP_RENDER_TARGET=elementor` (or
+     `build_prepared_post(render_target="elementor")`) renders the body as
+     **plain HTML** (no block comments) for Elementor's `html` widget;
+     default stays `blocks` (Gutenberg). FAQ/CTA render unwrapped too.
+   - `lib/elementor.py` — `ElementorClient` (OPTIONS probe → is
+     `_elementor_data` in the REST schema?), pure `build_blog_page_data()`
+     (one container > heading widget + html widget, 7-char hex ids like the
+     editor), `elementor_meta()`. `_elementor_data` is a **string** holding a
+     plain JSON **array of root elements** — not the legacy
+     `{"version":"0.4","content":[…]}` wrapper (accepted on read only).
+   - `WordPressConnector.publish()` creates the post **first** (plain-HTML
+     fallback content), then writes the document → an Elementor failure
+     **fails open** (`result["elementor"]={"ok":false,"error":…}`) and can
+     never duplicate the post.
+   - Ops on every surface: service `elementor_available/_document/_save/
+     _build` → REST `/sdk/v1/elementor/*` → MCP `contentfte_elementor_*`
+     (complex inputs as JSON strings). Builds store `article.meta.wp_post_id`
+     and reuse it — repeat builds are idempotent.
+   - Caveats: REST meta writes bypass Elementor's `Document::save()`
+     invalidation of `_elementor_css` (Elementor 4.2) → responses carry
+     `cache_note` (re-save in-editor if styles lag); writes need an
+     **Administrator** app password (kses strips `<script>` from post content
+     but not from meta → JSON-LD survives inside the html widget).
+   - Interactive drag-drop editing sessions still belong to an MCP editor;
+     the automated layout write above is native. `lib/wordpress.py` keeps the
+     spec §5.13 split: connector owns *publish*, layouts are separate.
+   - Reverted: the `mcp.emcp-tools` opencode wiring (adopted, then removed —
+     native REST made it redundant). See `skills/elementor-publish` for the
+     workflow.
+- Rule of thumb: **blog posts → WP block editor (default) or
+  `WP_RENDER_TARGET=elementor`; landing pages → Elementor (manual/MCP).**
 
 ### Custom sites (Astro/Next) — `custom_site.py` payload
 Same HTML **without** block comments (`blocks=False`) + `.md` alternate +

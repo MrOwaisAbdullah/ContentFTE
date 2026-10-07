@@ -13,6 +13,10 @@ Endpoints:
     GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
+    GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
+    GET  /sdk/v1/elementor/posts/{id}     -> current Elementor document (elements)
+    POST /sdk/v1/elementor/posts/{id}     -> replace the document (elements, page_settings)
+    POST /sdk/v1/elementor/articles/{id}/build -> compose article as Elementor doc
 
 Auth: per-site API key via X-Site-Key header (SDK_MASTER_KEY, dev-open when
 unset). Idempotency-Key honored on POST /articles (24h in-memory cache).
@@ -70,6 +74,17 @@ class SiteUpsert(BaseModel):
     name: str = ""
     site_type: str = "custom"  # custom | wordpress
     base_url: str = ""
+
+
+class ElementorSave(BaseModel):
+    elements: list[dict[str, Any]]
+    page_settings: dict[str, Any] | None = None
+    post_type: str = "posts"  # posts | pages (whitelisted in the service)
+
+
+class ElementorBuild(BaseModel):
+    post_id: int | None = None  # omit → create (or reuse meta.wp_post_id)
+    mode: str = "draft"  # draft (default) | auto
 
 
 @router.post("/articles")
@@ -145,3 +160,43 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
 def site_health(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.site_health(site_slug))
+
+
+# --- Elementor (§5.11/§5.13 — native REST target) ---
+
+
+@router.get("/elementor/available")
+def elementor_available(x_site_key: str | None = Header(default=None)) -> dict:
+    """Preflight: 200 always — the body carries available/flag or error+next."""
+    _check_site_key(x_site_key)
+    return service.elementor_available()
+
+
+@router.get("/elementor/posts/{post_id}")
+def elementor_document(post_id: int, post_type: str = "posts",
+                       x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.elementor_document(post_id, post_type=post_type))
+
+
+@router.post("/elementor/posts/{post_id}")
+def elementor_save(post_id: int, body: ElementorSave,
+                   x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.elementor_save(post_id, body.elements,
+                                           post_type=body.post_type,
+                                           page_settings=body.page_settings))
+
+
+@router.post("/elementor/articles/{article_id}/build")
+def elementor_build(article_id: int, body: ElementorBuild | None = None,
+                    x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    result = service.elementor_build(article_id,
+                                     post_id=(body.post_id if body else None),
+                                     mode=(body.mode if body else "draft"))
+    if "error" in result:
+        if "not found" in result["error"] or "no content" in result["error"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
