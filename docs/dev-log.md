@@ -104,15 +104,19 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 ### Open at end of session
 - [ ] Full-generation acceptance re-run (run 4 used seeded content).
 - [ ] Push/merge the branch (23 commits ahead of `master`).
-- [ ] npm publish **`@owais-abdullah/contentfte@0.1.0`** — package built and
-      lint-clean (publint + arethetypeswrong green, smoke 20/20). Logged in as
-      `owais-abdullah`, but the unscoped `contentfte` name was **rejected by
-      npm's similarity guard** vs `contentful` (`E403 … try renaming to
-      '@owais-abdullah/contentfte'`), so the package was scoped and all
-      install/import docs updated (`eac5942`). Publish now stops only at
-      **`EOTP`** — the account has 2FA with auth-and-writes; run
-      `npm publish --access public --otp=<code>` (or use a bypass-2FA
-      Granular Access Token).
+- [x] **npm publish `@owais-abdullah/contentfte@0.1.0`** — **LIVE**
+      (https://www.npmjs.com/package/@owais-abdullah/contentfte). Path there:
+      the unscoped `contentfte` name was **rejected by npm's similarity guard**
+      vs `contentful` (`E403 … try renaming to '@owais-abdullah/contentfte'`),
+      so the package was scoped + all install/import docs updated (`eac5942`);
+      the PUT then needed a 2FA one-time password (`EOTP`, auth-and-writes) —
+      published via the CLI web-auth prompt (`npm publish --access public`).
+      Registry note: right after publish the packument showed a placeholder
+      `0.0.0-stage` ("staged publishing") for a few minutes before `0.1.0`
+      became `latest`. Verified end-to-end from the public registry: clean
+      consumer `npm i` → ESM + CJS `ContentFTEClient`/`ContentFTEArticle`
+      import, `renderToStaticMarkup` → `<h1>`, heading id, `==mark==`, and the
+      CSS path resolves.
 - [ ] TASKS 92 (live MCP session), 90 (Next.js dogfood), 44/47 (Postgres cutover flip).
 
 ---
