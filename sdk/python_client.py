@@ -12,6 +12,7 @@ class ContentFTEClient:
     """Quickstart:
     client = ContentFTEClient("https://engine.example.com", "site-key")
     art = client.submit_article("mysite", keyword="best crm for agencies")
+    client.generate_content(art["id"])          # briefed -> drafted (slow, LLM)
     client.approve_article(art["id"], True)
     content = client.get_content(art["id"])
 
@@ -30,15 +31,16 @@ class ContentFTEClient:
         self.backoff = backoff
 
     def _request(self, method: str, path: str, json: dict | None = None,
-                 headers: dict | None = None) -> dict:
+                 headers: dict | None = None, timeout: float | None = None) -> dict:
         url = f"{self.base}{path}"
         hdrs = {**self.headers, **(headers or {})}
         delay = self.backoff
         last_exc: Exception | None = None
+        eff_timeout = self.timeout if timeout is None else timeout
         for attempt in range(1, self.max_retries + 1):
             try:
                 resp = requests.request(method, url, json=json, headers=hdrs,
-                                        timeout=self.timeout)
+                                        timeout=eff_timeout)
                 if resp.status_code in RETRY_STATUSES and attempt < self.max_retries:
                     time.sleep(delay)
                     delay *= 2
@@ -63,6 +65,14 @@ class ContentFTEClient:
 
     def get_article(self, article_id: int) -> dict:
         return self._request("GET", f"/sdk/v1/articles/{article_id}")
+
+    def generate_content(self, article_id: int, regenerate: bool = False,
+                         timeout: float = 180.0) -> dict:
+        """Run real generation for a submitted article (briefed -> drafted,
+        §5.5). Slow by nature (LLM, typically 30-120s) — timeout defaults
+        to 180s here; idempotent unless regenerate=true."""
+        return self._request("POST", f"/sdk/v1/articles/{article_id}/generate",
+                             json={"regenerate": regenerate}, timeout=timeout)
 
     def approve_article(self, article_id: int, approved: bool = True, note: str = "") -> dict:
         return self._request("POST", f"/sdk/v1/articles/{article_id}/approve",

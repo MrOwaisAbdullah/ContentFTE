@@ -100,7 +100,8 @@ export const POST: APIRoute = async ({ request }) => {
 await client.upsertSite("mysite", "My Site", "custom", "https://mysite.com");
 
 const art   = await client.submitArticle("mysite", keyword);  // -> article.ready
-const got   = await client.getArticle(art.id);                // status polling
+const gen   = await client.generateContent(art.id);           // briefed -> drafted (LLM, 30-120s, idempotent)
+const got   = await client.getArticle(art.id);                // status, scores, cost
 const ok    = await client.approveArticle(art.id, true);      // gate passed?
 await client.publishArticle(art.id);                          // approved only; 409 otherwise
 const payload = await client.getContent(art.id);              // unified delivery payload
@@ -111,7 +112,8 @@ const payload = await client.getContent(art.id);              // unified deliver
 variant for static generators), and `schema` (`article` + `faq` JSON-LD).
 
 - **Events** returned in every mutating response: `article.ready`,
-  `article.needs_review`, `article.published` — forward them to your CMS/webhook.
+  `article.drafted`, `article.needs_review`, `article.published` — forward
+  them to your CMS/webhook.
 - **Idempotency**: pass an `idempotencyKey` on submit; retries (built in:
   3× exponential backoff on network/429/5xx) never duplicate an article.
 - **Publish gate**: `approveArticle` only flips status — `publishArticle`
@@ -198,10 +200,12 @@ Theming: override the `--cfte-*` custom properties (`--cfte-accent`,
 ## 5. Status flow
 
 ```
-briefed → (engine generates) → needs_review | approved → published
-                                ↑ approve false     ↑ publishArticle
+briefed → generateContent(id) → drafted → approved → publishArticle → published
+                                     └→ approve false → needs_review
 ```
 
-Poll `getArticle(id)` until `status !== "briefed"`, then approve (or request
-review) and publish. AI assistants can drive the same flow over MCP at `/mcp`
-(`contentfte_generate_article`, `contentfte_get_article_status`, ...).
+Call `generateContent(id)` after submit — the engine runs its LLM
+(briefed → drafted, typically 30–120s; idempotent unless `regenerate=true`)
+— then approve (or request review) and publish. AI assistants can drive the
+same flow over MCP at `/mcp` (`contentfte_generate_article` submits and
+generates in one call, `contentfte_get_article_status`, ...).

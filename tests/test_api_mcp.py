@@ -200,15 +200,29 @@ def test_mcp_tools_registered_and_thin_over_service():
         assert t.annotations is not None, t.name
 
 
-def test_mcp_tool_end_to_end_via_tool_manager():
+def test_mcp_tool_end_to_end_via_tool_manager(monkeypatch):
     import asyncio
 
     from mcp_server.server import mcp
+    from sdk import service
+
+    # generate_article now runs real generation behind the stub row — inject
+    # a fake LLM here so the smoke test stays offline/CI-safe.
+    async def fake_generate(brief):
+        return {"status": "success", "Title": "MCP KW Post",
+                "Generated Content": "## Intro\n\n" + "Body content. " * 40,
+                "Summary": "Summary of the mcp kw post for smoke testing.",
+                "FAQs": "[]", "Quality Score": "88"}
+
+    monkeypatch.setattr(service, "_default_generate", fake_generate)
 
     async def run():
-        await mcp._tool_manager.call_tool(
+        out = await mcp._tool_manager.call_tool(
             "contentfte_generate_article",
             {"params": {"site_slug": "mcp-site", "keyword": "mcp kw"}})
+        data = json.loads(out)
+        assert data["status"] == "drafted", data
+        assert data["event"] == "article.drafted", data
         sites = await mcp._tool_manager.call_tool("contentfte_list_sites", {})
         return json.loads(sites)["count"]
 

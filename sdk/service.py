@@ -5,21 +5,27 @@ Order of layers (per plan): service -> API -> MCP. MCP never touches the DB
 directly; it calls the same functions the API exposes, so the API contract is
 the single source of truth and behavior can't drift between the two surfaces.
 
-All functions are pure DB/HTTP — no LLM calls, model router untouched.
+All functions are pure DB/HTTP except generate_content (§5.5): it is the
+one op that runs a model, and only via an injectable `generate_fn` — tests
+inject fakes, production lazily loads blog_agent.generation (shared
+content_generator_agent through run_with_fallback). The model router is
+consumed read-only, never edited (routing refactor is the last TASKS item).
 Errors are returned as dicts {"error": str, "next": str} (actionable).
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from slugify import slugify
 from sqlalchemy import select
 
 from lib import custom_site
-from lib.db import Article, Article as ArticleModel, AuditLog, Site, get_session, init_db
+from lib import generation
+from lib.db import Article, Article as ArticleModel, AuditLog, KeywordLedger, Site, get_session, init_db
 from lib.cost_ledger import finalize
-from lib.ledger import INTENT_VALUE, briefable_rows, upsert_keyword
+from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 
 
 def _err(message: str, nxt: str = "") -> dict:
@@ -131,17 +137,26 @@ def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None)
             s.commit()
             s.refresh(site)
         title = (brief or {}).get("title") or keyword or "Untitled"
-        existing = s.execute(
-            select(ArticleModel).where(ArticleModel.site_id == site.id,
-                                       ArticleModel.title == title)
-        ).scalars().first()
-        if existing is not None:
-            return {"id": existing.id, "status": existing.status, "deduplicated": True,
-                    "event": "article.ready"}
+        # Dedupe prefers the keyword binding: generation renames the article
+        # title to the generated H1, so a title-only lookup would miss the
+        # existing row and create a duplicate on a repeat submit.
         keyword_id = None
+        existing = None
         if (keyword or "").strip():
             kw_row = upsert_keyword(s, site.id, keyword.strip())
             keyword_id = kw_row.id
+            existing = s.execute(
+                select(ArticleModel).where(ArticleModel.site_id == site.id,
+                                           ArticleModel.keyword_id == keyword_id)
+            ).scalars().first()
+        if existing is None:
+            existing = s.execute(
+                select(ArticleModel).where(ArticleModel.site_id == site.id,
+                                           ArticleModel.title == title)
+            ).scalars().first()
+        if existing is not None:
+            return {"id": existing.id, "status": existing.status, "deduplicated": True,
+                    "event": "article.ready"}
         art = ArticleModel(site_id=site.id, keyword_id=keyword_id, title=title,
                            status="briefed",
                            meta={"brief": brief or {}, "keyword": keyword})
@@ -154,6 +169,135 @@ def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None)
         s.refresh(art)
         return {"id": art.id, "status": art.status, "event": "article.ready",
                 "keyword_id": keyword_id}
+    finally:
+        s.close()
+
+
+async def _default_generate(brief: dict) -> str:
+    """Production generation seam: lazily runs content_generator_agent
+    (heavy agents stack loads only on first generation). Tests and the MCP
+    end-to-end smoke monkeypatch this — never hit the network in CI."""
+    from blog_agent.generation import generate_with_agent
+
+    return await generate_with_agent(brief)
+
+
+async def generate_content(article_id: int, *, generate_fn=None,
+                           regenerate: bool = False) -> dict:
+    """§5.5/§5.13 — real generation behind generate_article: briefed → drafted.
+
+    Composes the brief in-memory (submitted brief + ledger research + intent
+    template), runs `generate_fn` (default: the shared content_generator_agent
+    with the article's brief embedded — no Sheets involved), then persists the
+    envelope onto the Article (content_md, title, summary, FAQs, quality
+    score), advances the ledger row to 'drafted', and writes an audit row.
+
+    Idempotent: an article that already has content returns as-is (pass
+    regenerate=true to rewrite; an approved article reverts to 'drafted' so
+    it must be re-approved before publishing). Fail-open: every failure —
+    runner exception, unusable output, envelope status=error — comes back
+    as {"error", "next"}, never raises, and leaves the row untouched.
+    """
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found",
+                        "submit one first: contentfte_generate_article / POST /sdk/v1/articles")
+        if (art.content_md or "").strip() and not regenerate:
+            return {"id": art.id, "status": art.status, "event": "article.drafted",
+                    "deduplicated": True, "has_content": True}
+        if art.status == "published" and not regenerate:
+            return _err(f"article {article_id} is published",
+                        "pass regenerate=true to rewrite it (status returns to 'drafted')")
+
+        meta = art.meta if isinstance(art.meta, dict) else {}
+        brief_meta = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
+        intent, research, volume, difficulty = "", "", None, None
+        if art.keyword_id:
+            row = s.get(KeywordLedger, art.keyword_id)
+            if row is not None:
+                intent = row.intent or ""
+                research = row.research_snapshot or ""
+                volume, difficulty = row.volume, row.difficulty
+        brief = generation.build_brief_payload(
+            keyword=str(meta.get("keyword") or brief_meta.get("keyword") or art.title or "").strip(),
+            intent=intent, brief_meta=brief_meta,
+            research_snapshot=research, volume=volume, difficulty=difficulty)
+
+        fn = generate_fn if generate_fn is not None else _default_generate
+        try:
+            output = await fn(brief)
+        except Exception as exc:  # runner/provider failure — fail-open
+            return _err(
+                f"generation failed: {exc}",
+                "check LLM keys (OPENROUTER_API_KEY / GEMINI_API_KEY / ...) "
+                "and retry generate_content")
+
+        parsed = generation.parse_generation_output(output)
+        if parsed is None:
+            return _err("agent returned no usable content",
+                        "retry generate_content (fallback model skipped both "
+                        "the JSON envelope and a salvageable Markdown post)")
+        if str(generation.get_field(parsed, "status") or "").lower() == "error":
+            message = str(generation.get_field(parsed, "message") or "").strip()
+            return _err(message or "generation failed per agent envelope",
+                        "fix the brief (contentfte_get_brief) and retry")
+        content = str(generation.get_field(parsed, "Generated Content") or "").strip()
+        if len(content) < 50:
+            return _err("generated content missing or too short",
+                        "retry generate_content")
+
+        title = str(generation.get_field(parsed, "Title") or "").strip()
+        previous_title = art.title
+        summary = str(generation.get_field(parsed, "Summary") or "").strip()
+        faqs = generation.parse_faqs(generation.get_field(parsed, "FAQs")) \
+            or generation.parse_faqs(brief_meta.get("faqs"))
+        quality = generation.parse_score(generation.get_field(parsed, "Quality Score"))
+        warnings = generation.get_field(parsed, "warnings") or []
+        errors = generation.get_field(parsed, "errors") or []
+        claims_notes = str(generation.get_field(parsed, "Claims Notes") or "").strip()
+
+        if art.keyword_id:
+            try:
+                # Best-effort lifecycle advance (§5.16); a ledger quirk must
+                # never discard a finished post (lib rule: fail-open).
+                set_status(s, art.keyword_id, "drafted")
+            except Exception:
+                pass
+
+        if title:
+            art.title = title
+        art.content_md = content
+        art.status = "drafted"
+        new_meta = dict(meta)
+        if summary:
+            new_meta["summary"] = summary
+        if faqs:
+            new_meta["faqs"] = faqs
+        new_meta["generation"] = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "quality_score": quality,
+            "regenerated": regenerate,
+            "claims_notes": claims_notes,
+            "warnings": warnings if isinstance(warnings, list) else [str(warnings)],
+            "errors": errors if isinstance(errors, list) else [str(errors)],
+        }
+        art.meta = new_meta
+        if quality is not None:
+            art.scores = {**(art.scores or {}), "overall": quality}
+
+        s.add(AuditLog(
+            article_id=art.id, site_id=art.site_id, action="article.generate",
+            payload={"event": "article.drafted", "keyword": meta.get("keyword"),
+                     "regenerated": regenerate, "words": len(content.split()),
+                     "quality_score": quality,
+                     **({"title": title} if title and title != previous_title else {})}))
+        s.commit()
+        return {"id": art.id, "status": art.status, "event": "article.drafted",
+                "title": art.title, "words": len(content.split()),
+                **({"quality_score": quality} if quality is not None else {})}
     finally:
         s.close()
 

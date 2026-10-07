@@ -6,6 +6,7 @@ consume the same service, so API and MCP behavior cannot drift.
 Endpoints:
     POST /sdk/v1/articles                 -> submit brief/keyword
     GET  /sdk/v1/articles/{id}            -> status, scores, cost
+    POST /sdk/v1/articles/{id}/generate   -> run real generation (briefed -> drafted)
     POST /sdk/v1/articles/{id}/approve    -> approve / needs_review
     POST /sdk/v1/articles/{id}/publish    -> mark published (approved only)
     GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
@@ -20,8 +21,9 @@ Endpoints:
 
 Auth: per-site API key via X-Site-Key header (SDK_MASTER_KEY, dev-open when
 unset). Idempotency-Key honored on POST /articles (24h in-memory cache).
-Webhook events returned in responses: article.ready / article.published /
-article.needs_review. Every mutating action is audit-logged by the service.
+Webhook events returned in responses: article.ready / article.drafted /
+article.published / article.needs_review. Every mutating action is
+audit-logged by the service.
 """
 from __future__ import annotations
 
@@ -63,6 +65,10 @@ class ArticleSubmit(BaseModel):
 class ArticleApprove(BaseModel):
     approved: bool = True
     note: str = ""
+
+
+class ArticleGenerate(BaseModel):
+    regenerate: bool = False  # true = rewrite an article that already has content
 
 
 class ArticlePublish(BaseModel):
@@ -113,6 +119,25 @@ def submit_article(
 def get_article(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.get_article(article_id))
+
+
+@router.post("/articles/{article_id}/generate")
+async def generate_article(article_id: int, body: ArticleGenerate | None = None,
+                           x_site_key: str | None = Header(default=None)) -> dict:
+    """Run real generation for a submitted article (briefed -> drafted, §5.5).
+    Long-running (LLM, typically 30-120s) — idempotent: articles that
+    already have content return as-is unless regenerate=true."""
+    _check_site_key(x_site_key)
+    result = await service.generate_content(
+        article_id, regenerate=bool(body and body.regenerate))
+    if "error" in result:
+        if "not found" in result["error"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        if result["error"].startswith(("generation failed", "agent returned",
+                                       "generated content")):
+            raise HTTPException(status_code=502, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.post("/articles/{article_id}/approve")

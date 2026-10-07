@@ -4,6 +4,7 @@
  * import { ContentFTEClient } from "./contentfte";
  * const client = new ContentFTEClient("https://engine.example.com", "site-key");
  * const art = await client.submitArticle("mysite", "best crm for agencies");
+ * await client.generateContent(art.id); // briefed -> drafted (runs the LLM)
  * await client.approveArticle(art.id, true);
  * const content = await client.getContent(art.id);
  * ```
@@ -69,6 +70,10 @@ export class ContentFTEClient {
 
   async getArticle(id: number) {
     return this.request("GET", `/sdk/v1/articles/${id}`);
+  }
+
+  async generateContent(id: number, regenerate = false) {
+    return this.request("POST", `/sdk/v1/articles/${id}/generate`, { regenerate });
   }
 
   async approveArticle(id: number, approved = true, note = "") {

@@ -17,7 +17,9 @@ Transport: FastAPI-mounted streamable HTTP at `/mcp` (see main.py, single-
 server architecture; `streamable_http_path="/"` set at init) or stdio via
 `python -m mcp_server.server` for local Claude Code configs.
 
-No LLM calls here — the MCP *client* is the LLM; tools are pure DB/HTTP.
+content_generator_agent through service.generate_content (briefed -> drafted)
+— this server holds no model logic of its own; every other tool is pure
+DB/HTTP, and the MCP *client* remains the LLM driving the workflow.
 """
 from __future__ import annotations
 
@@ -77,9 +79,13 @@ class SiteSlugInput(BaseModel):
 class GenerateArticleInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     site_slug: str = Field(..., min_length=1, max_length=100,
-                            description="Site slug the article belongs to")
+                           description="Site slug the article belongs to")
     keyword: str = Field(..., min_length=2, max_length=300,
                          description="Target keyword/topic, e.g. 'best crm for agencies'")
+    regenerate: bool = Field(
+        default=False,
+        description="true = rewrite an article that already has content "
+                    "(default false: generation is idempotent per article)")
 
 
 class ArticleIdInput(BaseModel):
@@ -178,24 +184,34 @@ async def get_brief(params: SiteSlugInput) -> str:
 
 @mcp.tool(
     name="contentfte_generate_article",
-    annotations={"title": "Create Article from Keyword", "readOnlyHint": False,
+    annotations={"title": "Create and Generate Article", "readOnlyHint": False,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
 async def generate_article(params: GenerateArticleInput) -> str:
-    """Create an article record in 'briefed' state for a site + keyword.
+    """Create an article for a site + keyword and run real generation (§5.5).
 
-    Idempotent per (site, keyword): an existing article for the same title
-    is returned instead of duplicated. Event emitted: article.ready.
+    One call does submit + generate: an article row is created (or the
+    existing one for the same title is reused), then content_generator_agent
+    writes the post from the in-memory brief and the row lands in 'drafted'.
+    An article that already has content is returned as-is (deduplicated)
+    unless regenerate=true. Next steps: contentfte_get_article_status ->
+    approve (POST /sdk/v1/articles/{id}/approve) -> contentfte_publish_article.
 
     Args:
-        params (GenerateArticleInput): site_slug + keyword.
+        params (GenerateArticleInput): site_slug, keyword, regenerate?.
 
     Returns:
-        str: JSON {"id": int, "status": "briefed", "event": "article.ready",
-        "deduplicated"?: bool} or {"error", "next"}.
+        str: JSON {"id", "status": "drafted", "event": "article.drafted",
+        "title", "words", "quality_score"?, "deduplicated"?, "has_content"?}
+        or {"error", "next"} (unknown site/article, runner failure —
+        generation is idempotent, so retry after fixing the cause).
     """
-    return _out(service.submit_article(params.site_slug, keyword=params.keyword,
-                                       brief={"title": params.keyword}))
+    submitted = service.submit_article(params.site_slug, keyword=params.keyword,
+                                       brief={"title": params.keyword})
+    if "error" in submitted:
+        return _out(submitted)
+    return _out(await service.generate_content(submitted["id"],
+                                               regenerate=params.regenerate))
 
 
 @mcp.tool(
