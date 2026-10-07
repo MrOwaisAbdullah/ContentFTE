@@ -22,6 +22,7 @@ Legend: ✅ have it · ⚠️ partial / needs a decision · ❌ missing · ➖ n
 | A6 | Read a post's content back: `get_post_content_markdown` | `WordPressConnector.get_post(post_id)` (`?context=edit` → raw content + registered meta) | `wp_post` · `GET /sdk/v1/wp/posts/{id}` · `contentfte_wp_post` | ✅ | ✅ (`get_article`, `/content`) |
 | A7 | Update/refresh a live post (decay workstream): `update_post_content` | `service.refresh_article` → `WordPressConnector.update_post` (content + SEO meta + taxonomy; never creates/un-publishes) | `refresh_article` · `POST /sdk/v1/articles/{id}/refresh` · `contentfte_refresh_article` | ✅ | ✅ (re-pull payload) |
 | A8 | Markdown → Portable Text blocks: `_markdown_to_processed_blocks` | `wp_render.markdown_to_wp_html(md, blocks=True)` | internal | ✅ | ✅ (blocks=False) |
+| A9 | Site-level agent index (GEO §5.8) `llms.txt` | `service.llms_txt` composes it from the site's published articles (`lib.geo.generate_llms_txt`) | `llms_txt` · `GET /sdk/v1/sites/{slug}/llms.txt` · `contentfte_llms_txt` | ✅ (site serves it) | ✅ (site serves it) |
 
 ## B. Google Sheets operations → ContentFTE (Postgres + service)
 
@@ -72,6 +73,10 @@ was replaced by Postgres + the service layer, so it is complete for both targets
   Recommendation: presigned **PUT** to object storage (Cloudflare **R2** / S3) or
   a public bucket + CDN — the standard S3 behavior R2 supports. Avoid routing
   uploads through the engine; let the customer's bucket/CDN own hosting.
+- **Site indexes (done + remaining):** site-level **`llms.txt`** is now exposed
+  (`GET /sdk/v1/sites/{slug}/llms.txt`), composed from published articles — the
+  companion to the per-article `markdown_alternate` (`.md`). A **sitemap** stays
+  site-owned (every framework emits its own; e.g. LBF's `sitemap.xml.ts`).
 
 See also: `docs/site-onboarding-flow.md`, `docs/local-business-factory-integration.md`,
 `docs/phase1-feature-map.md`.

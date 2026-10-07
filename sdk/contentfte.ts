@@ -103,6 +103,11 @@ export class ContentFTEClient {
     return this.request("GET", "/sdk/v1/sites");
   }
 
+  /** Compose the site's llms.txt (§5.8) from its published articles. */
+  async llmsTxt(siteSlug: string) {
+    return this.request("GET", `/sdk/v1/sites/${siteSlug}/llms.txt`);
+  }
+
   /** List articles newest-first (filter by site and/or status).
    *  Content-loader usage: list published ids, then getContent(id) each. */
   async listArticles(siteSlug = "", status = "", limit = 100, offset = 0) {

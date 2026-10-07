@@ -193,6 +193,7 @@ def test_mcp_tools_registered_and_thin_over_service():
         "contentfte_refresh_article",
         "contentfte_wp_post",
         "contentfte_site_health",
+        "contentfte_llms_txt",
         "contentfte_elementor_available", "contentfte_elementor_document",
         "contentfte_elementor_save", "contentfte_elementor_build",
     }
@@ -380,3 +381,43 @@ def test_list_articles_route_and_tool():
 
     out = asyncio.run(run())
     assert out["count"] == 1 and out["articles"][0]["id"] == a1["id"]
+
+
+def test_llms_txt_route_and_tool():
+    """GET /sites/{slug}/llms.txt + contentfte_llms_txt — the site-level
+    agent index (§5.8 GEO), composed from PUBLISHED articles only."""
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import sdk.service as service
+    from mcp_server.server import mcp
+    from sdk.server import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    service.upsert_site("llms-site", name="Acme Roofing", site_type="custom",
+                        base_url="https://acme.test")
+    a1 = service.submit_article("llms-site", keyword="flatroof repair")
+    service.approve_article(a1["id"], approved=True)
+    service.publish_article(a1["id"])
+    service.submit_article("llms-site", keyword="gutter cleaning")  # stays briefed
+
+    got = client.get("/sdk/v1/sites/llms-site/llms.txt")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["site"] == "llms-site" and body["count"] == 1  # published only
+    assert "# Acme Roofing" in body["llms_txt"]
+    assert "https://acme.test/flatroof-repair" in body["llms_txt"]
+
+    assert client.get("/sdk/v1/sites/nope/llms.txt").status_code == 404
+
+    async def run():
+        return json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_llms_txt", {"params": {"site_slug": "llms-site"}}))
+
+    out = asyncio.run(run())
+    assert out["count"] == 1 and "# Acme Roofing" in out["llms_txt"]

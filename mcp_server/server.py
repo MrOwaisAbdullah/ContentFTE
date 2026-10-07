@@ -391,6 +391,27 @@ async def site_health(params: SiteSlugInput) -> str:
 
 
 @mcp.tool(
+    name="contentfte_llms_txt",
+    annotations={"title": "Get Site llms.txt", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def llms_txt(params: SiteSlugInput) -> str:
+    """Compose the site's llms.txt (§5.8 GEO) from its PUBLISHED articles.
+
+    The agent-facing index a custom site serves at /llms.txt — the site-level
+    companion to the per-article `markdown_alternate` (.md). The site owns the
+    URL; the engine composes the content.
+
+    Args:
+        params (SiteSlugInput): site_slug.
+
+    Returns:
+        str: JSON {"site", "count", "llms_txt"} or {"error", "next"}.
+    """
+    return _out(service.llms_txt(params.site_slug))
+
+
+@mcp.tool(
     name="contentfte_elementor_available",
     annotations={"title": "Probe Elementor REST Meta", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},

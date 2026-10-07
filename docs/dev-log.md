@@ -117,6 +117,12 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
   return a pull/re-deliver note), and `wp_post` read-back
   (`GET /wp/posts/{id}` → `WordPressConnector.get_post` with `context=edit` for
   raw content + registered SEO meta). Uniform tests for each.
+- **`llms.txt` exposed** (site-level GEO §5.8): `service.llms_txt` composes the
+  site index from its published articles (`lib.geo.generate_llms_txt`) →
+  `GET /sdk/v1/sites/{slug}/llms.txt` + `contentfte_llms_txt` + clients. Fix en
+  route: `list_articles` now returns the **resolved** slug (`_resolve_slug`)
+  instead of the often-empty column — so `.md`/llms URLs are correct. Sitemap
+  stays site-owned.
 - Tests: `tests/test_wp_render.py` (accordion, plain mode, empty), 
   `tests/test_elementor.py` (accordion widget, FAQ-off-the-html-widget,
   publish branch). +3 tests → 212.

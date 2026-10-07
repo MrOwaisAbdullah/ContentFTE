@@ -140,7 +140,7 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
                 slug_by_id[a.site_id] = row.slug if row else ""
             articles.append({
                 "id": a.id, "site_id": a.site_id, "site_slug": slug_by_id[a.site_id],
-                "title": a.title, "slug": a.slug, "status": a.status,
+                "title": a.title, "slug": _resolve_slug(a), "status": a.status,
                 "created_at": _iso(a.created_at), "published_at": _iso(a.published_at),
                 "cost_usd": a.cost_usd,
             })
@@ -769,6 +769,37 @@ def site_health(site_slug: str) -> dict:
         return {"site": site.slug, "ok": briefable > 0,
                 "ledger": {"briefable": briefable, "published": published},
                 "wp_configured": wp_ok, "checks": checks}
+    finally:
+        s.close()
+
+
+def llms_txt(site_slug: str) -> dict:
+    """Generate the site's `llms.txt` (§5.8 GEO) from its PUBLISHED articles —
+    the agent-facing index a custom site serves at `/llms.txt`.
+
+    Companion to the per-article `markdown_alternate` (the `.md` alternate):
+    the site owns the URL, the engine composes the content.
+    """
+    from lib.geo import generate_llms_txt
+
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        site_name = site.name or site.slug
+        base = (site.base_url or "").rstrip("/")
+        listings = list_articles(site_slug=site.slug, status="published", limit=500)
+        pages = []
+        for a in listings.get("articles", []):
+            slug = a.get("slug") or a.get("title") or ""
+            pages.append({
+                "title": a.get("title", ""),
+                "url": f"{base}/{slug}" if base else slug,
+            })
+        text = generate_llms_txt(site_name, base or site.slug, pages)
+        return {"site": site.slug, "count": len(pages), "llms_txt": text}
     finally:
         s.close()
 

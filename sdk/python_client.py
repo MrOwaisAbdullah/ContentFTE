@@ -97,6 +97,10 @@ class ContentFTEClient:
     def list_sites(self) -> dict:
         return self._request("GET", "/sdk/v1/sites")
 
+    def llms_txt(self, site_slug: str) -> dict:
+        """Compose the site's llms.txt (§5.8) from its published articles."""
+        return self._request("GET", f"/sdk/v1/sites/{site_slug}/llms.txt")
+
     def list_articles(self, site_slug: str = "", status: str = "",
                       limit: int = 100, offset: int = 0) -> dict:
         """List articles newest-first (filter by site_slug and/or status).

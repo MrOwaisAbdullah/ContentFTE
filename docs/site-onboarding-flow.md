@@ -243,6 +243,11 @@ curl localhost:8000/sdk/v1/articles/12/content -H "X-Site-Key: $SDK_MASTER_KEY"
 }
 ```
 
+**Site-level indexes:** `GET /sdk/v1/sites/{slug}/llms.txt` composes the site's
+`llms.txt` (§5.8 GEO) from its published articles — the companion to the
+per-article `markdown_alternate` (`.md`). The site serves both at its own URLs
+(`/llms.txt`, `/blog/{slug}.md`).
+
 ### 2.4 Render it
 
 **Astro** — render the source `markdown` (or use the pre-rendered `html`; see

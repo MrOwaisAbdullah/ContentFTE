@@ -19,6 +19,7 @@ Endpoints:
                                              (html + markdown + meta + JSON-LD)    GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
+    GET  /sdk/v1/sites/{slug}/llms.txt    -> site llms.txt (§5.8 GEO) from published articles
     GET  /sdk/v1/wp/posts/{id}            -> read a WP post back (raw content + SEO meta)
     GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
     GET  /sdk/v1/elementor/posts/{id}     -> current Elementor document (elements)
@@ -216,6 +217,17 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
 def site_health(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.site_health(site_slug))
+
+
+@router.get("/sites/{site_slug}/llms.txt")
+def llms_txt(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    """Compose the site's llms.txt (§5.8 GEO) from its published articles.
+
+    Returns JSON {"site", "count", "llms_txt"} — the site serves the text at
+    its own /llms.txt URL. Companion to the per-article markdown_alternate.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.llms_txt(site_slug))
 
 
 @router.get("/wp/posts/{post_id}")
