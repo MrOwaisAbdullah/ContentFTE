@@ -63,7 +63,8 @@ the Astro/Next custom-site payload).
 | `---` | `<!-- wp:html --><hr>` (zero-validation escape hatch) |
 | `**b** *i* `code` ~~s~~ ==mark==` | `<strong> <em> <code> <del> <mark>` |
 | `![alt](src)` / `[t](u)` | `<img>` / `<a>` inside the paragraph block (prose brackets escaped `&#91;` vs shortcodes) |
-| FAQ / CTA | `<!-- wp:html --><section class="faq-block">…` (custom classes round-trip verbatim) |
+| FAQ | accordion — `core/details` blocks: `<!-- wp:details --><details class="wp-block-details" name="contentfte-faq"><summary>Q</summary>` + inner `core/paragraph` answers (plain `<details>` inside `<section class="faq-block">` in non-block mode) |
+| CTA | `<!-- wp:html --><section…><aside class="cta-block">…` (custom classes round-trip verbatim) |
 | in-post images | `<!-- wp:image --><figure class="wp-block-image"><img … /></figure>` injected after the nth heading block's closing comment |
 | schema | `<script type="application/ld+json">` (Article + FAQPage) |
 

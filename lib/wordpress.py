@@ -74,6 +74,7 @@ class PreparedPost:
     article_schema: dict | None = None
     status: str = "draft"  # draft|publish
     render_target: str = "blocks"  # blocks|elementor (see _resolve_render_target)
+    faqs: list[dict] = field(default_factory=list)  # raw pairs — Elementor accordion widget
 
 
 def _resolve_render_target(override: str | None = None) -> str:
@@ -127,8 +128,11 @@ def build_prepared_post(
             is_client_owned=cta.get("is_client_owned", True),
             blocks=blocks,
         )
-    if faqs:
-        body += "\n" + wp_render.render_faq_block(faqs, blocks=blocks)
+    if faqs and blocks:
+        # block mode: FAQ accordion as core/details blocks inside the body.
+        # elementor mode leaves the body FAQ-free — publish() feeds post.faqs
+        # to build_blog_page_data, which emits a native accordion widget.
+        body += "\n" + wp_render.render_faq_block(faqs, blocks=True)
     return PreparedPost(
         title=title,
         html=body,
@@ -147,6 +151,7 @@ def build_prepared_post(
         article_schema=article_schema(title, url or canonical, date_published, date_modified, entities),
         status=status,
         render_target=_resolve_render_target(render_target),
+        faqs=[dict(f) for f in (faqs or [])],
     )
 
 
@@ -300,10 +305,17 @@ class WordPressConnector:
                 uploaded_inpost.append({
                     "url": src, "alt": img.get("alt", ""), "after_h2": img.get("after_h2"),
                 })
-        body = wp_render.inject_inpost_images(body, uploaded_inpost)
-        body += "\n" + wp_render.jsonld_script(post.article_schema)
+        base = wp_render.inject_inpost_images(body, uploaded_inpost)
+        ld = wp_render.jsonld_script(post.article_schema)
         if post.faq_schema:
-            body += "\n" + wp_render.jsonld_script(post.faq_schema)
+            ld += "\n" + wp_render.jsonld_script(post.faq_schema)
+        # elementor: the FAQ accordion rides as a native widget — keep it out
+        # of the html widget, but leave a plain-<details> section in the
+        # fallback post content so the page still has FAQs without Elementor.
+        faq_html = ""
+        if post.render_target == "elementor" and post.faqs:
+            faq_html = wp_render.render_faq_block(post.faqs, blocks=False)
+        body = base + (("\n" + faq_html) if faq_html else "") + "\n" + ld
 
         cat_ids = [self._ensure_term("categories", c) for c in post.categories]
         tag_ids = [self._ensure_term("tags", t) for t in post.tags]
@@ -328,18 +340,21 @@ class WordPressConnector:
             result["featured_media"] = featured_id
         if post.render_target == "elementor":
             # Post exists first (content = plain HTML fallback) → an Elementor
-            # failure leaves a valid standard post, never a duplicate.
-            result["elementor"] = self._write_elementor(doc["id"], post.title, body)
+            # failure leaves a valid standard post, never a duplicate. The FAQ
+            # accordion widget is built from post.faqs (not the body HTML).
+            result["elementor"] = self._write_elementor(
+                doc["id"], post.title, base + "\n" + ld, faqs=post.faqs)
         return result
 
-    def _write_elementor(self, post_id: int, title: str, body_html: str) -> dict:
+    def _write_elementor(self, post_id: int, title: str, body_html: str,
+                         faqs: list | None = None) -> dict:
         """Elementor document write. Fail-open by design: the post already
         exists — report the error, never re-create or raise."""
         from lib.elementor import ElementorClient, build_blog_page_data  # local: no import cycle
         try:
             return ElementorClient(self.cfg).save_document(
                 post_id,
-                build_blog_page_data(title, body_html),
+                build_blog_page_data(title, body_html, faqs=faqs),
                 page_settings={"hide_title": "yes"},  # heading widget carries the H1
             )
         except Exception as exc:  # noqa: BLE001 — fail-open contract

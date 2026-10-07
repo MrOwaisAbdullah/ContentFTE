@@ -13,8 +13,11 @@ Pure functions, no HTTP, no LLM. Renders the pieces the connector needs:
 - **Shortcode-safe**: a literal `[` in body text is escaped to `&#91;` so
   WordPress never mistakes prose for a shortcode (links are parsed first, so
   real `[text](url)` links still work).
-- `render_faq_block` / `render_cta_block`: the on-page FAQ + CTA blocks
-  (wrapped in `<!-- wp:html -->` so they round-trip without validation).
+- `render_faq_block` / `render_cta_block`: on-page FAQ + CTA. FAQ is always
+  an ACCORDION: native `core/details` blocks in block mode (each item a
+  `<details><summary>` toggle, shared `name` = one-open-at-a-time in
+  browsers that support it), plain `<details>` elements otherwise. CTA
+  stays wrapped in `<!-- wp:html -->` (round-trips without validation).
 - `inject_inpost_images`: place `<figure>` images right after a chosen H2
   (detects block mode and inserts after the heading block's closing comment).
 - `jsonld_script`: `<script type="application/ld+json">` for Article/FAQPage.
@@ -253,19 +256,56 @@ def _render_list(lines: List[str], i: int) -> tuple[str, int]:
 
 
 # --- composed blocks ---
+_FAQ_HEADING = "Frequently Asked Questions"
+# Shared across every <details name="…"> so supporting browsers keep a single
+# item open (true accordion); others degrade to independent toggles.
+_FAQ_ACCORDION_NAME = "contentfte-faq"
+
+
+def _faq_answer_paragraphs(answer: str) -> List[str]:
+    """Split an answer on blank lines into paragraph strings (one line each)."""
+    parts = re.split(r"\n\s*\n", (answer or "").strip())
+    return [p.strip().replace("\n", " ") for p in parts if p.strip()]
+
+
 def render_faq_block(faqs: List[Dict[str, Any]], blocks: bool = True) -> str:
-    parts = ['<section class="faq-block">', "<h2>Frequently Asked Questions</h2>"]
-    for f in faqs or []:
-        q = inline(str(f.get("question", "")))
-        a = inline(str(f.get("answer", "")))
+    """FAQ section as an accordion — empty faqs renders nothing.
+
+    `blocks=True`: one `core/details` block per item (save markup verified
+    against WP core: `class="wp-block-details"`, sourced `summary`, answers
+    as inner `core/paragraph` blocks) after a `core/heading`. The comment
+    attrs stay bare — `summary`/`name` are sourced, `showContent` defaults
+    false, and `getCommentAttributes` omits sourced + default values.
+
+    `blocks=False`: the same accordion as plain `<details>` elements inside
+    `<section class="faq-block">` (custom-site / Elementor fallback HTML).
+    """
+    items = [f for f in (faqs or []) if str(f.get("question") or "").strip()]
+    if not items:
+        return ""
+    if blocks:
+        parts = [_block("heading", f"<h2>{inline(_FAQ_HEADING)}</h2>")]
+        for f in items:
+            q = inline(str(f.get("question") or ""))
+            paras = _faq_answer_paragraphs(str(f.get("answer") or "")) or [""]
+            inner = [_block("paragraph", f"<p>{inline(p)}</p>") for p in paras]
+            details = (
+                f'<details class="wp-block-details" name="{_FAQ_ACCORDION_NAME}">'
+                f"<summary>{q}</summary>\n" + "\n".join(inner) + "\n</details>"
+            )
+            parts.append(_block("details", details))
+        return "\n".join(parts)
+    parts = ['<section class="faq-block">', f"<h2>{inline(_FAQ_HEADING)}</h2>"]
+    for f in items:
+        q = inline(str(f.get("question") or ""))
+        paras = _faq_answer_paragraphs(str(f.get("answer") or "")) or [""]
+        ans = "".join(f"<p>{inline(p)}</p>" for p in paras)
         parts.append(
-            f'<div class="faq-item"><h3 class="faq-question">{q}</h3>'
-            f'<p class="faq-answer">{a}</p></div>'
+            f'<details class="faq-item" name="{_FAQ_ACCORDION_NAME}">'
+            f"<summary>{q}</summary>{ans}</details>"
         )
     parts.append("</section>")
-    body = "\n".join(parts)
-    # custom classes survive verbatim inside wp:html (no block validation)
-    return _block("html", body) if blocks else body
+    return "\n".join(parts)
 
 
 def render_cta_block(label: str, url: str, text: str = "",

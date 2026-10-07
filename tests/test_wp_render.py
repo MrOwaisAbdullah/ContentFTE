@@ -96,10 +96,16 @@ def test_blocks_false_returns_plain_html():
     assert '<pre><code class="language-js">' in html
 
 
-def test_faq_cta_wrap_in_html_block():
+def test_faq_is_details_blocks_and_cta_is_html_block():
     faq = wp_render.render_faq_block([{"question": "Q?", "answer": "A."}])
-    assert faq.startswith("<!-- wp:html -->")
-    assert faq.rstrip().endswith("<!-- /wp:html -->")
+    # native accordion: core/details blocks (bare comment attrs — sourced
+    # summary/name and default showContent are omitted by the serializer)
+    assert "<!-- wp:heading -->" in faq
+    assert "<!-- wp:details -->" in faq
+    assert '<details class="wp-block-details" name="contentfte-faq">' in faq
+    assert "<summary>Q?</summary>" in faq
+    assert "<!-- wp:paragraph -->" in faq
+    assert "<!-- wp:html -->" not in faq
     cta = wp_render.render_cta_block("Go", "https://x.com")
     assert cta.startswith("<!-- wp:html -->")
 
@@ -119,11 +125,27 @@ def test_inject_images_inside_block_mode():
 # ---------------------------------------------------------------------------
 def test_faq_block_and_cta():
     faq = wp_render.render_faq_block([{"question": "What is X?", "answer": "A thing."}])
-    assert 'class="faq-block"' in faq
-    assert "What is X?" in faq
+    assert "<!-- wp:details -->" in faq
+    assert "Frequently Asked Questions" in faq
+    assert "What is X?" in faq and "A thing." in faq
+    assert "faq-block" not in faq  # blocks mode has no wrapper section
     cta = wp_render.render_cta_block("Try it", "https://x.com", "Get started", is_client_owned=False)
     assert 'rel="sponsored"' in cta
     assert 'href="https://x.com"' in cta
+
+
+def test_faq_plain_html_mode_is_details_accordion():
+    plain = wp_render.render_faq_block(
+        [{"question": "Q1?", "answer": "One.\n\nTwo."}], blocks=False)
+    assert plain.startswith('<section class="faq-block">')
+    assert plain.count("<details") == 1
+    assert '<details class="faq-item" name="contentfte-faq">' in plain
+    assert "<summary>Q1?</summary>" in plain
+    assert plain.count("<p>") == 2  # blank-line split → two paragraph tags
+    assert "<!-- wp:" not in plain
+    # empty faqs renders nothing at all
+    assert wp_render.render_faq_block([]) == ""
+    assert wp_render.render_faq_block([{"question": "  ", "answer": "x"}]) == ""
 
 
 def test_inject_inpost_images_after_h2_and_trailing():
@@ -158,7 +180,8 @@ def test_build_prepared_post_composes_body_and_schema():
     )
     assert isinstance(post, PreparedPost)
     assert "<h1>Body</h1>" in post.html
-    assert 'class="faq-block"' in post.html
+    assert "<!-- wp:details -->" in post.html
+    assert "<summary>Q?</summary>" in post.html
     assert 'class="cta-block"' in post.html
     assert post.faq_schema["@type"] == "FAQPage"
     assert post.article_schema["@type"] == "Article"

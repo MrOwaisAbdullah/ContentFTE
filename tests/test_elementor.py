@@ -118,9 +118,36 @@ def test_build_prepared_post_elementor_plain_html():
     assert post.render_target == "elementor"
     assert "<!-- wp:" not in post.html  # plain HTML for the Elementor html widget
     assert "<h1>Body</h1>" in post.html
-    assert 'class="faq-block"' in post.html
+    # FAQ stays OUT of the html widget — it becomes a native accordion widget
+    assert "faq-block" not in post.html and "<details" not in post.html
+    assert post.faqs == [{"question": "Q?", "answer": "A."}]
     assert 'class="cta-block"' in post.html
     assert post.faq_schema["@type"] == "FAQPage"
+
+
+def test_build_blog_page_data_faq_accordion_widget():
+    from lib.elementor import build_blog_page_data
+
+    data = build_blog_page_data("T", "<p>b</p>", faqs=[
+        {"question": "Q1?", "answer": "A1"},
+        {"question": "   ", "answer": "dropped"},
+        {"question": "Q2?", "answer": "<p>already html</p>"},
+    ])
+    els = data[0]["elements"]
+    assert len(els) == 4  # heading, html, FAQ heading, accordion
+    faq_heading, accordion = els[2], els[3]
+    assert faq_heading["widgetType"] == "heading"
+    assert faq_heading["settings"]["header_size"] == "h2"
+    assert accordion["widgetType"] == "accordion"
+    tabs = accordion["settings"]["tabs"]
+    assert len(tabs) == 2  # blank question dropped
+    assert tabs[0]["tab_title"] == "Q1?"
+    assert tabs[0]["tab_content"] == "<p>A1</p>"  # plain text wrapped
+    assert tabs[1]["tab_content"] == "<p>already html</p>"  # html kept
+    assert all(len(t["_id"]) == 7 for t in tabs)
+    # no faqs → exactly the two baseline widgets
+    base = build_blog_page_data("T", "<p>b</p>")
+    assert [e["widgetType"] for e in base[0]["elements"]] == ["heading", "html"]
 
 
 def test_build_prepared_post_default_stays_blocks():
@@ -224,6 +251,26 @@ def test_publish_elementor_writes_document_after_post(monkeypatch, fake_elemento
     heading, html_widget = saved["elements"][0]["elements"]
     assert heading["settings"]["title"] == "My Post"
     assert '<h1>H</h1>' in html_widget["settings"]["html"]
+
+
+def test_publish_elementor_faq_goes_to_widget_not_html(monkeypatch, fake_elementor):
+    from lib.wordpress import build_prepared_post
+
+    conn, recorded = _connector_with_fake_session(monkeypatch)
+    post = build_prepared_post(title="My Post", markdown="# H\n\ntext",
+                               faqs=[{"question": "Q?", "answer": "A."}],
+                               render_target="elementor")
+    conn.publish(post, mode="draft")
+
+    # fallback post content keeps a plain-<details> FAQ section (no blocks)
+    assert "<details" in recorded["payload"]["content"]
+    assert "<!-- wp:" not in recorded["payload"]["content"]
+    # html widget is FAQ-free; a native accordion widget carries the FAQ
+    saved = fake_elementor.saved[0]
+    heading, html_widget, faq_heading, accordion = saved["elements"][0]["elements"]
+    assert "<details" not in html_widget["settings"]["html"]
+    assert accordion["widgetType"] == "accordion"
+    assert accordion["settings"]["tabs"][0]["tab_title"] == "Q?"
 
 
 def test_publish_elementor_fails_open(monkeypatch, fake_elementor):

@@ -34,6 +34,7 @@ No LLM calls — pure HTTP, never touches the model router.
 """
 from __future__ import annotations
 
+import html
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -61,39 +62,86 @@ def build_blog_page_data(
     *,
     header_size: str = "h1",
     container_settings: dict | None = None,
+    faqs: list | None = None,
 ) -> list[dict]:
-    """Compose a blog document: one container > heading widget + html widget.
+    """Compose a blog document: heading widget + html widget (+ FAQ accordion).
 
     Pure — no I/O. The heading carries the H1 (callers that hide the
     WordPress title via page settings rely on it). `body_html` is the full
-    rendered article body (plain HTML, may include FAQ + JSON-LD).
+    rendered article body (plain HTML, may include JSON-LD).
+
+    `faqs` ([{question, answer}, ...]) become a heading widget plus a native
+    Elementor Accordion widget *after* the html widget — the FAQ never rides
+    inside the html widget, so items collapse/expand with the real widget.
     """
+    elements: list[dict] = [
+        {
+            "id": _eid(),
+            "elType": "widget",
+            "isInner": False,
+            "widgetType": "heading",
+            "settings": {"title": title, "header_size": header_size},
+            "elements": [],
+        },
+        {
+            "id": _eid(),
+            "elType": "widget",
+            "isInner": False,
+            "widgetType": "html",
+            "settings": {"html": body_html},
+            "elements": [],
+        },
+    ]
+    if faqs:
+        accordion = _faq_accordion_widget(faqs)
+        if accordion:
+            elements.append({
+                "id": _eid(),
+                "elType": "widget",
+                "isInner": False,
+                "widgetType": "heading",
+                "settings": {"title": "Frequently Asked Questions", "header_size": "h2"},
+                "elements": [],
+            })
+            elements.append(accordion)
     return [
         {
             "id": _eid(),
             "elType": "container",
             "isInner": False,
             "settings": {"content_width": "full", **(container_settings or {})},
-            "elements": [
-                {
-                    "id": _eid(),
-                    "elType": "widget",
-                    "isInner": False,
-                    "widgetType": "heading",
-                    "settings": {"title": title, "header_size": header_size},
-                    "elements": [],
-                },
-                {
-                    "id": _eid(),
-                    "elType": "widget",
-                    "isInner": False,
-                    "widgetType": "html",
-                    "settings": {"html": body_html},
-                    "elements": [],
-                },
-            ],
+            "elements": elements,
         }
     ]
+
+
+def _faq_accordion_widget(faqs: list) -> dict | None:
+    """Native Elementor Accordion widget (widgetType=accordion).
+
+    Schema verified against elementor/includes/widgets/accordion.php: the
+    repeater control is `tabs` (label "Accordion Items") with `tab_title`
+    (TEXT) and `tab_content` (WYSIWYG) fields; repeater items carry a 7-char
+    hex `_id`. Control defaults (`selected_icon`, `title_html_tag`, …) are
+    applied server-side by Elementor, so only the content is set here.
+    """
+    tabs = []
+    for f in faqs or []:
+        q = str(f.get("question") or "").strip()
+        if not q:
+            continue
+        a = str(f.get("answer") or "").strip()
+        body = a if a.lstrip().startswith("<") else f"<p>{html.escape(a)}</p>"
+        tabs.append({"_id": _eid(), "tab_title": q, "tab_content": body})
+    if not tabs:
+        return None
+    return {
+        "id": _eid(),
+        "elType": "widget",
+        "isInner": False,
+        "widgetType": "accordion",
+        "settings": {"tabs": tabs},
+        "elements": [],
+    }
 
 
 def elementor_meta(

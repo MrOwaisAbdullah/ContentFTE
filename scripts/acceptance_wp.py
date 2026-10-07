@@ -284,6 +284,10 @@ def main() -> int:
 
     expected_status = "publish" if args.mode == "auto" else "draft"
     content = (doc.get("content") or {}).get("rendered") or ""
+    # the_content runs do_blocks(), which STRIPS <!-- wp: --> delimiters from
+    # the rendered output — block serialization must be checked on the RAW body
+    # (context=edit exposes it); rendered is used for the visible-HTML checks.
+    raw = (doc.get("content") or {}).get("raw") or ""
 
     ck.ok("post created over WP REST", f"post_id={post_id} status={doc.get('status')}")
     if doc.get("status") == expected_status:
@@ -293,14 +297,14 @@ def main() -> int:
                 f"expected {expected_status}, got {doc.get('status')}")
 
     # Gutenberg blocks — the "editable without Block Recovery" proxy
-    if "<!-- wp:" in content:
-        opens, closes = content.count("<!-- wp:"), content.count("<!-- /wp:")
-        ck.ok("Gutenberg block serialization", f"{opens} blocks")
+    if "<!-- wp:" in raw:
+        opens, closes = raw.count("<!-- wp:"), raw.count("<!-- /wp:")
+        ck.ok("Gutenberg block serialization", f"{opens} blocks (raw content)")
         if opens != closes:
             # WP still opens the post; reported for diagnosis, not fatal
             ck.skip("block comment balance", f"{opens} open vs {closes} close")
     else:
-        ck.fail("Gutenberg block serialization", "no <!-- wp: delimiters found")
+        ck.fail("Gutenberg block serialization", "no <!-- wp: delimiters in raw content")
     if "<h2" in content:
         ck.ok("headings rendered (H2 present)")
     else:
@@ -322,10 +326,11 @@ def main() -> int:
             ck.ok("FAQ schema @type present")
         else:
             ck.fail("FAQ schema @type present")
-        if "faq-block" in content:
-            ck.ok("FAQ block rendered")
+        if "<details" in raw and "<summary>" in raw:
+            ck.ok("FAQ accordion rendered", f"{raw.count('<details')} <details> item(s)")
         else:
-            ck.fail("FAQ block rendered")
+            ck.fail("FAQ accordion rendered",
+                    "no <details>/<summary> accordion in raw content")
     else:
         ck.skip("FAQ schema/block", "article has no FAQs")
 

@@ -752,12 +752,13 @@ def elementor_build(article_id: int, post_id: int | None = None,
                     "render_target": "elementor", "elementor": elementor_state}
 
         # existing post: compose the body + save the document directly
+        # (FAQ accordion widget comes from post.faqs, not the body HTML)
         body = post.html + "\n" + wp_render.jsonld_script(post.article_schema)
         if post.faq_schema:
             body += "\n" + wp_render.jsonld_script(post.faq_schema)
         try:
             res = ElementorClient(cfg).save_document(
-                post_id, build_blog_page_data(post.title, body),
+                post_id, build_blog_page_data(post.title, body, faqs=post.faqs),
                 page_settings={"hide_title": "yes"})
         except Exception as exc:  # noqa: BLE001
             return _err(f"elementor save failed: {type(exc).__name__}: {exc}",
