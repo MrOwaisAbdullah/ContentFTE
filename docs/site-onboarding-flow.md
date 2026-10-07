@@ -272,6 +272,72 @@ If you'd rather skip the Markdown dependency, swap `body` for `p.html`:
 <div class="prose" set:html={p.html} />
 ```
 
+#### Astro's native pipeline (best for a content-driven site)
+
+`marked` does **not** use Astro's markdown config. To render with the *same*
+remark/rehype pipeline as your `.md` files (GFM, syntax highlighting, your
+plugins) — the true Astro equivalent of `react-markdown` — use a **content
+loader** and its `renderMarkdown()`:
+
+```ts
+// src/content.config.ts
+import { defineCollection, z } from "astro:content";
+
+const blog = defineCollection({
+  loader: {
+    name: "contentfte",
+    async load({ store, renderMarkdown }) {
+      // ContentFTE exposes per-article /content (by id) — feed the ids you know
+      for (const articleId of [12, 13, 14]) {
+        const p = await (await fetch(`${ENGINE}/sdk/v1/articles/${articleId}/content`,
+                                     { headers: { "X-Site-Key": KEY } })).json();
+        store.set({
+          id: p.slug,
+          data: { title: p.title, description: p.excerpt, articleId: p.id, url: p.url },
+          rendered: await renderMarkdown(p.markdown),   // Astro's own pipeline
+        });
+      }
+    },
+  },
+  schema: z.object({ title: z.string(), description: z.string().optional(),
+                     articleId: z.number(), url: z.string().optional() }),
+});
+
+export const collections = { blog };
+```
+
+```astro
+---
+import { getCollection, render } from "astro:content";
+const posts = await getCollection("blog");
+---
+{posts.map(async (post) => {
+  const { Content } = await render(post);
+  return <article><h1>{post.data.title}</h1><Content /></article>;
+})}
+```
+
+> The engine has no "list all articles" route yet, so the loader needs the
+> article ids (keep them in your DB/job, or add a list endpoint). Collections
+> give you typed data, `<Content />`, and Astro's image handling for free.
+
+#### Other frameworks inside Astro
+
+An Astro site can host React/Vue/Svelte islands (or be built from one framework
+via an integration). If the site **already** ships a framework, use that
+framework's markdown component; otherwise prefer Astro's own pipeline above
+(zero client JS):
+
+| Integration | Markdown renderer |
+| :--- | :--- |
+| `@astrojs/react` | `react-markdown` — the same renderer a React site uses (or the published `<ContentFTEArticle>`) |
+| `@astrojs/vue` | `marked` / `markdown-it` + `v-html`, or `@nuxtjs/markdownit` |
+| `@astrojs/svelte` | `svelte-exmarkdown` (`<Markdown>` component) |
+| `@astrojs/mdx` | `.mdx` **files** (compile-time) — not runtime strings |
+
+You don't need to add a framework island *just* to render markdown — `marked`
+or a content loader covers it with zero JS shipped.
+
 #### `html` vs `markdown` vs `markdown_alternate`
 
 The payload deliberately ships all three:

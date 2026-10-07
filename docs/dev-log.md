@@ -102,6 +102,10 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
   (`wordpress`|`custom` only — no per-framework value) and an
   `html` vs `markdown` vs `markdown_alternate` note (Astro renders
   `payload.markdown`; the engine's pre-rendered `html` is optional).
+  Astro render options documented: `marked`, a **content-loader
+  `renderMarkdown()`** (Astro's own remark/rehype pipeline — the true
+  equivalent of `react-markdown`), or a framework island
+  (`react-markdown` / `svelte-exmarkdown` / `markdown-it`).
   README refreshed for the published SDK.
 - Tests: `tests/test_wp_render.py` (accordion, plain mode, empty), 
   `tests/test_elementor.py` (accordion widget, FAQ-off-the-html-widget,
