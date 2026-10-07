@@ -10,10 +10,13 @@ Errors are returned as dicts {"error": str, "next": str} (actionable).
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from slugify import slugify
 from sqlalchemy import select
 
+from lib import custom_site
 from lib.db import Article, Article as ArticleModel, AuditLog, Site, get_session, init_db
 from lib.cost_ledger import finalize
 from lib.ledger import INTENT_VALUE, briefable_rows, upsert_keyword
@@ -21,6 +24,34 @@ from lib.ledger import INTENT_VALUE, briefable_rows, upsert_keyword
 
 def _err(message: str, nxt: str = "") -> dict:
     return {"error": message, **({"next": nxt} if nxt else {})}
+
+
+def _resolve_slug(art: ArticleModel) -> str:
+    """Article slug, derived from the title when the row never got one."""
+    existing = (art.slug or "").strip()
+    if existing:
+        return existing
+    return slugify(art.title or "")[:80] or "untitled"
+
+
+def _parse_faqs(raw: Any) -> list[dict] | None:
+    """`meta.faqs` arrives as a JSON string (sheet mirror) or an already-decoded
+    list; normalize to [{question, answer}, ...] or None. Never raises."""
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(raw, list):
+        return None
+    items = [f for f in raw if isinstance(f, dict) and f.get("question") and f.get("answer")]
+    return items or None
+
+
+def _iso(dt: Any) -> str | None:
+    return dt.isoformat() if dt else None
 
 
 def _site_by_slug(s, slug: str) -> Site | None:
@@ -139,8 +170,26 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
                                 "scores": art.scores or {}, "cost_usd": art.cost_usd,
                                 "keyword_id": art.keyword_id}
         if include_content:
-            data.update({"html": art.content_html, "markdown": art.content_md,
-                         "meta": art.meta or {}})
+            meta = art.meta or {}
+            brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
+            slug = _resolve_slug(art)
+            base = ((art.site.base_url if art.site else "") or "").strip().rstrip("/")
+            url = f"{base}/{slug}" if base else ""
+            payload = custom_site.build_delivery_payload(
+                title=art.title or slug,
+                markdown=art.content_md or "",
+                meta_description=str(brief.get("description") or meta.get("summary") or ""),
+                slug=slug,
+                url=url,
+                faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
+                date_published=_iso(art.created_at),
+                date_modified=_iso(art.published_at or art.created_at),
+            )
+            if not payload.get("html") and art.content_html:
+                payload["html"] = art.content_html
+            data.update(payload)
+            data["slug"] = slug
+            data["meta"] = meta
         return data
     finally:
         s.close()

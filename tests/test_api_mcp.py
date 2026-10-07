@@ -247,3 +247,59 @@ def test_factcheck_tool_gate():
         source_excerpts_json=json.dumps(["Nespresso brews fast"]))
     assert bad["pass"] is False and bad["unverified_count"] >= 1
     assert "Revise FIRST" in bad["guidance"]
+
+
+def test_content_route_is_unified_delivery_payload():
+    """GET /articles/{id}/content == build_delivery_payload + article metadata.
+
+    Single source of truth for custom-site frontends: html is RENDERED from
+    markdown at serve time (content_html is never written), plus
+    markdown_alternate + Article/FAQ JSON-LD + site-relative url."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import lib.db as db
+    from sdk.server import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    client.post("/sdk/v1/sites", json={"slug": "payload-site", "name": "Payload",
+                                       "site_type": "custom",
+                                       "base_url": "https://payload.example/"})
+    aid = client.post("/sdk/v1/articles",
+                      json={"site_slug": "payload-site",
+                            "keyword": "best crm for agencies"}).json()["id"]
+
+    # simulate the pipeline having written content + meta (sheet mirror shape)
+    s = db.get_session()
+    try:
+        art = s.get(db.Article, aid)
+        art.content_md = "# Best CRM for Agencies\n\nBody **bold** with a [link](https://x.example)."
+        art.meta = {**(art.meta or {}),
+                    "summary": "A meta description.",
+                    "faqs": '[{"question": "How much?", "answer": "$20."}]'}
+        s.commit()
+    finally:
+        s.close()
+
+    got = client.get(f"/sdk/v1/articles/{aid}/content")
+    assert got.status_code == 200
+    body = got.json()
+
+    # rendered html (not the always-empty content_html column)
+    assert "<h1>Best CRM for Agencies</h1>" in body["html"]
+    assert "<strong>bold</strong>" in body["html"]
+    assert body["markdown"].startswith("# Best CRM")
+    # .md alternate (§5.8) + schema (Article + FAQ from meta.faqs JSON string)
+    assert body["markdown_alternate"].startswith("---")
+    assert body["schema"]["article"]["@type"] == "Article"
+    assert body["schema"]["faq"]["mainEntity"][0]["name"] == "How much?"
+    # slug derived from title (Article.slug stays empty), url = base_url + slug
+    assert body["slug"] == "best-crm-for-agencies"
+    assert body["url"] == "https://payload.example/best-crm-for-agencies"
+    assert body["excerpt"] == "A meta description."
+    # article metadata still present (get_images reads meta.images)
+    assert body["meta"]["summary"] == "A meta description."
+    assert body["status"] == "briefed" and body["scores"] == {}

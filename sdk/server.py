@@ -8,7 +8,8 @@ Endpoints:
     GET  /sdk/v1/articles/{id}            -> status, scores, cost
     POST /sdk/v1/articles/{id}/approve    -> approve / needs_review
     POST /sdk/v1/articles/{id}/publish    -> mark published (approved only)
-    GET  /sdk/v1/articles/{id}/content    -> HTML + markdown + metadata + images
+    GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
+                                             (html + markdown + meta + JSON-LD)
     GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health

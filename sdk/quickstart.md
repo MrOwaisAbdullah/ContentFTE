@@ -1,8 +1,16 @@
-# ContentFTE SDK — frontend quickstart (React / Next.js / Astro)
+# ContentFTE SDK — frontend quickstart (React / Next.js / Astro / plain HTML)
 
-The SDK's primary consumers are browser apps. The TypeScript client
-(`sdk/contentfte.ts`) is dependency-free — plain `fetch`, works in browsers,
-Node 18+, Next.js, Astro, and Vite.
+One install gives you everything:
+
+```bash
+npm install contentfte
+```
+
+| Import | What it is |
+|---|---|
+| `contentfte` | Typed HTTP client — dependency-free `fetch`, works in browsers, Node 18+, Next.js, Astro, Vite |
+| `contentfte/renderer` | `<ContentFTEArticle>` — React component that renders the delivery payload (title `<h1>`, markdown body, FAQ section, Article + FAQPage JSON-LD) |
+| `contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload (also usable without React) |
 
 ## 1. Get connected
 
@@ -18,8 +26,6 @@ uvicorn main:app --port 8000
 - CORS is pre-configured for browsers (open by default; restrict with
   `SDK_CORS_ORIGINS=https://yoursite.com,http://localhost:3000`).
 
-Copy `sdk/contentfte.ts` into your project (e.g. `lib/contentfte.ts`).
-
 ## 2. Where to keep the key
 
 | Pattern | Key location | Use when |
@@ -31,7 +37,7 @@ Copy `sdk/contentfte.ts` into your project (e.g. `lib/contentfte.ts`).
 
 ```ts
 // app/api/contentfte/route.ts
-import { ContentFTEClient } from "@/lib/contentfte";
+import { ContentFTEClient } from "contentfte";
 
 const client = new ContentFTEClient(
   process.env.CONTENTFTE_URL!,    // e.g. https://engine.example.com
@@ -59,7 +65,7 @@ const { id } = await res.json();
 ### Direct from a client component / Vite
 
 ```tsx
-import { ContentFTEClient } from "./lib/contentfte";
+import { ContentFTEClient } from "contentfte";
 
 const client = new ContentFTEClient(
   import.meta.env.VITE_CONTENTFTE_URL,
@@ -74,7 +80,7 @@ const art = await client.submitArticle("mysite", "best crm for agencies", {}, cr
 ```ts
 // src/pages/api/contentfte.ts (or .ts route handler)
 import type { APIRoute } from "astro";
-import { ContentFTEClient } from "../../lib/contentfte";
+import { ContentFTEClient } from "contentfte";
 
 const client = new ContentFTEClient(
   import.meta.env.PUBLIC_CONTENTFTE_URL,
@@ -97,8 +103,12 @@ const art   = await client.submitArticle("mysite", keyword);  // -> article.read
 const got   = await client.getArticle(art.id);                // status polling
 const ok    = await client.approveArticle(art.id, true);      // gate passed?
 await client.publishArticle(art.id);                          // approved only; 409 otherwise
-const html  = await client.getContent(art.id);                // HTML + meta + images
+const payload = await client.getContent(art.id);              // unified delivery payload
 ```
+
+`getContent` returns the unified payload: `title`, `slug`, `url`, `excerpt`,
+`html` (server-rendered body), `markdown`, `markdown_alternate` (front-matter
+variant for static generators), and `schema` (`article` + `faq` JSON-LD).
 
 - **Events** returned in every mutating response: `article.ready`,
   `article.needs_review`, `article.published` — forward them to your CMS/webhook.
@@ -107,7 +117,82 @@ const html  = await client.getContent(art.id);                // HTML + meta + i
 - **Publish gate**: `approveArticle` only flips status — `publishArticle`
   refuses (HTTP 409) until approved (90/100 overall, every sub-score ≥ 80).
 
-## 4. Status flow
+## 4. Render the content
+
+### React / Next.js — `<ContentFTEArticle>`
+
+```tsx
+import { ContentFTEClient } from "contentfte";
+import { ContentFTEArticle, type ContentFTEPayload } from "contentfte/renderer";
+import "contentfte/contentfte-prose.css";
+
+const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
+
+export default async function ArticlePage({ params }: { params: { id: string } }) {
+  const payload: ContentFTEPayload = await client.getContent(Number(params.id));
+  return <ContentFTEArticle content={payload} siteOrigin="https://mysite.com" />;
+}
+```
+
+What it handles for you:
+
+- `payload.title` renders as the `<h1>` — the pipeline never emits an H1 in the
+  body (the title *is* the H1); the body opens with the TL;DR blockquote → H2s
+- GFM tables/strikethrough, `==highlight==` → `<mark>`, external links open in
+  a new tab (`rel="noopener noreferrer"`), tables get an overflow wrapper
+- heading ids for TOC/scrollspy anchors (`#quick-comparison`)
+- FAQ section from `payload.schema.faq` (`<section id="faqs">`)
+- Article + FAQPage JSON-LD (with `<` escaped so it can never break out)
+- `siteOrigin` keeps your own links in-tab; every other absolute link is
+  marked external. Omit it to treat all absolute links as external.
+- Server Components friendly (no hooks, no `"use client"`)
+
+### Astro / any framework — `payload.html` + prose CSS
+
+No React needed: the payload already ships server-rendered HTML.
+
+```astro
+---
+import { ContentFTEClient } from "contentfte";
+import "contentfte/contentfte-prose.css";
+
+const client = new ContentFTEClient(PUBLIC_CONTENTFTE_URL, CONTENTFTE_SITE_KEY);
+const payload = await client.getContent(Astro.params.id);
+const jsonLd = (o: unknown) => JSON.stringify(o).replace(/</g, "\\u003c");
+---
+<article class="cfte-prose">
+  <h1>{payload.title}</h1>
+  <p class="cfte-dek">{payload.excerpt}</p>
+  <div set:html={payload.html} />
+  {payload.schema?.article && (
+    <script type="application/ld+json" set:html={jsonLd(payload.schema.article)} />
+  )}
+  {payload.schema?.faq && (
+    <script type="application/ld+json" set:html={jsonLd(payload.schema.faq)} />
+  )}
+</article>
+```
+
+### Plain HTML
+
+```html
+<link rel="stylesheet" href="/path/to/contentfte-prose.css" />
+<article class="cfte-prose">
+  <h1>Best CRM for Agencies</h1>
+  <div><!-- paste payload.html here --></div>
+  <script type="application/ld+json">/* payload.schema.article + .faq, `<` → \u003c */</script>
+</article>
+```
+
+Statically generating? `markdown_alternate` is the body prefixed with
+`---` front-matter and `# {title}` — drop it straight into a
+Jekyll/Hugo/MDX file.
+
+Theming: override the `--cfte-*` custom properties (`--cfte-accent`,
+`--cfte-font-body`, `--cfte-text`, ...). For automatic dark mode add
+`data-cfte-theme="auto"` to the wrapper.
+
+## 5. Status flow
 
 ```
 briefed → (engine generates) → needs_review | approved → published

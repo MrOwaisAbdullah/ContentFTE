@@ -26,7 +26,7 @@ and why it matters. **72 files added · 18 modified · 4 removed · +9,751 lines
 | `tavily_meter.py`, `seo_provider.py` | API budget metering, keyword metrics | Cost-bounded research |
 
 ### 1.2 Access layers (new — repo had none)
-- **`sdk/`** — REST service (`service.py` → `server.py`), Python + TypeScript clients, quickstart. Customer sites pull articles without touching Python.
+- **`sdk/`** — REST service (`service.py` → `server.py`), Python client, and the **npm package `contentfte`** (`sdk/package.json`, one `npm install contentfte`): typed TS client + React renderer (`ContentFTEArticle` — title `<h1>`, GFM, `==highlight==` → `<mark>`, heading ids, FAQ section, Article+FAQPage JSON-LD, sanitized via rehype-sanitize) + framework-agnostic `contentfte-prose.css`. Built with tsup (ESM+CJS+`.d.ts`), smoke-tested via `react-dom/server`. Quickstart in `sdk/quickstart.md` (React/Next/Astro/plain-HTML patterns).
 - **`mcp_server/`** — `contentfte_*` tools over Streamable HTTP → Claude Code/any agent drives the pipeline.
 
 ### 1.3 Agent wiring (modified)
@@ -115,4 +115,13 @@ verifies a clean open on a real WP; `blocks=False` is the escape hatch.
 
 ### Custom sites (Astro/Next) — `custom_site.py` payload
 Same HTML **without** block comments (`blocks=False`) + `.md` alternate +
-JSON-LD, delivered via SDK pull or webhook; the site's renderer owns styling.
+JSON-LD, delivered via SDK pull (`GET /sdk/v1/articles/{id}/content`, the
+unified payload) or webhook; the site's renderer owns styling.
+
+Two consumption paths, both from the `contentfte` npm package:
+- **React/Next** — `<ContentFTEArticle content={payload}>` renders everything
+  (title is the H1 since the pipeline never emits one in the body; body opens
+  with the TL;DR blockquote → H2s), plus `contentfte/contentfte-prose.css`.
+- **Astro/plain HTML** — render `payload.html` inside
+  `<article class="cfte-prose">`, inject `payload.schema` as JSON-LD
+  (`<` → `\u003c`), no React required.
