@@ -87,6 +87,22 @@ which one (that is the block-serialization validation gate) and we adjust its
 markup in `lib/wp_render.py`. Also confirm `SITE`-published frontend output
 is unchanged (block comments never render on the front end).
 
+## 7. Elementor blog design (EMCP Tools MCP)
+For sites that design blog pages in Elementor (`msrbuilds/elementor-mcp`):
+```bash
+# 1. On the WP site: install emcp-tools-*.zip (Releases) -> activate
+#    -> EMCP Tools -> Page Builders -> Elementor
+# 2. Export env BEFORE starting opencode (opencode.json interpolates them):
+export WP_BASE_URL=https://your-site.com
+export WP_USERNAME=admin
+export WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
+# 3. restart opencode -> emcp-tools MCP connects (npx @msrbuilds/emcp-proxy)
+# 4. EMCP Tools -> Tools: enable needed layout/widget WRITE tools -> Save
+#    -> reconnect the client so the tool list refreshes
+```
+✅ `emcp-tools-list-widgets` answers; build a test container+heading, verify with
+the page-snapshot tool, then roll back via the change ledger.
+
 ## Rollback
 - Reads: unset `STORE_READ_SOURCE` (back to Sheets) — dual-write keeps both in sync.
 - Postgres: the mirror is best-effort/idempotent; re-running step 1 converges.

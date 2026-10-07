@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": {
+    "paths": ["skills"]
+  },
+  "mcp": {
+    "emcp-tools": {
+      "type": "local",
+      "command": ["npx", "-y", "@msrbuilds/emcp-proxy@latest"],
+      "enabled": true,
+      "environment": {
+        "WP_URL": "{env:WP_BASE_URL}",
+        "WP_USERNAME": "{env:WP_USERNAME}",
+        "WP_APP_PASSWORD": "{env:WP_APP_PASSWORD}",
+        "MCP_PROTOCOL_VERSION": "2024-11-05"
+      }
+    }
+  }
+}
