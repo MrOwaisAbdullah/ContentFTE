@@ -1,7 +1,7 @@
 {
   "name": "contentfte",
   "version": "0.1.0",
-  "description": "ContentFTE engine SDK — typed HTTP client plus a React renderer for the unified /content delivery payload.",
+  "description": "ContentFTE SDK — typed TypeScript/JavaScript client for the ContentFTE content API plus a React renderer that turns delivery payloads into SEO-ready article pages (GFM, heading anchors, FAQ, Article + FAQPage JSON-LD).",
   "license": "CC-BY-NC-4.0",
   "author": "Owais Abdullah",
   "repository": {
@@ -12,10 +12,26 @@
   "keywords": [
     "contentfte",
     "seo",
-    "content",
+    "aeo",
+    "geo",
+    "content-automation",
+    "ai-content",
+    "blog",
+    "article",
+    "sdk",
+    "api-client",
+    "typescript",
+    "javascript",
+    "react",
     "react-markdown",
+    "nextjs",
+    "astro",
     "json-ld",
-    "faq-schema"
+    "schema-org",
+    "faq-schema",
+    "headless-cms",
+    "digital-fte",
+    "ai-agents"
   ],
   "type": "module",
   "sideEffects": [
