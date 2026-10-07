@@ -264,15 +264,19 @@ async def publish_article(params: PublishArticleInput) -> str:
 
     Draft mode is the default for new sites. Publishing requires the §5.2
     gate: overall score >=90 and every sub-score >=80, approved via
-    POST /sdk/v1/articles/{id}/approve (or the SDK client).
+    POST /sdk/v1/articles/{id}/approve (or the SDK client). For
+    site_type="wordpress" sites the same call pushes the post to WordPress
+    (meta description, Article+FAQ JSON-LD, categories, featured/in-post
+    images) — the response carries {"wp": {"ok", "post_id", "url", ...}};
+    best-effort fail-open, re-running publish retries a failed push.
 
     Args:
         params (PublishArticleInput): article_id + mode ("draft"|"auto").
 
     Returns:
         str: JSON {"id", "status": "published", "mode",
-        "event": "article.published"} or {"error", "next"} explaining why
-        the gate refused (e.g. status is not yet 'approved').
+        "event": "article.published", "wp"?} or {"error", "next"}
+        explaining why the gate refused (e.g. status is not yet 'approved').
     """
     return _out(service.publish_article(params.article_id, mode=params.mode, via="mcp"))
 

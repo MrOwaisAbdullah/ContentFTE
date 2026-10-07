@@ -65,8 +65,14 @@ MCP: point Claude Code at `/mcp` (or `python -m mcp_server.server`) and run
 `contentfte_list_sites → get_brief → generate_article → get_article_status →
 publish_article`.
 
-## 6. WordPress acceptance (Phase 1B line 75)
-With `WP_*` set, build a prepared post and publish as a draft:
+## 6. WordPress acceptance (TASKS line 80)
+Fastest path — one command runs the full gated chain (submit → generate →
+image → approve → publish) and verifies the result over WP REST, printing a
+PASS/FAIL checklist (start the LocalWP site and export `WP_*` first):
+```bash
+python scripts/acceptance_wp.py
+```
+Manual equivalent: with `WP_*` set, build a prepared post and publish as a draft:
 ```python
 from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
 cfg = WPConfig.from_env(); conn = WordPressConnector(cfg)

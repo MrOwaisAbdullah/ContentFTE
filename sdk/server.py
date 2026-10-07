@@ -8,7 +8,10 @@ Endpoints:
     GET  /sdk/v1/articles/{id}            -> status, scores, cost
     POST /sdk/v1/articles/{id}/generate   -> run real generation (briefed -> drafted)
     POST /sdk/v1/articles/{id}/approve    -> approve / needs_review
-    POST /sdk/v1/articles/{id}/publish    -> mark published (approved only)
+    POST /sdk/v1/articles/{id}/publish    -> mark published (approved only);
+                                             site_type="wordpress" sites are
+                                             pushed to WP in the same call
+                                             ({"wp": {...}} in the response)
     GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
                                              (html + markdown + meta + JSON-LD)
     GET  /sdk/v1/sites                    -> list sites

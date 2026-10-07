@@ -199,6 +199,20 @@ class WordPressConnector:
         created.raise_for_status()
         return created.json()["id"]
 
+    def default_category(self) -> str:
+        """Name of the site's default category — zero-manual fallback when
+        the brief carries no categories (WP would assign it silently anyway;
+        surfacing the name keeps the taxonomy explicit and verifiable).
+        Needs an Administrator app password (reads /wp/v2/settings)."""
+        resp = self.session.get(self._url("/settings"), timeout=self.cfg.timeout)
+        resp.raise_for_status()
+        cat_id = (resp.json() or {}).get("default_category")
+        if not cat_id:
+            return ""
+        cat = self.session.get(self._url(f"/categories/{cat_id}"), timeout=self.cfg.timeout)
+        cat.raise_for_status()
+        return (cat.json().get("name") or "").strip()
+
     # --- media ---
 
     def upload_media(self, path: str, alt: str = "") -> dict:
@@ -223,10 +237,20 @@ class WordPressConnector:
     # --- guards ---
 
     def pre_publish_checks(self, post: PreparedPost) -> dict:
-        """Duplicate prevention + outbound 200-check + slug collision."""
+        """Duplicate prevention + outbound 200-check + slug collision.
+
+        `WP_LINK_CHECK=0|off|false` skips the outbound HEAD/sanity check
+        (dev/acceptance runs on a fresh local site where AI-written links
+        may 403 or point at slugs that don't exist yet — fail-open opt-out;
+        default stays ON for production).
+        """
         taken = self.existing_slugs()
         slug = next_available_slug(post.slug or post.title, taken)
-        validation = validate_links(post.markdown or post.html)
+        skip = (os.environ.get("WP_LINK_CHECK") or "").strip().lower() in ("0", "off", "false")
+        if skip:
+            validation = {"has_invalid": False, "invalid_internal": [], "invalid_external": []}
+        else:
+            validation = validate_links(post.markdown or post.html)
         return {
             "slug": slug,
             "duplicate": (post.slug or post.title) in taken,
@@ -300,6 +324,8 @@ class WordPressConnector:
         resp.raise_for_status()
         doc = resp.json()
         result = {"id": doc["id"], "url": doc.get("link", ""), "slug": post.slug, "status": payload["status"]}
+        if featured_id:
+            result["featured_media"] = featured_id
         if post.render_target == "elementor":
             # Post exists first (content = plain HTML fallback) → an Elementor
             # failure leaves a valid standard post, never a duplicate.

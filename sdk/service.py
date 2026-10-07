@@ -8,13 +8,17 @@ the single source of truth and behavior can't drift between the two surfaces.
 All functions are pure DB/HTTP except generate_content (§5.5): it is the
 one op that runs a model, and only via an injectable `generate_fn` — tests
 inject fakes, production lazily loads blog_agent.generation (shared
-content_generator_agent through run_with_fallback). The model router is
+content_generator_agent through run_with_fallback). publish_article also
+makes HTTP calls for site_type="wordpress" sites (the §5.11 WordPress
+push: post + meta + schema + taxonomy + media, best-effort fail-open —
+no model calls, never rolls back the status flip). The model router is
 consumed read-only, never edited (routing refactor is the last TASKS item).
 Errors are returned as dicts {"error": str, "next": str} (actionable).
 """
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -358,8 +362,168 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         s.close()
 
 
+def _str_list(raw: Any) -> list[str]:
+    """Brief/meta list field -> [str, ...] (tolerates a single string)."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [str(v).strip() for v in raw if str(v or "").strip()]
+
+
+def _download_image(url: str) -> str | None:
+    """Remote image -> local temp file (WP media upload needs bytes). Fail-open."""
+    try:
+        import requests
+        from tempfile import NamedTemporaryFile
+
+        from lib import image_format
+
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        suffix = image_format.sniff_ext(resp.content, fallback=".jpg")
+        with NamedTemporaryFile(delete=False, suffix=suffix) as fh:
+            fh.write(resp.content)
+            return fh.name
+    except Exception:  # noqa: BLE001 — an unusable source skips the image
+        return None
+
+
+def _wp_images(meta: dict) -> tuple[str | None, str, list[dict], list[str]]:
+    """meta.images -> (featured_path, featured_alt, inpost_images, temp_paths).
+
+    Accepts the sheet-mirror / image-pipeline rows
+    {slot, url|path|image_url, alt|alt_text, after_h2}. A featured row with a
+    remote URL is downloaded once (upload_media needs bytes); in-post rows
+    keep remote URLs as-is (publish() injects them directly). Fail-open:
+    unusable rows are skipped, never raised.
+    """
+    rows = meta.get("images")
+    if not isinstance(rows, list):
+        return None, "", [], []
+    featured_path: str | None = None
+    featured_alt = ""
+    temps: list[str] = []
+    inpost: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        src = str(row.get("path") or row.get("url") or row.get("image_url") or "").strip()
+        alt = str(row.get("alt") or row.get("alt_text") or "").strip()
+        if not src:
+            continue
+        slot = str(row.get("slot") or "").strip().lower()
+        try:
+            after_h2: int | None = int(row.get("after_h2")) if row.get("after_h2") is not None else None
+        except (TypeError, ValueError):
+            after_h2 = None
+        if slot == "inpost":
+            if os.path.isfile(src):
+                inpost.append({"path": src, "alt": alt, "after_h2": after_h2})
+            elif src.startswith(("http://", "https://")):
+                inpost.append({"url": src, "alt": alt, "after_h2": after_h2})
+            continue
+        if featured_path is not None:
+            continue
+        # "featured" slot, or the first non-inpost row when no slot was recorded
+        if os.path.isfile(src):
+            featured_path, featured_alt = src, alt
+        elif src.startswith(("http://", "https://")):
+            local = _download_image(src)
+            if local:
+                featured_path, featured_alt = local, alt
+                temps.append(local)
+    return featured_path, featured_alt, inpost, temps
+
+
+def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
+    """§5.11 WordPress push for site_type=wordpress — best-effort, never raises.
+
+    Builds the PreparedPost from the Article (blocks render target: meta
+    description, Article+FAQ JSON-LD, Yoast/RankMath/AIOSEO meta, categories
+    from the brief mapping else the site default, featured/in-post images
+    from meta.images) and publishes through WordPressConnector. The status
+    flip already happened — a WP failure only appends {"ok": false, ...} so
+    the operator can fix and re-run; meta.wp_post_id dedupes a created post.
+    """
+    from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
+
+    cfg = WPConfig.from_env()
+    if not (cfg.base_url and cfg.username and cfg.app_password):
+        return {"ok": False, "error": "WordPress not configured",
+                "next": "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD"}
+    if not (art.content_md or "").strip():
+        return {"ok": False, "error": "article has no content_md",
+                "next": "run contentfte_generate_article / generate_content first"}
+    if meta.get("wp_post_id"):
+        return {"ok": True, "deduplicated": True, "post_id": int(meta["wp_post_id"]),
+                "url": str(meta.get("wp_url") or ""),
+                "next": "already pushed to WordPress — edit in WP or use the "
+                        "elementor ops / a WP-refresh instead of re-publishing"}
+
+    brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
+    slug = _resolve_slug(art)
+    base = ((art.site.base_url if art.site is not None else "") or "").strip().rstrip("/")
+    url = f"{base}/{slug}" if base else ""
+    featured_path, featured_alt, inpost, temps = _wp_images(meta)
+    try:
+        post = build_prepared_post(
+            title=art.title or slug,
+            markdown=art.content_md,
+            url=url,
+            faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
+            categories=_str_list(brief.get("categories")) or _str_list(meta.get("categories")),
+            tags=_str_list(brief.get("tags")),
+            meta_title=str(brief.get("meta_title") or ""),
+            meta_description=str(brief.get("description") or meta.get("summary") or ""),
+            canonical=url,
+            slug=slug,
+            featured_image_path=featured_path,
+            featured_alt=featured_alt,
+            inpost_images=inpost,
+            cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
+            entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
+            date_published=_iso(art.created_at),
+            date_modified=_iso(art.published_at or art.created_at),
+            render_target="blocks",
+        )
+        conn = WordPressConnector(cfg)
+        if not post.categories:
+            fallback = conn.default_category()
+            if fallback:
+                post.categories = [fallback]
+        result = conn.publish(post, mode=mode)
+    except Exception as exc:  # noqa: BLE001 — the push never fails the publish
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                "next": "fix WP config / outbound links / site reachability, then "
+                        "re-run publish (the article stays published; the push is retried)"}
+    finally:
+        for tmp in temps:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    out: dict[str, Any] = {"ok": True, "post_id": result["id"],
+                           "url": result.get("url", ""),
+                           "status": result.get("status", ""),
+                           "slug": result.get("slug", ""),
+                           "categories": list(post.categories),
+                           "render_target": "blocks"}
+    if result.get("featured_media"):
+        out["featured_media"] = result["featured_media"]
+    return out
+
+
 def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> dict:
-    """Publish decision (§5.11 draft default). Requires approved status."""
+    """Publish decision (§5.11 draft default). Requires approved status.
+
+    WordPress sites (site_type="wordpress") additionally push the article to
+    WP in this same call — zero manual steps: approve -> publish -> post in
+    WP with meta description, Article+FAQ JSON-LD, categories and the
+    featured/in-post images. Best-effort fail-open: the status flip and cost
+    finalization always succeed; the push outcome rides along as
+    {"wp": {...}} and never raises (re-running publish retries the push).
+    """
     init_db()
     s = get_session()
     try:
@@ -371,14 +535,31 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
                 f"article {article_id} is '{art.status}' — publish requires 'approved'",
                 "gate: overall >=90 and every sub-score >=80, then POST /sdk/v1/articles/{id}/approve")
         art.status = "published"
-        s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.publish",
-                       payload={"mode": mode, "via": via}))
         # §5.10-6 finalize the per-post cost ledger at publish.
         totals = finalize(s, art.id)
         art.cost_usd = totals["total_usd"]
+
+        meta = dict(art.meta) if isinstance(art.meta, dict) else {}
+        wp_state: dict | None = None
+        site_type = (art.site.site_type if art.site is not None else "") or ""
+        if site_type == "wordpress":
+            wp_state = _wp_push(art, meta, mode)
+            if wp_state.get("ok") and wp_state.get("post_id") and not wp_state.get("deduplicated"):
+                meta["wp_post_id"] = wp_state["post_id"]
+                meta["wp_url"] = wp_state.get("url") or ""
+                art.meta = meta
+
+        payload: dict[str, Any] = {"mode": mode, "via": via}
+        if wp_state is not None:
+            payload["wp"] = wp_state
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.publish", payload=payload))
         s.commit()
-        return {"id": art.id, "status": art.status, "mode": mode,
-                "cost_usd": totals["total_usd"], "event": "article.published"}
+        out: dict[str, Any] = {"id": art.id, "status": art.status, "mode": mode,
+                               "cost_usd": totals["total_usd"], "event": "article.published"}
+        if wp_state is not None:
+            out["wp"] = wp_state
+        return out
     finally:
         s.close()
 
