@@ -283,14 +283,21 @@ loader** and its `renderMarkdown()`:
 // src/content.config.ts
 import { defineCollection, z } from "astro:content";
 
+const API = import.meta.env.CONTENTFTE_URL;   // engine base URL
+const HDRS = { "X-Site-Key": import.meta.env.CONTENTFTE_SITE_KEY };
+
 const blog = defineCollection({
   loader: {
     name: "contentfte",
     async load({ store, renderMarkdown }) {
-      // ContentFTE exposes per-article /content (by id) — feed the ids you know
-      for (const articleId of [12, 13, 14]) {
-        const p = await (await fetch(`${ENGINE}/sdk/v1/articles/${articleId}/content`,
-                                     { headers: { "X-Site-Key": KEY } })).json();
+      // 1. enumerate the site's published articles (newest first)
+      const list = await (await fetch(
+        `${API}/sdk/v1/articles?site_slug=acme&status=published&limit=100`,
+        { headers: HDRS })).json();
+      // 2. pull each article's rendered payload
+      for (const { id } of list.articles) {
+        const p = await (await fetch(`${API}/sdk/v1/articles/${id}/content`,
+                                     { headers: HDRS })).json();
         store.set({
           id: p.slug,
           data: { title: p.title, description: p.excerpt, articleId: p.id, url: p.url },
@@ -317,9 +324,11 @@ const posts = await getCollection("blog");
 })}
 ```
 
-> The engine has no "list all articles" route yet, so the loader needs the
-> article ids (keep them in your DB/job, or add a list endpoint). Collections
-> give you typed data, `<Content />`, and Astro's image handling for free.
+> `GET /sdk/v1/articles` enumerates a site's articles (`site_slug`, `status`,
+> `limit`, `offset`) → feed the ids into `/articles/{id}/content`. The same is
+> available as the MCP tool `contentfte_list_articles` and in both SDK clients
+> (`list_articles` / `listArticles`). Collections give you typed data,
+> `<Content />`, and Astro's image handling for free.
 
 #### Other frameworks inside Astro
 
