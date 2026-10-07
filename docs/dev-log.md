@@ -136,9 +136,8 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 ### Open at end of session
 - [ ] Full-generation acceptance re-run (run 4 used seeded content).
 - [ ] Push/merge the branch (23 commits ahead of `master`).
-- [ ] Republish npm **0.2.0** — the published `0.1.0` predates the new client
-      methods (`listArticles`, `refreshArticle`, `wpPost`); the source in the
-      package is stale until re-published.
+- [x] Republished npm **`0.2.0`** — **LIVE** (npmjs.com/package/@owais-abdullah/contentfte)
+      with the new client methods (`listArticles`, `refreshArticle`, `wpPost`, `llmsTxt`).
 - [x] **npm publish `@owais-abdullah/contentfte@0.1.0`** — **LIVE**
       (https://www.npmjs.com/package/@owais-abdullah/contentfte). Path there:
       the unscoped `contentfte` name was **rejected by npm's similarity guard**
