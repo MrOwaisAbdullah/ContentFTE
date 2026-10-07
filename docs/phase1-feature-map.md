@@ -46,56 +46,71 @@ Monthly decay cron, cutover tooling, Discord-gated approvals unchanged.
 
 ## 3. How the blog renders (text, tables, images, code)
 
-`lib/wp_render.py` emits **plain semantic HTML** into `post_content` via the WP REST API:
+`lib/wp_render.py` emits **Gutenberg block-delimited HTML** (default) into
+`post_content` via the WP REST API — every top-level element is wrapped in
+`<!-- wp:… -->` so the post opens in the block editor as **real blocks, with no
+manual "Convert to Blocks" step**. `blocks=False` returns plain HTML (used for
+the Astro/Next custom-site payload).
 
-| Markdown | Emitted HTML |
+| Markdown | Emitted (block mode) |
 |---|---|
-| `# H2` … | `<h1>`–`<h6>` |
-| paragraphs | `<p>` |
-| `- / 1.` nested lists | `<ul>` / `<ol>` + nested lists |
-| `>` | `<blockquote>` |
-| GFM table | `<table><thead><tbody>` |
-| ` ```lang ` fence | `<pre><code class="language-lang">` (escaped) |
+| `# H1`…`### H3` | `<!-- wp:heading -->` / `<!-- wp:heading {"level":3} -->` + `<hN>` |
+| paragraphs | `<!-- wp:paragraph --><p>…</p>` |
+| `- / 1.` nested lists | `<!-- wp:list -->` / `<!-- wp:list {"ordered":true} -->` |
+| `>` | `<!-- wp:quote -->` + `<blockquote class="wp-block-quote"><p>…</p>` |
+| GFM table | `<!-- wp:table -->` + `<figure class="wp-block-table"><table>…` |
+| ` ```lang ` fence | `<!-- wp:code -->` + `<pre class="wp-block-code"><code>` (escaped; language class omitted — it would fail block validation) |
+| `---` | `<!-- wp:html --><hr>` (zero-validation escape hatch) |
 | `**b** *i* `code` ~~s~~ ==mark==` | `<strong> <em> <code> <del> <mark>` |
-| `![alt](src)` / `[t](u)` | `<img>` / `<a>` (prose brackets escaped `&#91;` vs shortcodes) |
-| FAQ / CTA | `<section class="faq-block">…`, `<aside class="cta-block">…` |
-| in-post images | `<figure class="wp-block-image">` injected after the nth `</h2>` |
+| `![alt](src)` / `[t](u)` | `<img>` / `<a>` inside the paragraph block (prose brackets escaped `&#91;` vs shortcodes) |
+| FAQ / CTA | `<!-- wp:html --><section class="faq-block">…` (custom classes round-trip verbatim) |
+| in-post images | `<!-- wp:image --><figure class="wp-block-image"><img … /></figure>` injected after the nth heading block's closing comment |
 | schema | `<script type="application/ld+json">` (Article + FAQPage) |
 
 No CSS/JS is shipped — front-end styling comes from the theme (unstyled-but-valid
-if the theme adds none).
+if the theme adds none). Residual risk: block *validation* compares our markup to
+Gutenberg's regenerated save markup; anything that mismatches shows an
+"Attempt Block Recovery" prompt (content is never lost). Checklist step 6
+verifies a clean open on a real WP; `blocks=False` is the escape hatch.
 
 ## 4. Is it editable? (WordPress vs Elementor vs raw HTML)
 
-**Answer: it is NOT code-only editing.**
+**Answer: it is NOT code-only editing, and no manual conversion is needed.**
 
-### WordPress block editor (Gutenberg) — yes, visual editing
-- On first open, content **without block delimiters loads as one Classic block**
-  (official Gutenberg behavior: classic posts sit inside a `core/freeform` block).
-- One click on **"Convert to Blocks"** runs Gutenberg's `rawHandler`, which splits
-  our HTML into real blocks: `<h2>`→Heading, `<p>`→Paragraph, `<table>`→Table,
-  `<figure>`→Image, `<pre>`→Code, `<blockquote>`→Quote. From then on the post is
-  edited visually with block toolbars; markup is re-serialized with `<!-- wp:… -->`
-  delimiters on save.
-- Even without converting, the Classic block's rich-text toolbar edits text,
-  images, links and tables directly. HTML editing is optional, not required.
-- Docs: `wordpress/gutenberg` — *freeform README*, *rawHandler*, *Block Edit and
-  Save > Validation*, *Serialization and parsing*.
+### WordPress block editor (Gutenberg) — yes, visual editing, zero clicks
+- Posts are published **already serialized as blocks** (`<!-- wp:heading -->`,
+  `<!-- wp:paragraph -->`, `<!-- wp:table -->`, `<!-- wp:image -->`, …) — they
+  open directly as Heading/Paragraph/Table/Image/Code blocks with normal
+  toolbars. The "Convert to Blocks" step does not exist in this flow.
+- Elements we can't guarantee byte-identical to Gutenberg's save markup (hr,
+  FAQ/CTA custom classes) are wrapped in `<!-- wp:html -->`, whose raw source
+  round-trips verbatim — **never** a validation warning.
+- Docs: `wordpress/gutenberg` — *freeform README*, *rawHandler*,
+  *Serialization and parsing*, *Block Edit and Save > Validation*.
 
-### Elementor — renders, but not Elementor-editable
-- Elementor stores its own JSON (`_elementor_data`); our HTML in `post_content`
-  is foreign content. It **displays** (via the theme's `the_content()` or an
-  Elementor **Post Content** widget in a Theme Builder single-post template), but
-  Elementor's canvas can't visually edit it — edits go through the HTML/Text
-  widget or the WP editor. Elementor's own docs: *Edit HTML in Elementor* (HTML
-  widget), *Post Content widget*.
-- Practical rule: **blog posts = WP block editor; landing pages = Elementor.**
+### Elementor sites — two supported paths
+1. **Zero-setup (works today):** Elementor **Theme Builder → single post
+   template** with a **Post Content** widget. Our block HTML renders inside the
+   template, styled by the design; the writer edits in the WP block editor
+   (Edit with WordPress). Elementor's own JSON is untouched.
+2. **Native Elementor editing (follow-up wiring, spec §5.13):** delegate to an
+   **Elementor MCP server** rather than re-implementing:
+   - **Official Elementor MCP** (built into Elementor ≥ MCP access; Elementor →
+     Elementor MCP dashboard → connect Claude Code): creates *native* Atomic
+     elements 100% editable in the Elementor panel, inherits WP user
+     permissions, conflict-detects simultaneous edits.
+   - **EMCP Tools** (`msrbuilds/elementor-mcp` WP plugin, 500+ tools): pages,
+     templates, global styles, plus Bricks/Divi/etc. adapters; bundles its own
+     skills.
+   - `lib/wordpress.py` already documents this split: the connector owns
+     *publish* (post + media + meta); page-builder layouts go through MCP.
+   - Elementor document shape (`_elementor_data`, version `0.4`:
+     `content[] → container → widget[]`, e.g. `{"elType":"widget",
+     "widgetType":"heading","settings":{…}}`) is documented if a direct JSON
+     writer is ever wanted — MCP is the recommended route.
+- Rule of thumb: **blog posts → WP block editor; landing pages → Elementor
+  (MCP or manual).**
 
-### Custom sites (Astro/Next) — our `custom_site.py` payload
-Same HTML (+ `.md` alternate + JSON-LD) delivered via SDK pull or webhook; the
-site's own renderer owns styling.
-
-### Optional future enhancement
-Emitting `<!-- wp:paragraph -->`-style delimiters in `wp_render.py` would skip the
-"Convert to Blocks" click entirely (post opens directly as blocks). Not needed for
-correctness — one click today.
+### Custom sites (Astro/Next) — `custom_site.py` payload
+Same HTML **without** block comments (`blocks=False`) + `.md` alternate +
+JSON-LD, delivered via SDK pull or webhook; the site's renderer owns styling.

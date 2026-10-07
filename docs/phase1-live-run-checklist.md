@@ -80,6 +80,13 @@ print(conn.publish(post, mode="draft"))
 featured image + thumbnail set, in-post image at the H2, Yoast/Rank Math/
 AIOSEO title+description, and an Article + FAQPage JSON-LD block in the body.
 
+✅ **Block editability:** open the draft in the block editor — it must appear
+as real Heading/Paragraph/List/Table/Image/Code blocks with **no "Attempt
+Block Recovery"/invalid-block prompts**. If any block reports invalid, note
+which one (that is the block-serialization validation gate) and we adjust its
+markup in `lib/wp_render.py`. Also confirm `SITE`-published frontend output
+is unchanged (block comments never render on the front end).
+
 ## Rollback
 - Reads: unset `STORE_READ_SOURCE` (back to Sheets) — dual-write keeps both in sync.
 - Postgres: the mirror is best-effort/idempotent; re-running step 1 converges.

@@ -56,12 +56,62 @@ def test_blockquote_code_table_hr():
         "| A | B |\n|---|---|\n| 1 | **2** |\n\n---\n"
     )
     html = wp_render.markdown_to_wp_html(md)
-    assert "<blockquote>quoted line</blockquote>" in html
-    assert '<pre><code class="language-python">' in html
+    assert '<blockquote class="wp-block-quote"><p>quoted line</p></blockquote>' in html
+    assert '<pre class="wp-block-code"><code>' in html
     assert "print(&#x27;&lt;x&gt;&#x27;)" in html
     assert "<table><thead><tr><th>A</th><th>B</th></tr></thead>" in html
     assert "<td><strong>2</strong></td>" in html
     assert "<hr>" in html
+
+
+# ---------------------------------------------------------------------------
+# Gutenberg block mode (default) — no manual "Convert to Blocks" needed
+# ---------------------------------------------------------------------------
+def test_block_mode_default_wraps_every_element():
+    html = wp_render.markdown_to_wp_html(
+        "# T\n\nPara.\n\n### Deep\n\n- a\n\n1. b\n\n---\n"
+    )
+    assert '<!-- wp:heading {"level":1} -->\n<h1>T</h1>\n<!-- /wp:heading -->' in html
+    assert '<!-- wp:heading {"level":3} -->\n<h3>Deep</h3>' in html
+    assert "<!-- wp:paragraph -->\n<p>Para.</p>\n<!-- /wp:paragraph -->" in html
+    assert "<!-- wp:list -->\n<ul><li>a</li></ul>\n<!-- /wp:list -->" in html
+    assert '<!-- wp:list {"ordered":true} -->\n<ol><li>b</li></ol>' in html
+    assert "<!-- wp:html -->\n<hr>\n<!-- /wp:html -->" in html
+
+
+def test_block_mode_table_quote_code_markups():
+    html = wp_render.markdown_to_wp_html(
+        "> q\n\n```py\nx = 1\n```\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+    )
+    assert '<!-- wp:table -->\n<figure class="wp-block-table"><table>' in html
+    assert '<blockquote class="wp-block-quote"><p>q</p></blockquote>' in html
+    assert '<pre class="wp-block-code"><code>x = 1</code></pre>' in html
+    assert "language-py" not in html  # language class would invalidate the block
+
+
+def test_blocks_false_returns_plain_html():
+    html = wp_render.markdown_to_wp_html("# T\n\nPara.\n\n```js\nx\n```\n", blocks=False)
+    assert "<!-- wp:" not in html
+    assert "<h1>T</h1>" in html
+    assert '<pre><code class="language-js">' in html
+
+
+def test_faq_cta_wrap_in_html_block():
+    faq = wp_render.render_faq_block([{"question": "Q?", "answer": "A."}])
+    assert faq.startswith("<!-- wp:html -->")
+    assert faq.rstrip().endswith("<!-- /wp:html -->")
+    cta = wp_render.render_cta_block("Go", "https://x.com")
+    assert cta.startswith("<!-- wp:html -->")
+
+
+def test_inject_images_inside_block_mode():
+    body = wp_render.markdown_to_wp_html("# H1\n\ntext\n\n## One\n\nmore")
+    out = wp_render.inject_inpost_images(body, [
+        {"url": "/1.jpg", "alt": "in", "after_h2": 1},
+    ])
+    # image inserted AFTER the heading block's closing comment, wrapped as core/image
+    assert "</h2>\n<!-- /wp:heading -->\n<!-- wp:image -->" in out
+    assert '<img src="/1.jpg" alt="in" />' in out
 
 
 # ---------------------------------------------------------------------------

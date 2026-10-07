@@ -5,11 +5,18 @@ Pure functions, no HTTP, no LLM. Renders the pieces the connector needs:
 - `markdown_to_wp_html`: headings, paragraphs, lists (nested), blockquotes,
   fenced code, GFM tables, hr, and inline marks (bold/italic/code/strike/
   `==highlight==`/links/images).
+- **Block mode (default)**: every top-level element is wrapped in
+  `<!-- wp:… -->` delimiters (Gutenberg serialization) so the post opens in
+  the block editor as *real blocks* — no manual "Convert to Blocks" click and
+  no risk of a user breaking content by converting. `blocks=False` returns
+  plain HTML (used for the custom-site payload).
 - **Shortcode-safe**: a literal `[` in body text is escaped to `&#91;` so
   WordPress never mistakes prose for a shortcode (links are parsed first, so
   real `[text](url)` links still work).
-- `render_faq_block` / `render_cta_block`: the on-page FAQ + CTA blocks.
-- `inject_inpost_images`: place `<figure>` images right after a chosen H2.
+- `render_faq_block` / `render_cta_block`: the on-page FAQ + CTA blocks
+  (wrapped in `<!-- wp:html -->` so they round-trip without validation).
+- `inject_inpost_images`: place `<figure>` images right after a chosen H2
+  (detects block mode and inserts after the heading block's closing comment).
 - `jsonld_script`: `<script type="application/ld+json">` for Article/FAQPage.
 """
 from __future__ import annotations
@@ -97,12 +104,29 @@ def _split_row(line: str) -> List[str]:
     return [c.strip() for c in line.split("|")]
 
 
-def markdown_to_wp_html(md: str) -> str:
-    """Markdown → WordPress-safe HTML. Deterministic, dependency-free."""
+def _block(name: str, inner: str, attrs: Optional[Dict[str, Any]] = None) -> str:
+    """Gutenberg serialization: `<!-- wp:name {attrs} -->inner<!-- /wp:name -->`."""
+    open_c = f"<!-- wp:{name}"
+    if attrs:
+        open_c += " " + json.dumps(attrs, separators=(",", ":"))
+    open_c += " -->"
+    return f"{open_c}\n{inner}\n<!-- /wp:{name} -->"
+
+
+def markdown_to_wp_html(md: str, blocks: bool = True) -> str:
+    """Markdown → WordPress HTML. Deterministic, dependency-free.
+
+    `blocks=True` (default) wraps each top-level element in Gutenberg
+    block delimiters so the post opens directly as editable blocks.
+    """
     lines = (md or "").replace("\r\n", "\n").split("\n")
     out: List[str] = []
     i = 0
     n = len(lines)
+
+    def emit(name: str, inner: str, attrs: Optional[Dict[str, Any]] = None) -> None:
+        out.append(_block(name, inner, attrs) if blocks else inner)
+
     while i < n:
         line = lines[i]
 
@@ -115,8 +139,13 @@ def markdown_to_wp_html(md: str) -> str:
                 code.append(lines[i])
                 i += 1
             i += 1  # closing fence
-            cls = f' class="language-{html.escape(lang)}"' if lang else ""
-            out.append(f"<pre><code{cls}>{html.escape(chr(10).join(code))}</code></pre>")
+            escaped = html.escape(chr(10).join(code))
+            if blocks:
+                # core/code save markup: no language class (attrs must round-trip)
+                emit("code", f'<pre class="wp-block-code"><code>{escaped}</code></pre>')
+            else:
+                cls = f' class="language-{html.escape(lang)}"' if lang else ""
+                emit("code", f"<pre><code{cls}>{escaped}</code></pre>")
             continue
 
         if not line.strip():
@@ -124,14 +153,17 @@ def markdown_to_wp_html(md: str) -> str:
             continue
 
         if _HR_RE.match(line):
-            out.append("<hr>")
+            # separator block save markup is uncertain across versions — wp:html
+            # round-trips verbatim with zero validation risk.
+            emit("html", "<hr>")
             i += 1
             continue
 
         heading = _HEADING_RE.match(line)
         if heading:
             level = len(heading.group(1))
-            out.append(f"<h{level}>{inline(heading.group(2).strip())}</h{level}>")
+            inner = f"<h{level}>{inline(heading.group(2).strip())}</h{level}>"
+            emit("heading", inner, None if level == 2 else {"level": level})
             i += 1
             continue
 
@@ -148,7 +180,12 @@ def markdown_to_wp_html(md: str) -> str:
                 "<tr>" + "".join(f"<td>{inline(c)}</td>" for c in row) + "</tr>"
                 for row in body_rows
             )
-            out.append(f"<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>")
+            table = f"<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>"
+            if blocks:
+                # core/table saves inside <figure class="wp-block-table">
+                emit("table", f'<figure class="wp-block-table">{table}</figure>')
+            else:
+                emit("table", table)
             continue
 
         if line.lstrip().startswith("> "):
@@ -156,12 +193,19 @@ def markdown_to_wp_html(md: str) -> str:
             while i < n and lines[i].lstrip().startswith("> "):
                 quote.append(lines[i].lstrip()[2:])
                 i += 1
-            out.append(f"<blockquote>{inline(' '.join(quote))}</blockquote>")
+            content = inline(" ".join(quote))
+            if blocks:
+                # core/quote save: <blockquote class="wp-block-quote"><p>…</p></blockquote>
+                emit("quote",
+                     f'<blockquote class="wp-block-quote"><p>{content}</p></blockquote>')
+            else:
+                emit("quote", f"<blockquote>{content}</blockquote>")
             continue
 
         if _ULI_RE.match(line) or _OLI_RE.match(line):
             html_list, i = _render_list(lines, i)
-            out.append(html_list)
+            ordered = html_list.startswith("<ol>")
+            emit("list", html_list, {"ordered": True} if blocks and ordered else None)
             continue
 
         # paragraph: consume until blank / block start
@@ -170,7 +214,7 @@ def markdown_to_wp_html(md: str) -> str:
         while i < n and lines[i].strip() and not _starts_block(lines[i], lines, i):
             para.append(lines[i].strip())
             i += 1
-        out.append(f"<p>{inline(' '.join(para))}</p>")
+        emit("paragraph", f"<p>{inline(' '.join(para))}</p>")
 
     return "\n".join(out)
 
@@ -209,7 +253,7 @@ def _render_list(lines: List[str], i: int) -> tuple[str, int]:
 
 
 # --- composed blocks ---
-def render_faq_block(faqs: List[Dict[str, Any]]) -> str:
+def render_faq_block(faqs: List[Dict[str, Any]], blocks: bool = True) -> str:
     parts = ['<section class="faq-block">', "<h2>Frequently Asked Questions</h2>"]
     for f in faqs or []:
         q = inline(str(f.get("question", "")))
@@ -219,21 +263,29 @@ def render_faq_block(faqs: List[Dict[str, Any]]) -> str:
             f'<p class="faq-answer">{a}</p></div>'
         )
     parts.append("</section>")
-    return "\n".join(parts)
+    body = "\n".join(parts)
+    # custom classes survive verbatim inside wp:html (no block validation)
+    return _block("html", body) if blocks else body
 
 
-def render_cta_block(label: str, url: str, text: str = "", is_client_owned: bool = True) -> str:
+def render_cta_block(label: str, url: str, text: str = "",
+                     is_client_owned: bool = True, blocks: bool = True) -> str:
     rel = "" if is_client_owned else ' rel="sponsored"'
     href = html.escape(url or "", quote=True)
     body = f"<p>{inline(text)}</p>" if text else ""
-    return (
+    out = (
         f'<aside class="cta-block">{body}'
-        f'<a class="cta-button" href="{href}"{rel}>{html.escape(label or "", quote=True)}</a>'
+        f'<a class="cta-button" href="{href}"{rel}>{html.escape(label or "", True)}</a>'
         f"</aside>"
     )
+    return _block("html", out) if blocks else out
 
 
-def _figure(src: str, alt: str) -> str:
+def _figure(src: str, alt: str, blocks: bool = False) -> str:
+    if blocks:
+        # core/image save markup: figure.wp-block-image + void <img ... />
+        return (f'<figure class="wp-block-image"><img src="{html.escape(src, quote=True)}" '
+                f'alt="{html.escape(alt or "", quote=True)}" /></figure>')
     return (f'<figure class="wp-block-image"><img src="{html.escape(src, quote=True)}" '
             f'alt="{html.escape(alt or "", quote=True)}"></figure>')
 
@@ -243,22 +295,30 @@ def inject_inpost_images(html_body: str, images: List[Dict[str, Any]]) -> str:
 
     `images` items: {url|src, alt, after_h2?}. Missing/out-of-range after_h2
     appends at the end so an image is never silently dropped.
+
+    Auto-detects block mode: when the body contains `<!-- wp:` delimiters the
+    image is inserted after the heading block's closing comment (never inside
+    it) and serialized as a core/image block.
     """
+    blocks = "<!-- wp:" in html_body
+    # block mode: anchor only on real heading blocks (`</h2><!-- /wp:heading -->`),
+    # never on the FAQ <h2> that lives inside a wp:html block.
+    anchor = re.compile(r"</h2>\s*<!-- /wp:heading -->") if blocks else re.compile(r"</h2>")
     body = html_body
     trailing: List[str] = []
     for img in images or []:
-        figure = _figure(img.get("url") or img.get("src") or "", img.get("alt", ""))
+        figure = _figure(img.get("url") or img.get("src") or "", img.get("alt", ""), blocks)
+        wrapped = _block("image", figure) if blocks else figure
         idx = img.get("after_h2")
         if not idx:
-            trailing.append(figure)
+            trailing.append(wrapped)
             continue
-        # find the nth </h2>
-        positions = [m.end() for m in re.finditer(r"</h2>", body)]
+        positions = [m.end() for m in anchor.finditer(body)]
         if 1 <= int(idx) <= len(positions):
             pos = positions[int(idx) - 1]
-            body = body[:pos] + "\n" + figure + body[pos:]
+            body = body[:pos] + "\n" + wrapped + body[pos:]
         else:
-            trailing.append(figure)
+            trailing.append(wrapped)
     if trailing:
         body = body + "\n" + "\n".join(trailing)
     return body

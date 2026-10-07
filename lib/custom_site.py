@@ -39,7 +39,7 @@ def build_delivery_payload(
         "slug": slug or title,
         "url": url,
         "excerpt": meta_description,
-        "html": wp_render.markdown_to_wp_html(markdown),
+        "html": wp_render.markdown_to_wp_html(markdown, blocks=False),
         "markdown": markdown,
         "markdown_alternate": markdown_alternate(title, markdown, {"description": meta_description}),
         "schema": {
