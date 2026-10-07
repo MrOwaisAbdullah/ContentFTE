@@ -6,7 +6,7 @@ a fully SEO'd article page (title H1, GFM, FAQ section, Article + FAQPage
 JSON-LD).
 
 ```bash
-npm install contentfte
+npm install @owais-abdullah/contentfte
 ```
 
 > Requires the ContentFTE engine (self-hosted, `uvicorn main:app`) or a
@@ -17,14 +17,14 @@ npm install contentfte
 
 | Import | What you get |
 |---|---|
-| `contentfte` | `ContentFTEClient` — dependency-free `fetch`, built-in retry/backoff, idempotency keys |
-| `contentfte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
-| `contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload |
+| `@owais-abdullah/contentfte` | `ContentFTEClient` — dependency-free `fetch`, built-in retry/backoff, idempotency keys |
+| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
+| `@owais-abdullah/contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload |
 
 ### Client
 
 ```ts
-import { ContentFTEClient } from "contentfte";
+import { ContentFTEClient } from "@owais-abdullah/contentfte";
 
 const client = new ContentFTEClient("https://engine.example.com", "site-key");
 
@@ -37,9 +37,9 @@ const payload = await client.getContent(art.id); // unified delivery payload
 ### Renderer (React / Next.js)
 
 ```tsx
-import { ContentFTEClient } from "contentfte";
-import { ContentFTEArticle, type ContentFTEPayload } from "contentfte/renderer";
-import "contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEArticle, type ContentFTEPayload } from "@owais-abdullah/contentfte/renderer";
+import "@owais-abdullah/contentfte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 

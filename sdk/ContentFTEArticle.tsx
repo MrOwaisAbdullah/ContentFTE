@@ -1,9 +1,9 @@
 /**
  * ContentFTEArticle — renderer for the SDK delivery payload.
  *
- *   npm install contentfte
- *   import { ContentFTEArticle } from "contentfte/renderer";
- *   import "contentfte/contentfte-prose.css";
+ *   npm install @owais-abdullah/contentfte
+ *   import { ContentFTEArticle } from "@owais-abdullah/contentfte/renderer";
+ *   import "@owais-abdullah/contentfte/contentfte-prose.css";
  *
  * Takes the response of `client.getContent(articleId)` (the unified
  * `/content` payload) and renders it portfolio-style:
