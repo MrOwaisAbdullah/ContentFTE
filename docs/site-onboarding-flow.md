@@ -30,6 +30,36 @@ The code lives in `sdk/service.py` (canonical ops) → `sdk/server.py`
 **One rule:** nothing publishes unless it is `approved`. Approve is your gate —
 review `scores` first (house policy: overall ≥ 90 and every sub-score ≥ 80).
 
+### Where the site type lives (wordpress vs custom)
+
+There is **no `astro` / `nextjs` / `react` value** — the engine only knows two
+targets, set on the `Site` row at creation:
+
+| Value | Meaning |
+| :--- | :--- |
+| `wordpress` | `publish` pushes the post into WordPress (§1) |
+| `custom` | the engine owns the content; your site pulls the payload (§2). **Astro, Next, React, plain HTML — all `custom`.** |
+
+Where to set it:
+
+| Where | How |
+| :--- | :--- |
+| **REST** | `POST /sdk/v1/sites` → `{"slug","name","site_type":"wordpress"\|"custom","base_url":"…"}` (`sdk/server.py` `SiteUpsert`) |
+| **Python** | `service.upsert_site("acme", site_type="wordpress", base_url="https://…")` (`sdk/service.py:87`) |
+| **Factory / brand provisioning** | taken from the business profile — `site_type or "wordpress"` (`lib/factory.py:108`) |
+| **DB column** | `Site.site_type` (default `"custom"`), `Site.base_url`, `Site.publish_mode` (`lib/db.py:49-57`) |
+| **MCP** | none — there is no `upsert_site` tool; use REST / Python |
+
+⚠️ Two gotchas:
+- `submit_article` **auto-creates** an unknown site with the default
+  `site_type="custom"` — create the WordPress site **first**, or publish
+  silently skips the WP push.
+- `upsert_site` sets `site_type` only on **create**; it will **not** change an
+  existing site's type (edit the row to switch).
+
+WordPress sub-option (not `site_type`): `WP_RENDER_TARGET=blocks|elementor`.
+The framework choice for a `custom` site is made on your side (§2.4).
+
 ---
 
 ## 1. WordPress flow (push target)
@@ -215,20 +245,48 @@ curl localhost:8000/sdk/v1/articles/12/content -H "X-Site-Key: $SDK_MASTER_KEY"
 
 ### 2.4 Render it
 
-**Astro / plain HTML** — use `html` plus the schema and your own layout:
+**Astro** — render the source `markdown` (or use the pre-rendered `html`; see
+the field note below). Astro's content collections work on *local* files, so for
+a fetched string compile it with a Markdown library:
+
 ```astro
 ---
-const res  = await fetch(`${ENGINE}/sdk/v1/articles/12/content`, { headers: { "X-Site-Key": KEY } });
-const p    = await res.json();
+import { marked } from "marked";                 // npm i marked
+const res = await fetch(`${ENGINE}/sdk/v1/articles/12/content`,
+                        { headers: { "X-Site-Key": KEY } });
+const p   = await res.json();
+const body = marked.parse(p.markdown);           // or: use p.html directly
 ---
 <article>
   <h1>{p.title}</h1>
   <p class="dek">{p.excerpt}</p>
-  <div set:html={p.html} />
+  <div class="prose" set:html={body} />
 </article>
 <script type="application/ld+json" set:html={JSON.stringify(p.schema.article)} />
 {p.schema.faq && <script type="application/ld+json" set:html={JSON.stringify(p.schema.faq)} />}
 ```
+
+If you'd rather skip the Markdown dependency, swap `body` for `p.html`:
+
+```astro
+<div class="prose" set:html={p.html} />
+```
+
+#### `html` vs `markdown` vs `markdown_alternate`
+
+The payload deliberately ships all three:
+
+| Field | What it is | Use it when |
+| :--- | :--- | :--- |
+| `html` | the body compiled **once by the engine** (`lib/wp_render`) — identical for every consumer | you want zero markdown dependency, or byte-identical output across platforms |
+| `markdown` | the source the engine generated | you want **your own** markdown pipeline / components (Astro `marked`, Next `react-markdown`, MDX) |
+| `markdown_alternate` | frontmatter + `# title` + body — the agent-ready `.md` | you serve a `/slug.md` alternate for LLMs (GEO §5.8) — **not** the visible page |
+
+So Astro is **not** forced to HTML: use `p.markdown` to render it yourself, or
+`p.html` for the engine's exact rendering. The React renderer in
+`@owais-abdullah/contentfte` is the markdown path — it compiles `payload.markdown`
+via `react-markdown` (and falls back to `payload.html` when markdown is empty),
+which is why React/Next below looks "markdown-first".
 
 **React / Next** — install the published renderer once:
 ```bash

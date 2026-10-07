@@ -97,6 +97,12 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 - `scripts/acceptance_wp.py`: block check on raw content; FAQ check now asserts
   `<details>`/`<summary>`; Yoast guidance updated.
 - `docs/phase1-feature-map.md`: FAQ row rewritten (accordion).
+- `docs/site-onboarding-flow.md` (new): step-by-step WordPress **push** and
+  custom React/Next/Astro **pull** flows, incl. **where `site_type` is set**
+  (`wordpress`|`custom` only — no per-framework value) and an
+  `html` vs `markdown` vs `markdown_alternate` note (Astro renders
+  `payload.markdown`; the engine's pre-rendered `html` is optional).
+  README refreshed for the published SDK.
 - Tests: `tests/test_wp_render.py` (accordion, plain mode, empty), 
   `tests/test_elementor.py` (accordion widget, FAQ-off-the-html-widget,
   publish branch). +3 tests → 212.
