@@ -104,9 +104,15 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 ### Open at end of session
 - [ ] Full-generation acceptance re-run (run 4 used seeded content).
 - [ ] Push/merge the branch (23 commits ahead of `master`).
-- [ ] npm publish `contentfte@0.1.0` — package is built and lint-clean
-      (publint + arethetypeswrong green, smoke 20/20) but the machine is not
-      authenticated (`npm whoami` → ENEEDAUTH). Needs `npm login` first.
+- [ ] npm publish **`@owais-abdullah/contentfte@0.1.0`** — package built and
+      lint-clean (publint + arethetypeswrong green, smoke 20/20). Logged in as
+      `owais-abdullah`, but the unscoped `contentfte` name was **rejected by
+      npm's similarity guard** vs `contentful` (`E403 … try renaming to
+      '@owais-abdullah/contentfte'`), so the package was scoped and all
+      install/import docs updated (`eac5942`). Publish now stops only at
+      **`EOTP`** — the account has 2FA with auth-and-writes; run
+      `npm publish --access public --otp=<code>` (or use a bypass-2FA
+      Granular Access Token).
 - [ ] TASKS 92 (live MCP session), 90 (Next.js dogfood), 44/47 (Postgres cutover flip).
 
 ---
