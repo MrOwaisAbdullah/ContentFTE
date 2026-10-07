@@ -10,6 +10,7 @@ Update this file on every commit: `[ ]` → `[x]` + date + commit hash.
 
 > **Live-run steps** (cutover flip, decay, SDK/MCP dogfood, WP acceptance) that
 > need real credentials: see `docs/phase1-live-run-checklist.md`.
+> **What Phase 1 added + how the WP output renders/edits:** see `docs/phase1-feature-map.md`.
 
 ---
 
