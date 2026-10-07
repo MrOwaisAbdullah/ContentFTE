@@ -64,8 +64,9 @@ approved before `publish_article` moves it to published. The WordPress push runs
 inside that same call (body, meta, schema, images, categories) and stays
 **fail-open** — an outage reports `wp.ok=false` rather than losing the article.
 
-See `sdk/quickstart.md` (React/Next/Astro/plain-HTML) and
-`docs/phase1-feature-map.md` for the full surface.
+See `docs/site-onboarding-flow.md` for the step-by-step **WordPress** and
+**custom React/Astro** onboarding + publishing flows, `sdk/quickstart.md` for
+frontend patterns, and `docs/phase1-feature-map.md` for the full surface.
 
 ---
 
