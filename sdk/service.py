@@ -721,6 +721,24 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
         s.close()
 
 
+def wp_post(post_id: int) -> dict:
+    """Read a WordPress post back — raw content + registered SEO meta
+    (Yoast/RankMath/AIOSEO) — for the refresh/decay path (verify an update,
+    read before rewriting, or feed decay analysis). WordPress must be
+    configured (WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD)."""
+    from lib.wordpress import WPConfig, WordPressConnector
+
+    cfg = WPConfig.from_env()
+    if not (cfg.base_url and cfg.username and cfg.app_password):
+        return _err("WordPress not configured",
+                    "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
+    try:
+        return WordPressConnector(cfg).get_post(int(post_id))
+    except Exception as exc:  # noqa: BLE001 — service never raises
+        return _err(f"wp post read failed: {type(exc).__name__}: {exc}",
+                    "check the post id, WP config, and site reachability")
+
+
 def get_images(article_id: int) -> dict:
     data = get_article(article_id, include_content=True)
     if "error" in data:

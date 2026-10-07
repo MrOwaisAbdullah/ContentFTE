@@ -403,3 +403,30 @@ class WordPressConnector:
         doc = resp.json()
         return {"id": doc["id"], "url": doc.get("link", ""),
                 "status": doc.get("status", ""), "slug": doc.get("slug", "")}
+
+    def get_post(self, post_id: int, context: str = "edit") -> dict:
+        """Read one post back (the WP equivalent of SanityAdapter
+        `get_post_content_markdown`). `context=edit` exposes the RAW content
+        and registered `meta` (Yoast/RankMath/AIOSEO) — used to verify a
+        refresh, read before update, or feed decay analysis."""
+        resp = self.session.get(self._url(f"/posts/{post_id}"),
+                                params={"context": context}, timeout=self.cfg.timeout)
+        resp.raise_for_status()
+        doc = resp.json()
+        title = doc.get("title") or {}
+        content = doc.get("content") or {}
+        excerpt = doc.get("excerpt") or {}
+        return {
+            "id": doc["id"],
+            "slug": doc.get("slug", ""),
+            "status": doc.get("status", ""),
+            "title": title.get("raw") or title.get("rendered", ""),
+            "content_raw": content.get("raw") or content.get("rendered", ""),
+            "excerpt": excerpt.get("raw") or excerpt.get("rendered", ""),
+            "url": doc.get("link", ""),
+            "modified": doc.get("modified", ""),
+            "featured_media": doc.get("featured_media", 0),
+            "categories": doc.get("categories", []),
+            "tags": doc.get("tags", []),
+            "meta": doc.get("meta") or {},
+        }

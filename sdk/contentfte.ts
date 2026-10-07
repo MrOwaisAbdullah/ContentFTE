@@ -90,6 +90,11 @@ export class ContentFTEClient {
     return this.request("POST", `/sdk/v1/articles/${id}/refresh`);
   }
 
+  /** Read a WordPress post back (raw content + registered SEO meta). */
+  async wpPost(postId: number) {
+    return this.request("GET", `/sdk/v1/wp/posts/${postId}`);
+  }
+
   async getContent(id: number) {
     return this.request("GET", `/sdk/v1/articles/${id}/content`);
   }

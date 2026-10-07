@@ -87,6 +87,10 @@ class ContentFTEClient:
         updates the existing post; custom sites: re-pull get_content()."""
         return self._request("POST", f"/sdk/v1/articles/{article_id}/refresh")
 
+    def wp_post(self, post_id: int) -> dict:
+        """Read a WordPress post back (raw content + registered SEO meta)."""
+        return self._request("GET", f"/sdk/v1/wp/posts/{post_id}")
+
     def get_content(self, article_id: int) -> dict:
         return self._request("GET", f"/sdk/v1/articles/{article_id}/content")
 

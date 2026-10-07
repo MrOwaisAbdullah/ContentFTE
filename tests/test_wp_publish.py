@@ -64,6 +64,7 @@ class _FakeConnector:
         self.cfg = cfg
         self.published: list = []  # (post, mode)
         self.updated: list = []    # (post_id, post, body_html)
+        self.read: list = []       # post_ids passed to get_post
         self.default_category_calls = 0
         self.featured_existed: bool | None = None
         _FakeConnector.instances.append(self)
@@ -74,6 +75,16 @@ class _FakeConnector:
 
     def upload_media(self, path, alt=""):
         return {"id": 55, "url": "http://wp.test/media/55.jpg"}
+
+    def get_post(self, post_id, context="edit"):
+        self.read.append(post_id)
+        return {"id": post_id, "slug": "wp-acceptance-post", "status": "draft",
+                "title": "WP Acceptance Post",
+                "content_raw": "<!-- wp:paragraph --><p>Body</p><!-- /wp:paragraph -->",
+                "excerpt": "desc", "url": f"http://wp.test/?p={post_id}",
+                "modified": "2026-10-07T00:00:00", "featured_media": 7,
+                "categories": [1], "tags": [],
+                "meta": {"_yoast_wpseo_metadesc": "m"}}
 
     def update_post(self, post_id, post, body_html=None, featured_image_path=None):
         self.updated.append((post_id, post, body_html))
@@ -333,4 +344,25 @@ def test_custom_site_refresh_is_pull_only(monkeypatch):
     out = service.refresh_article(art_id)
     assert out["ok"] is True and out["render_target"] == "custom"
     assert "content" in out["next"]
+    assert _FakeConnector.instances == []
+
+
+# --- read a post back (G2) --------------------------------------------------
+
+def test_wordpress_get_post_reads_back(monkeypatch):
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    out = service.wp_post(99)
+    assert out["id"] == 99 and out["status"] == "draft"
+    assert out["content_raw"].startswith("<!-- wp:paragraph")
+    assert out["meta"]["_yoast_wpseo_metadesc"] == "m"
+    assert _FakeConnector.instances[-1].read == [99]
+
+
+def test_wp_post_unconfigured(monkeypatch):
+    from sdk import service
+
+    out = service.wp_post(99)  # fixture deleted WP_* env
+    assert "error" in out and "not configured" in out["error"]
     assert _FakeConnector.instances == []

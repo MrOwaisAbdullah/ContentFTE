@@ -12,7 +12,6 @@ future session can reconstruct *why* the code looks the way it does.
 ---
 
 ## 2026-10-07 — L80 live acceptance ✓ + FAQ accordion + packaging
-
 **Branch:** `contentfte-phase1-engine-wp-sdk` (23 commits ahead of `master`)
 **Commits:** `9c2c2cc` (this session) ← `fe30ff7` ← `3ea31cd` ← `5bb0a53` ← `bba7522` ← `0e445e1`
 **Tests:** 212/212 green (`python -m pytest tests/ -q`)
@@ -107,6 +106,17 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
   equivalent of `react-markdown`), or a framework island
   (`react-markdown` / `svelte-exmarkdown` / `markdown-it`).
   README refreshed for the published SDK.
+- `docs/tool-parity-sanity-sheets.md` (new): every Sanity + Google Sheets
+  operation mapped to its ContentFTE equivalent for WordPress / custom sites,
+  with a gap table. Result: **full parity** except two custom-only inputs
+  (internal-link source, image hosting) that need a product decision.
+- **Parity tools added** (service → REST → MCP → clients):
+  `list_articles` (`GET /sdk/v1/articles`, `contentfte_list_articles`),
+  `refresh_article` (`POST /articles/{id}/refresh` — updates an existing WP post
+  in place via `WordPressConnector.update_post`, status untouched; custom sites
+  return a pull/re-deliver note), and `wp_post` read-back
+  (`GET /wp/posts/{id}` → `WordPressConnector.get_post` with `context=edit` for
+  raw content + registered SEO meta). Uniform tests for each.
 - Tests: `tests/test_wp_render.py` (accordion, plain mode, empty), 
   `tests/test_elementor.py` (accordion widget, FAQ-off-the-html-widget,
   publish branch). +3 tests → 212.
@@ -114,6 +124,9 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 ### Open at end of session
 - [ ] Full-generation acceptance re-run (run 4 used seeded content).
 - [ ] Push/merge the branch (23 commits ahead of `master`).
+- [ ] Republish npm **0.2.0** — the published `0.1.0` predates the new client
+      methods (`listArticles`, `refreshArticle`, `wpPost`); the source in the
+      package is stale until re-published.
 - [x] **npm publish `@owais-abdullah/contentfte@0.1.0`** — **LIVE**
       (https://www.npmjs.com/package/@owais-abdullah/contentfte). Path there:
       the unscoped `contentfte` name was **rejected by npm's similarity guard**

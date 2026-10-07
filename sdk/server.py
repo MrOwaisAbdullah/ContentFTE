@@ -19,6 +19,7 @@ Endpoints:
                                              (html + markdown + meta + JSON-LD)    GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
+    GET  /sdk/v1/wp/posts/{id}            -> read a WP post back (raw content + SEO meta)
     GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
     GET  /sdk/v1/elementor/posts/{id}     -> current Elementor document (elements)
     POST /sdk/v1/elementor/posts/{id}     -> replace the document (elements, page_settings)
@@ -215,6 +216,14 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
 def site_health(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.site_health(site_slug))
+
+
+@router.get("/wp/posts/{post_id}")
+def wp_post(post_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    """Read a WordPress post back (raw content + registered SEO meta) — the
+    refresh/decay read path."""
+    _check_site_key(x_site_key)
+    return _resolve(service.wp_post(post_id))
 
 
 # --- Elementor (§5.11/§5.13 — native REST target) ---

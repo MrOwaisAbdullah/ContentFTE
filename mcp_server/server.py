@@ -104,6 +104,13 @@ class ArticleIdInput(BaseModel):
     article_id: int = Field(..., ge=1, description="Numeric article ID (from contentfte_generate_article)")
 
 
+class WpPostInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    post_id: int = Field(..., ge=1,
+                         description="WordPress post/page ID to read back "
+                                     "(from publish's wp.post_id or meta.wp_post_id)")
+
+
 class PublishArticleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     article_id: int = Field(..., ge=1, description="Numeric article ID to publish")
@@ -338,6 +345,30 @@ async def refresh_article(params: ArticleIdInput) -> str:
         custom site, or {"error", "next"}.
     """
     return _out(service.refresh_article(params.article_id, via="mcp"))
+
+
+@mcp.tool(
+    name="contentfte_wp_post",
+    annotations={"title": "Read WordPress Post", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def wp_post(params: WpPostInput) -> str:
+    """Read a WordPress post back — raw block content + registered SEO meta
+    (Yoast/RankMath/AIOSEO) — for the refresh/decay path.
+
+    Usage: verify that a contentfte_refresh_article landed, read a post before
+    updating it, or feed decay analysis. Requires WordPress to be configured
+    (WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD).
+
+    Args:
+        params (WpPostInput): post_id (from publish's wp.post_id / meta.wp_post_id).
+
+    Returns:
+        str: JSON {"id", "slug", "status", "title", "content_raw", "excerpt",
+        "url", "modified", "featured_media", "categories", "tags", "meta"}
+        or {"error", "next"}.
+    """
+    return _out(service.wp_post(params.post_id))
 
 
 @mcp.tool(
