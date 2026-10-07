@@ -123,6 +123,12 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
   route: `list_articles` now returns the **resolved** slug (`_resolve_slug`)
   instead of the often-empty column — so `.md`/llms URLs are correct. Sitemap
   stays site-owned.
+- **`skills/contentfte/SKILL.md`** (new, public): an agent-facing skill for
+  installing the SDK and implementing it per stack — Next.js/React, Astro,
+  Vue/Nuxt, Svelte/SvelteKit, plain HTML, WordPress (push), and MCP. Thin
+  `SKILL.md` + `references/stacks.md` (code per stack) + `references/api.md`
+  (routes/tools/payload/lifecycle). Written with the skill-creator-pro pattern
+  (Before-Implementation context gathering, decision tree, pitfalls, verification).
 - Tests: `tests/test_wp_render.py` (accordion, plain mode, empty), 
   `tests/test_elementor.py` (accordion widget, FAQ-off-the-html-widget,
   publish branch). +3 tests → 212.

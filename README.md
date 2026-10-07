@@ -68,6 +68,10 @@ See `docs/site-onboarding-flow.md` for the step-by-step **WordPress** and
 **custom React/Astro** onboarding + publishing flows, `sdk/quickstart.md` for
 frontend patterns, and `docs/phase1-feature-map.md` for the full surface.
 
+> **AI agents:** `skills/contentfte/SKILL.md` is a public skill that teaches an
+> agent to install the SDK and implement it correctly for the user's stack
+> (Next.js/React, Astro, Vue/Nuxt, Svelte, plain HTML, WordPress, or MCP).
+
 ---
 
 ## 📲 Omnichannel Notification & Control Gateways
