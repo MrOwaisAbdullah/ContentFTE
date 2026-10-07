@@ -63,6 +63,7 @@ class _FakeConnector:
     def __init__(self, cfg):
         self.cfg = cfg
         self.published: list = []  # (post, mode)
+        self.updated: list = []    # (post_id, post, body_html)
         self.default_category_calls = 0
         self.featured_existed: bool | None = None
         _FakeConnector.instances.append(self)
@@ -70,6 +71,14 @@ class _FakeConnector:
     def default_category(self) -> str:
         self.default_category_calls += 1
         return self.default_category_name
+
+    def upload_media(self, path, alt=""):
+        return {"id": 55, "url": "http://wp.test/media/55.jpg"}
+
+    def update_post(self, post_id, post, body_html=None, featured_image_path=None):
+        self.updated.append((post_id, post, body_html))
+        return {"id": post_id, "url": f"http://wp.test/?p={post_id}",
+                "status": "draft", "slug": post.slug}
 
     def publish(self, post, mode="draft"):
         if _FakeConnector.publish_error is not None:
@@ -267,4 +276,61 @@ def test_wordpress_push_requires_content(monkeypatch):
     assert out["status"] == "published"
     assert out["wp"]["ok"] is False
     assert "no content_md" in out["wp"]["error"]
+    assert _FakeConnector.instances == []
+
+
+# --- refresh / decay path (§5.11) -------------------------------------------
+
+def test_wordpress_refresh_updates_existing_post(monkeypatch):
+    from lib.db import get_session
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    art_id = _approved_article(
+        status="published",
+        brief={"description": "Updated meta description."},
+        meta={"wp_post_id": 99, "wp_url": "http://wp.test/?p=99",
+              "faqs": [{"question": "Q?", "answer": "A."}]})
+
+    out = service.refresh_article(art_id)
+    assert out["ok"] is True and out["event"] == "article.refreshed"
+    assert out["wp_post_id"] == 99 and out["url"] == "http://wp.test/?p=99"
+
+    conn = _FakeConnector.instances[-1]
+    assert len(conn.updated) == 1 and conn.published == []
+    post_id, post, body = conn.updated[0]
+    assert post_id == 99
+    assert post.meta_description == "Updated meta description."
+    assert "<!-- wp:" in body and "application/ld+json" in body
+
+    s = get_session()
+    try:
+        row = s.get(service.ArticleModel, art_id)
+        # refresh must NOT un-publish
+        assert row.status == "published"
+        from lib.db import AuditLog
+        audit = s.query(AuditLog).filter(AuditLog.action == "article.refresh").all()
+        assert audit and audit[-1].payload["wp_post_id"] == 99
+    finally:
+        s.close()
+
+
+def test_refresh_requires_wp_post_id(monkeypatch):
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    art_id = _approved_article(status="published")  # no meta.wp_post_id
+    out = service.refresh_article(art_id)
+    assert "error" in out and "wp_post_id" in out["error"]
+    assert _FakeConnector.instances == []
+
+
+def test_custom_site_refresh_is_pull_only(monkeypatch):
+    from sdk import service
+
+    _wp_env(monkeypatch)  # WP configured, but custom sites never push
+    art_id = _approved_article(site_type="custom", status="published")
+    out = service.refresh_article(art_id)
+    assert out["ok"] is True and out["render_target"] == "custom"
+    assert "content" in out["next"]
     assert _FakeConnector.instances == []

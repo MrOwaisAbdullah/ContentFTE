@@ -317,6 +317,30 @@ async def publish_article(params: PublishArticleInput) -> str:
 
 
 @mcp.tool(
+    name="contentfte_refresh_article",
+    annotations={"title": "Refresh Article", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def refresh_article(params: ArticleIdInput) -> str:
+    """Refresh an already-published article (§5.11 decay path).
+
+    WordPress sites (site_type="wordpress"): updates the EXISTING post in place
+    (content + SEO meta + taxonomy) — never creates a post and never changes
+    its status. Requires the article to have been published (meta.wp_post_id).
+    Custom sites have no push: re-pull GET /sdk/v1/articles/{id}/content.
+
+    Args:
+        params (ArticleIdInput): article_id.
+
+    Returns:
+        str: JSON {"ok", "event": "article.refreshed", "wp_post_id", "url",
+        "status"} for WP, or {"ok", "render_target": "custom", "next"} for a
+        custom site, or {"error", "next"}.
+    """
+    return _out(service.refresh_article(params.article_id, via="mcp"))
+
+
+@mcp.tool(
     name="contentfte_site_health",
     annotations={"title": "Site Health Check", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},

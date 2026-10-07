@@ -84,6 +84,12 @@ export class ContentFTEClient {
     return this.request("POST", `/sdk/v1/articles/${id}/publish`, { mode });
   }
 
+  /** Refresh an already-published article (§5.11 decay path). WordPress:
+   *  updates the existing post; custom sites: re-pull getContent(). */
+  async refreshArticle(id: number) {
+    return this.request("POST", `/sdk/v1/articles/${id}/refresh`);
+  }
+
   async getContent(id: number) {
     return this.request("GET", `/sdk/v1/articles/${id}/content`);
   }

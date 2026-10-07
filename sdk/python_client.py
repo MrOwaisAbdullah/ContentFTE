@@ -82,6 +82,11 @@ class ContentFTEClient:
         return self._request("POST", f"/sdk/v1/articles/{article_id}/publish",
                              json={"mode": mode})
 
+    def refresh_article(self, article_id: int) -> dict:
+        """Refresh an already-published article (§5.11 decay path). WordPress:
+        updates the existing post; custom sites: re-pull get_content()."""
+        return self._request("POST", f"/sdk/v1/articles/{article_id}/refresh")
+
     def get_content(self, article_id: int) -> dict:
         return self._request("GET", f"/sdk/v1/articles/{article_id}/content")
 

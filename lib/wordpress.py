@@ -374,3 +374,32 @@ class WordPressConnector:
         resp = self.session.post(self._url(f"/posts/{post_id}"), json=payload, timeout=self.cfg.timeout)
         resp.raise_for_status()
         return resp.json()
+
+    def update_post(self, post_id: int, post: PreparedPost,
+                    body_html: str | None = None,
+                    featured_image_path: str | None = None) -> dict:
+        """Update an EXISTING post in place (§5.11 refresh/decay path).
+
+        Unlike publish() this never creates and never touches status — it
+        rewrites content, excerpt and the SEO meta (+ taxonomy when the brief
+        has it, + featured image when given), so a refresh can't un-publish a
+        live post. `body_html` overrides the prepared body (callers pass the
+        assembled body with in-post images + JSON-LD already injected).
+        """
+        body = body_html if body_html is not None else post.html
+        payload: dict = {"content": body, "excerpt": post.excerpt,
+                         **self._meta_payload(post)}
+        if post.categories:
+            payload["categories"] = [self._ensure_term("categories", c)
+                                     for c in post.categories]
+        if post.tags:
+            payload["tags"] = [self._ensure_term("tags", t) for t in post.tags]
+        if featured_image_path:
+            payload["featured_media"] = self.upload_media(
+                featured_image_path, post.featured_alt)["id"]
+        resp = self.session.post(self._url(f"/posts/{post_id}"), json=payload,
+                                 timeout=self.cfg.timeout)
+        resp.raise_for_status()
+        doc = resp.json()
+        return {"id": doc["id"], "url": doc.get("link", ""),
+                "status": doc.get("status", ""), "slug": doc.get("slug", "")}

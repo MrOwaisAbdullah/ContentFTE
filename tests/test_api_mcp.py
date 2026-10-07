@@ -190,6 +190,7 @@ def test_mcp_tools_registered_and_thin_over_service():
         "contentfte_list_articles",
         "contentfte_generate_article", "contentfte_get_article_status",
         "contentfte_get_image", "contentfte_publish_article",
+        "contentfte_refresh_article",
         "contentfte_site_health",
         "contentfte_elementor_available", "contentfte_elementor_document",
         "contentfte_elementor_save", "contentfte_elementor_build",

@@ -611,6 +611,116 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
         s.close()
 
 
+def _render_wp_body(conn, post) -> str:
+    """Assemble a WordPress body for an EXISTING post: upload in-post images
+    that are local paths, inject at their H2 anchors, append Article+FAQ
+    JSON-LD. Mirrors the publish() body assembly for the refresh path."""
+    from lib import wp_render
+
+    uploaded = []
+    for img in post.inpost_images:
+        src = img.get("url") or img.get("src")
+        if not src and img.get("path"):
+            src = conn.upload_media(img["path"], img.get("alt", ""))["url"]
+        if src:
+            uploaded.append({"url": src, "alt": img.get("alt", ""),
+                             "after_h2": img.get("after_h2")})
+    body = wp_render.inject_inpost_images(post.html, uploaded)
+    body += "\n" + wp_render.jsonld_script(post.article_schema)
+    if post.faq_schema:
+        body += "\n" + wp_render.jsonld_script(post.faq_schema)
+    return body
+
+
+def refresh_article(article_id: int, via: str = "api") -> dict:
+    """Refresh an already-published article on its site (§5.11 decay path).
+
+    WordPress (site_type="wordpress"): updates the EXISTING post in place —
+    content + SEO meta + taxonomy + optional featured image — never creates a
+    post and never changes its status (a refresh must not un-publish).
+    Requires `meta.wp_post_id` (set by publish).
+
+    Custom sites have no push: this re-renders the article and tells the caller
+    to re-pull `GET /sdk/v1/articles/{id}/content` (or re-deliver the payload).
+    """
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run generate_article first")
+        if not (art.content_md or "").strip():
+            return _err(f"article {article_id} has no content",
+                        "run generate_content first")
+        meta = dict(art.meta) if isinstance(art.meta, dict) else {}
+        site_type = (art.site.site_type if art.site is not None else "") or ""
+        if site_type != "wordpress":
+            return {"article_id": art.id, "ok": True, "event": "article.refreshed",
+                    "render_target": "custom",
+                    "next": "custom sites have no push — re-pull "
+                            f"GET /sdk/v1/articles/{art.id}/content (or re-deliver "
+                            "the payload to the site)"}
+        post_id = meta.get("wp_post_id")
+        if not post_id:
+            return _err(f"article {article_id} has no wp_post_id",
+                        "publish it first — the WP post id is stored on publish")
+
+        from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
+
+        cfg = WPConfig.from_env()
+        if not (cfg.base_url and cfg.username and cfg.app_password):
+            return _err("WordPress not configured",
+                        "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
+        brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
+        slug = _resolve_slug(art)
+        base = ((art.site.base_url if art.site is not None else "") or "").strip().rstrip("/")
+        url = f"{base}/{slug}" if base else ""
+        featured_path, featured_alt, inpost, temps = _wp_images(meta)
+        try:
+            post = build_prepared_post(
+                title=art.title or slug,
+                markdown=art.content_md,
+                url=url,
+                faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
+                categories=_str_list(brief.get("categories")) or _str_list(meta.get("categories")),
+                tags=_str_list(brief.get("tags")),
+                meta_title=str(brief.get("meta_title") or ""),
+                meta_description=str(brief.get("description") or meta.get("summary") or ""),
+                canonical=url,
+                slug=slug,
+                featured_image_path=featured_path,
+                featured_alt=featured_alt,
+                inpost_images=inpost,
+                cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
+                entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
+                date_published=_iso(art.created_at),
+                date_modified=_iso(datetime.now(timezone.utc)),
+                render_target="blocks",
+            )
+            conn = WordPressConnector(cfg)
+            body = _render_wp_body(conn, post)
+            res = conn.update_post(int(post_id), post, body_html=body,
+                                   featured_image_path=featured_path)
+        except Exception as exc:  # noqa: BLE001 — refresh never raises
+            return _err(f"wp refresh failed: {type(exc).__name__}: {exc}",
+                        "check WP config / reachability, then re-run refresh")
+        finally:
+            for tmp in temps:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.refresh",
+                       payload={"wp_post_id": int(post_id), "via": via,
+                                "url": res.get("url", "")}))
+        s.commit()
+        return {"article_id": art.id, "ok": True, "event": "article.refreshed",
+                "render_target": "blocks", "wp_post_id": int(post_id),
+                "url": res.get("url", ""), "status": res.get("status", "")}
+    finally:
+        s.close()
+
+
 def get_images(article_id: int) -> dict:
     data = get_article(article_id, include_content=True)
     if "error" in data:

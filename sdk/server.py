@@ -13,9 +13,10 @@ Endpoints:
                                              site_type="wordpress" sites are
                                              pushed to WP in the same call
                                              ({"wp": {...}} in the response)
+    POST /sdk/v1/articles/{id}/refresh    -> update an existing WP post in place
+                                             (decay path; custom sites re-pull)
     GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
-                                             (html + markdown + meta + JSON-LD)
-    GET  /sdk/v1/sites                    -> list sites
+                                             (html + markdown + meta + JSON-LD)    GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
     GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
@@ -177,6 +178,18 @@ def publish_article(article_id: int, body: ArticlePublish | None = None,
             raise HTTPException(status_code=409, detail=result["error"])
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+@router.post("/articles/{article_id}/refresh")
+def refresh_article(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    """Refresh an already-published article on its site (§5.11 decay path).
+
+    WordPress: updates the existing post in place (content + SEO meta +
+    taxonomy) — never creates, never un-publishes. Custom sites: no push —
+    re-pull GET /articles/{id}/content.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.refresh_article(article_id, via="sdk"))
 
 
 @router.get("/articles/{article_id}/content")
