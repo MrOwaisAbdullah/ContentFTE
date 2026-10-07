@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from slugify import slugify
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from lib import custom_site
 from lib import generation
@@ -99,6 +99,53 @@ def upsert_site(slug: str, name: str = "", site_type: str = "custom",
             s.refresh(site)
             created = True
         return {"id": site.id, "slug": site.slug, "created": created}
+    finally:
+        s.close()
+
+
+def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
+                  offset: int = 0) -> dict:
+    """List articles newest-first, optionally scoped to a site and/or status.
+
+    Powers the custom-site **content loader** (§5.12 pull): enumerate a site's
+    published articles, then fetch each one's `/content` payload by id. Only
+    routing fields are returned (no html/markdown) — cheap to page through.
+    """
+    init_db()
+    s = get_session()
+    try:
+        limit = max(1, min(int(limit or 100), 500))
+        offset = max(0, int(offset or 0))
+        stmt = select(Article)
+        scoped_site = None
+        if (site_slug or "").strip():
+            scoped_site = _site_by_slug(s, site_slug.strip())
+            if scoped_site is None:
+                return _err(f"site '{site_slug}' not found",
+                            "run list_sites for valid slugs")
+            stmt = stmt.where(Article.site_id == scoped_site.id)
+        if (status or "").strip():
+            stmt = stmt.where(Article.status == status.strip())
+        total = int(s.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+        rows = s.execute(
+            stmt.order_by(Article.created_at.desc(), Article.id.desc())
+                .limit(limit).offset(offset)
+        ).scalars().all()
+        slug_by_id: dict[int, str] = ({scoped_site.id: scoped_site.slug}
+                                      if scoped_site else {})
+        articles: list[dict] = []
+        for a in rows:
+            if a.site_id not in slug_by_id:
+                row = s.get(Site, a.site_id)
+                slug_by_id[a.site_id] = row.slug if row else ""
+            articles.append({
+                "id": a.id, "site_id": a.site_id, "site_slug": slug_by_id[a.site_id],
+                "title": a.title, "slug": a.slug, "status": a.status,
+                "created_at": _iso(a.created_at), "published_at": _iso(a.published_at),
+                "cost_usd": a.cost_usd,
+            })
+        return {"articles": articles, "count": len(articles), "total": total,
+                "limit": limit, "offset": offset}
     finally:
         s.close()
 

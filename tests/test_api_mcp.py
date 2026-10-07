@@ -187,6 +187,7 @@ def test_mcp_tools_registered_and_thin_over_service():
     names = {t.name for t in tools}
     expected = {
         "contentfte_list_sites", "contentfte_get_brief",
+        "contentfte_list_articles",
         "contentfte_generate_article", "contentfte_get_article_status",
         "contentfte_get_image", "contentfte_publish_article",
         "contentfte_site_health",
@@ -319,3 +320,61 @@ def test_content_route_is_unified_delivery_payload():
     # article metadata still present (get_images reads meta.images)
     assert body["meta"]["summary"] == "A meta description."
     assert body["status"] == "briefed" and body["scores"] == {}
+
+
+def test_list_articles_route_and_tool():
+    """GET /sdk/v1/articles + contentfte_list_articles — the custom-site
+    content loader's enumeration entry point (filter by site/status, page)."""
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import sdk.service as service
+    from mcp_server.server import mcp
+    from sdk.server import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    service.upsert_site("list-site", site_type="custom")
+    a1 = service.submit_article("list-site", keyword="alpha kw")
+    a2 = service.submit_article("list-site", keyword="beta kw")
+    service.approve_article(a1["id"], approved=True)
+    service.publish_article(a1["id"], mode="draft")     # custom → status-only
+    service.upsert_site("other-site", site_type="custom")
+    a3 = service.submit_article("other-site", keyword="gamma kw")
+
+    # site-scoped + status filter
+    got = client.get("/sdk/v1/articles",
+                     params={"site_slug": "list-site", "status": "published"})
+    assert got.status_code == 200
+    body = got.json()
+    assert body["total"] == 1 and body["count"] == 1
+    row = body["articles"][0]
+    assert row["id"] == a1["id"] and row["site_slug"] == "list-site"
+    assert row["status"] == "published" and row["created_at"]
+
+    # unscoped lists everything; light fields only (no html/markdown)
+    allrows = client.get("/sdk/v1/articles").json()
+    assert allrows["total"] == 3
+    assert {r["id"] for r in allrows["articles"]} == {a1["id"], a2["id"], a3["id"]}
+    assert "markdown" not in allrows["articles"][0]
+
+    # pagination
+    page = client.get("/sdk/v1/articles", params={"limit": 1, "offset": 1}).json()
+    assert page["total"] == 3 and page["count"] == 1
+    assert page["limit"] == 1 and page["offset"] == 1
+
+    # unknown site → service error surfaced as 404
+    assert client.get("/sdk/v1/articles", params={"site_slug": "nope"}).status_code == 404
+
+    # MCP tool mirrors the service
+    async def run():
+        return json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_list_articles",
+            {"params": {"site_slug": "list-site", "status": "published"}}))
+
+    out = asyncio.run(run())
+    assert out["count"] == 1 and out["articles"][0]["id"] == a1["id"]

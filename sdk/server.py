@@ -5,6 +5,7 @@ consume the same service, so API and MCP behavior cannot drift.
 
 Endpoints:
     POST /sdk/v1/articles                 -> submit brief/keyword
+    GET  /sdk/v1/articles                 -> list articles (site_slug, status, limit, offset)
     GET  /sdk/v1/articles/{id}            -> status, scores, cost
     POST /sdk/v1/articles/{id}/generate   -> run real generation (briefed -> drafted)
     POST /sdk/v1/articles/{id}/approve    -> approve / needs_review
@@ -116,6 +117,19 @@ def submit_article(
     if cache_key:
         _idempotency[cache_key] = result
     return result
+
+
+@router.get("/articles")
+def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
+                  offset: int = 0, x_site_key: str | None = Header(default=None)) -> dict:
+    """List articles newest-first, optionally scoped to a site and/or status.
+
+    Powers the custom-site content loader: enumerate a site's published
+    articles, then GET /articles/{id}/content for each.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.list_articles(site_slug=site_slug, status=status,
+                                          limit=limit, offset=offset))
 
 
 @router.get("/articles/{article_id}")

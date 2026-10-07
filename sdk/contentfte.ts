@@ -92,6 +92,15 @@ export class ContentFTEClient {
     return this.request("GET", "/sdk/v1/sites");
   }
 
+  /** List articles newest-first (filter by site and/or status).
+   *  Content-loader usage: list published ids, then getContent(id) each. */
+  async listArticles(siteSlug = "", status = "", limit = 100, offset = 0) {
+    const qs = new URLSearchParams({
+      site_slug: siteSlug, status, limit: String(limit), offset: String(offset),
+    });
+    return this.request("GET", `/sdk/v1/articles?${qs}`);
+  }
+
   async upsertSite(slug: string, name = "", siteType = "custom", baseUrl = "") {
     return this.request("POST", "/sdk/v1/sites", { slug, name, site_type: siteType, base_url: baseUrl });
   }

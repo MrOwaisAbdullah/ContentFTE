@@ -76,6 +76,17 @@ class SiteSlugInput(BaseModel):
                             description="Site slug, e.g. 'acme' (from contentfte_list_sites)")
 
 
+class ListArticlesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    site_slug: str = Field(default="", max_length=100,
+                           description="Optional site slug to scope the list (omit for all sites)")
+    status: str = Field(default="", max_length=30,
+                        description="Optional lifecycle filter: briefed|drafted|approved|"
+                                    "published|needs_review (omit for all)")
+    limit: int = Field(default=100, ge=1, le=500, description="Page size (max 500)")
+    offset: int = Field(default=0, ge=0, description="Rows to skip (pagination)")
+
+
 class GenerateArticleInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     site_slug: str = Field(..., min_length=1, max_length=100,
@@ -159,6 +170,30 @@ async def list_sites() -> str:
         - Use first: to discover the site_slug for all other tools.
     """
     return _out(service.list_sites())
+
+
+@mcp.tool(
+    name="contentfte_list_articles",
+    annotations={"title": "List Articles", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def list_articles(params: ListArticlesInput) -> str:
+    """List articles newest-first, optionally filtered by site and/or status.
+
+    Enumerate a site's articles (e.g. status="published") to get their ids,
+    then pull each one's rendered payload via GET /sdk/v1/articles/{id}/content
+    — this is how a custom-site content loader discovers what to render.
+
+    Args:
+        params (ListArticlesInput): site_slug?, status?, limit?, offset?.
+
+    Returns:
+        str: JSON {"articles": [{"id", "site_id", "site_slug", "title", "slug",
+        "status", "created_at", "published_at", "cost_usd"}], "count", "total",
+        "limit", "offset"} or {"error", "next"} for an unknown site.
+    """
+    return _out(service.list_articles(site_slug=params.site_slug, status=params.status,
+                                      limit=params.limit, offset=params.offset))
 
 
 @mcp.tool(

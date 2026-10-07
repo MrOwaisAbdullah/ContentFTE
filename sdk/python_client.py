@@ -88,6 +88,15 @@ class ContentFTEClient:
     def list_sites(self) -> dict:
         return self._request("GET", "/sdk/v1/sites")
 
+    def list_articles(self, site_slug: str = "", status: str = "",
+                      limit: int = 100, offset: int = 0) -> dict:
+        """List articles newest-first (filter by site_slug and/or status).
+
+        Content-loader usage: list published ids, then get_content(id) each.
+        """
+        qs = f"?site_slug={site_slug}&status={status}&limit={limit}&offset={offset}"
+        return self._request("GET", f"/sdk/v1/articles{qs}")
+
     def upsert_site(self, slug: str, name: str = "", site_type: str = "custom",
                     base_url: str = "") -> dict:
         return self._request("POST", "/sdk/v1/sites",
