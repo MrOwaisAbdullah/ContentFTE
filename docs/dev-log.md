@@ -23,10 +23,13 @@ future session can reconstruct *why* the code looks the way it does.
   Historical dev-log/TASKS/dogfood rows intentionally keep the old name.
 - The `0.2.1` publish attempt failed **404 → real cause 401** (`npm whoami`
   Unauthorized): the npm login session had expired (npm reports scoped PUTs as
-  404 when unauthenticated). Fix: `npm login`, then publish `content-fte@0.3.0`.
-- `content-fte` verified available on the registry; bare `contentfte` remains
-  blocked by npm's similarity guard vs `contentful`. After the new package is
-  live, deprecate the old one so existing links show a warning.
+  404 when unauthenticated) — re-login fixed it.
+- **`content-fte@0.3.0` LIVE** on npm (no similarity-guard clash; bare
+  `contentfte` stays blocked vs `contentful`). Round-trip verified from a clean
+  consumer: `npm i content-fte` → ESM + CJS `ContentFTEClient`/
+  `ContentFTEArticle` + `contentfte-prose.css` export all resolve.
+- Old package **deprecated** (`0.0.0-stage`, `0.1.0`, `0.2.0`) with
+  "renamed to content-fte" so installs show a warning.
 - Dogfood processes (uvicorn `:8123`, `next dev` `:3000`) stopped — ports free.
 
 ---
