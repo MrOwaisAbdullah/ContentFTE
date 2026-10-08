@@ -308,8 +308,10 @@ async def publish_article(params: PublishArticleInput) -> str:
     gate: overall score >=90 and every sub-score >=80, approved via
     POST /sdk/v1/articles/{id}/approve (or the SDK client). For
     site_type="wordpress" sites the same call pushes the post to WordPress
-    (meta description, Article+FAQ JSON-LD, categories, featured/in-post
-    images) — the response carries {"wp": {"ok", "post_id", "url", ...}};
+    (meta description, Article+FAQ JSON-LD, categories + tags — auto-derived
+    with prefer-reuse against the site's existing taxonomy when the brief
+    carries none — featured/in-post images) — the response carries
+    {"wp": {"ok", "post_id", "url", "categories", "tags", ...}};
     best-effort fail-open, re-running publish retries a failed push.
 
     Args:

@@ -2,10 +2,12 @@
 
 site_type="wordpress" publishes push the article to WP in the same call
 (meta description, Yoast/RankMath/AIOSEO meta, Article+FAQ JSON-LD,
-categories from the brief else the site default, featured/in-post images
-from meta.images). Fail-open: an unconfigured or failing WP never rolls
-back the status flip; a created post is deduped via meta.wp_post_id.
-Custom sites stay status-only.
+categories + tags — brief override else derived via lib.taxonomy
+(prefer-reuse vs existing WP terms > propose-new; JEV key-gated off in
+tests) with the site default category only as a last-resort safety net,
+featured/in-post images from meta.images). Fail-open: an unconfigured or
+failing WP never rolls back the status flip; a created post is deduped via
+meta.wp_post_id. Custom sites stay status-only.
 """
 import os
 
@@ -59,12 +61,14 @@ class _FakeConnector:
     instances: list = []
     default_category_name = "Uncategorized"
     publish_error: Exception | None = None
+    existing_terms: dict = {"categories": [], "tags": []}
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.published: list = []  # (post, mode)
         self.updated: list = []    # (post_id, post, body_html)
         self.read: list = []       # post_ids passed to get_post
+        self.terms_calls: list = []  # kinds passed to list_terms
         self.default_category_calls = 0
         self.featured_existed: bool | None = None
         _FakeConnector.instances.append(self)
@@ -72,6 +76,10 @@ class _FakeConnector:
     def default_category(self) -> str:
         self.default_category_calls += 1
         return self.default_category_name
+
+    def list_terms(self, kind, per_page=100):
+        self.terms_calls.append(kind)
+        return list(_FakeConnector.existing_terms.get(kind, []))
 
     def upload_media(self, path, alt=""):
         return {"id": 55, "url": "http://wp.test/media/55.jpg"}
@@ -109,24 +117,26 @@ def _patch_connector(monkeypatch):
     _FakeConnector.instances = []
     _FakeConnector.publish_error = None
     _FakeConnector.default_category_name = "Uncategorized"
+    _FakeConnector.existing_terms = {"categories": [], "tags": []}
     monkeypatch.setattr("lib.wordpress.WordPressConnector", _FakeConnector)
     return _FakeConnector
 
 
 def _approved_article(*, site_type="wordpress", status="approved",
                       content="## Intro\n\nBody text for the WP push.",
-                      brief=None, meta=None):
+                      brief=None, meta=None,
+                      title="WP Acceptance Post", keyword="wp acceptance"):
     from lib.db import Article as ArticleModel, get_session
     from sdk import service
 
     service.upsert_site("wp-site", site_type=site_type, base_url="http://wp.test")
-    art = service.submit_article("wp-site", keyword="wp acceptance",
+    art = service.submit_article("wp-site", keyword=keyword,
                                  brief=brief or {})
     s = get_session()
     try:
         row = s.get(ArticleModel, art["id"])
         row.status = status
-        row.title = "WP Acceptance Post"
+        row.title = title
         row.content_md = content
         if meta:
             row.meta = {**(row.meta or {}), **meta}
@@ -167,12 +177,15 @@ def test_wordpress_site_publish_pushes_full_payload(monkeypatch, tmp_path):
     assert wp["ok"] is True and wp["post_id"] == 4242
     assert wp["featured_media"] == 7
     assert wp["categories"] == ["SEO"]
+    assert wp["tags"] == ["acceptance"]
+    assert wp["category_source"] == "brief"
 
     conn = _FakeConnector.instances[-1]
     assert len(conn.published) == 1
     post, mode = conn.published[0]
     assert mode == "draft"
     assert post.categories == ["SEO"] and post.tags == ["acceptance"]
+    assert conn.terms_calls == []  # supplied categories -> no site-taxonomy read
     assert post.meta_description == "Meta description for the post."
     assert post.featured_image_path == str(feat) and post.featured_alt == "hero alt"
     assert post.inpost_images == [{"path": str(inp), "alt": "in alt", "after_h2": 1}]
@@ -225,17 +238,103 @@ def test_wordpress_push_dedupes_existing_post(monkeypatch):
     assert _FakeConnector.instances == []  # no second post, no connector call
 
 
-def test_wordpress_categories_fallback_to_site_default(monkeypatch):
+def test_wordpress_derives_new_category_when_nothing_matches(monkeypatch):
     from sdk import service
 
     _wp_env(monkeypatch)
+    _FakeConnector.existing_terms = {"categories": ["AI Agents"], "tags": []}
     art_id = _approved_article(brief={"description": "No categories here."})
+    out = service.publish_article(art_id)
+    # brief has no taxonomy and nothing existing matches "wp acceptance"
+    # -> deterministic propose-new (JEV is key-gated; conftest cleared it)
+    assert out["wp"]["ok"] is True
+    assert out["wp"]["categories"] == ["Wp Acceptance"]
+    assert out["wp"]["category_source"] == "new"
+    assert out["wp"]["tags"] == ["wp acceptance", "wp", "acceptance"]
+    conn = _FakeConnector.instances[-1]
+    assert conn.terms_calls == ["categories"]
+    assert conn.default_category_calls == 0  # derivation replaced the default
+
+
+def test_wordpress_default_category_safety_net_when_derivation_empty(monkeypatch):
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    monkeypatch.setattr(
+        service, "derive_taxonomy",
+        lambda **kw: {"categories": [], "tags": [],
+                      "category_source": "new", "tag_source": "derived"})
+    art_id = _approved_article()
     out = service.publish_article(art_id)
     assert out["wp"]["ok"] is True
     assert out["wp"]["categories"] == ["Uncategorized"]
     conn = _FakeConnector.instances[-1]
     assert conn.default_category_calls == 1
-    assert conn.published[0][0].categories == ["Uncategorized"]
+
+
+def test_wordpress_derives_taxonomy_when_brief_lacks_it(monkeypatch):
+    from lib.db import get_session
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    _FakeConnector.existing_terms = {
+        "categories": ["AI Agents", "Web Development"], "tags": []}
+    art_id = _approved_article(
+        keyword="ai agent tools",
+        title="AI Agent Tools: The Complete Guide",
+        brief={"description": "Desc."})
+
+    out = service.publish_article(art_id)
+    wp = out["wp"]
+    assert wp["ok"] is True
+    assert wp["categories"] == ["AI Agents"]   # prefer-reuse lexical match
+    assert wp["category_source"] == "lexical"
+    assert wp["tags"][0] == "ai agent tools"   # deterministic derived tags
+    assert len(wp["tags"]) <= 5
+    conn = _FakeConnector.instances[-1]
+    assert conn.terms_calls == ["categories"]
+    assert conn.published[0][0].tags == wp["tags"]
+
+    s = get_session()
+    try:
+        row = s.get(service.ArticleModel, art_id)
+        tax = row.meta["taxonomy"]
+        assert tax["categories"] == ["AI Agents"]
+        assert tax["category_source"] == "lexical"
+    finally:
+        s.close()
+
+
+def test_wordpress_refresh_derives_then_reuses_cached_taxonomy(monkeypatch):
+    from lib.db import get_session
+    from sdk import service
+
+    _wp_env(monkeypatch)
+    _FakeConnector.existing_terms = {"categories": ["AI Agents"], "tags": []}
+    art_id = _approved_article(
+        status="published", keyword="ai agent tools",
+        title="AI Agent Tools Guide",
+        meta={"wp_post_id": 99, "wp_url": "http://wp.test/?p=99"})
+
+    first = service.refresh_article(art_id)
+    assert first["ok"] is True
+    assert first["categories"] == ["AI Agents"]
+    assert first["category_source"] == "lexical"
+    assert first["tags"][0] == "ai agent tools"
+
+    second = service.refresh_article(art_id)
+    assert second["ok"] is True and second["categories"] == ["AI Agents"]
+    # taxonomy was cached in meta on the first refresh — no second read
+    total_terms_calls = sum(len(i.terms_calls) for i in _FakeConnector.instances)
+    assert total_terms_calls == 1
+
+    s = get_session()
+    try:
+        row = s.get(service.ArticleModel, art_id)
+        assert row.meta["taxonomy"]["categories"] == ["AI Agents"]
+        assert row.meta["taxonomy"]["category_source"] == "lexical"
+    finally:
+        s.close()
 
 
 def test_wordpress_remote_featured_downloaded_then_cleaned(monkeypatch, tmp_path):

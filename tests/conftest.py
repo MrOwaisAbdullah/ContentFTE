@@ -34,4 +34,14 @@ def _isolated_env(monkeypatch):
     if os.environ.get(_LIVE) not in _LIVE_ON:
         for key in _GUARDED:
             monkeypatch.delenv(key, raising=False)
+        # Keep the JEV category judge (lib.taxonomy) offline: stub the
+        # underlying call so _jev_judge swallows it -> None (propose-new
+        # fallback). OPENROUTER_API_KEY itself must stay untouched — the
+        # agent modules read it at import time (tools/tools.py load_dotenv).
+        try:
+            import lib.jev_tools as _jev_tools
+            monkeypatch.setattr(_jev_tools, "jev_classify_category",
+                                lambda *a, **k: "{}")
+        except Exception:  # noqa: BLE001 — import fails -> _jev_judge swallows
+            pass
     yield

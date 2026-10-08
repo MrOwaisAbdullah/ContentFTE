@@ -11,6 +11,68 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-08 — Auto-derived taxonomy (categories + tags) for WP posts
+**Branch:** `contentfte-phase1-engine-wp-sdk`
+**Tests:** 271/271 pytest (23 new)
+
+### Goal
+New engine posts landed on the site default category with **zero tags**: the
+Article path submits title-only briefs (comparison driver, MCP
+`generate_article`), `_wp_push` only read `brief.categories/tags`, and the
+old sheet flow's taxonomy decision (`get_existing_categories_tool` +
+`jev_classify_category` in the posting agent) was never ported. Operator
+decision: lexical prefer-reuse first, **JEV judges the no-match case**
+(reuse vs propose-new), backfill the 3 live comparison posts too.
+
+### What changed
+- **New `lib/taxonomy.py`** (pure): `derive_tags` / `resolve_category` /
+  `derive_taxonomy`. Categories precedence: publisher brief/meta →
+  prefer-reuse lexical match vs the site's existing categories (token
+  containment scores 1.0 else Jaccard ≥ 0.34, specificity tie-break) →
+  **JEV Choice judge** (`_jev_judge`: env-gated `OPENROUTER_API_KEY`, one
+  call max, every failure swallowed → None) → title-cased propose-new.
+  Tags stay deterministic (keyword phrase + salient tokens; stopwords,
+  numerics and generic CMS nouns stripped; case-insensitive dedupe; cap 5).
+  Every result carries `category_source`/`tag_source`
+  (`brief|meta|lexical|jev_reuse|jev_new|new|derived`) for observability.
+- **`lib/wordpress.py`**: `list_terms(kind, per_page=100)` — paginated
+  read of existing categories/tags (`hide_empty=false`, 10-page cap),
+  fail-open so a taxonomy read never blocks a publish.
+- **`sdk/service.py`**: new `_article_taxonomy()` — derives once and caches
+  in `meta["taxonomy"]` (assign-before-commit pattern) so publish and
+  refresh apply the *same* terms; skips the site-taxonomy read when the
+  publisher already supplied categories. Wired into `_wp_push` (default
+  category demoted to last-resort safety net; `wp` response gains `tags` +
+  `category_source`) and `refresh_article` (first refresh of an old post
+  derives + caches — that's the backfill path — later refreshes reuse;
+  response and audit payload now carry categories/tags).
+- **`mcp_server/server.py`**: publish docstring documents auto-derivation.
+- **`tests/conftest.py`**: offline JEV guard stubs
+  `lib.jev_tools.jev_classify_category` (LIVE-gated). Deliberately **not**
+  clearing `OPENROUTER_API_KEY`: agent modules read it at import
+  (`tools/tools.py` `load_dotenv`) — the first full-suite run caught the
+  KeyError in 4 agent-wiring tests and the env deletion was reverted.
+- **Tests**: `tests/test_taxonomy.py` (20: precedence, lexical/JEV/propose
+  lanes, env gate, caps, None-tolerance) + `test_wp_publish.py` (+3 net:
+  derive-when-brief-lacks-it, propose-new vs existing, refresh
+  derive→cache-reuse with `list_terms` called exactly once, default-
+  category safety net; fake connector gained `list_terms`/`existing_terms`).
+
+### Verification
+- `python -m pytest tests/ -q --basetemp=D:/opencode-npm-temp/.test-tmp-phase1/pytest-tax-final`
+  → **271 passed, 1 warning, 63.5s** (248 → 271).
+- Lexical test proves reuse ("AI Agents" matched from
+  "ai agent tools…", `category_source == "lexical"`) and `meta.taxonomy`
+  persisted; refresh test proves the cache is reused across two refreshes.
+
+### Open / next
+- Backfill the 3 live comparison posts: `refresh_article` on each (needs
+  LocalWP `speedline` running + `WP_*` env, currently unset in the shell).
+- Live re-verify a fresh publish on speedline when the Cloudflare image
+  quota resets (shared with the quality-fix batch above).
+
+---
+
 ## 2026-10-08 — Production quality-fix batch: revise loop, focus keyphrase, image staging, per-call cost pricing, quota guard
 **Branch:** `contentfte-phase1-engine-wp-sdk`
 **Tests:** 248/248 pytest (219 baseline + 29 new), ~67s

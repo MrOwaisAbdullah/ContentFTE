@@ -34,6 +34,7 @@ from lib import generation
 from lib.db import Article, Article as ArticleModel, AuditLog, KeywordLedger, Site, get_session, init_db
 from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
+from lib.taxonomy import derive_taxonomy
 
 
 def _err(message: str, nxt: str = "") -> dict:
@@ -857,15 +858,46 @@ def _wp_images(meta: dict) -> tuple[str | None, str, list[dict], list[str]]:
     return featured_path, featured_alt, inpost, temps
 
 
+def _article_taxonomy(conn, art: ArticleModel, meta: dict, brief: dict) -> dict:
+    """Categories/tags for the WP push (§5.11) — derived once and cached in
+    `meta["taxonomy"]` so publish and later refreshes apply the SAME terms.
+
+    Precedence (per lib.taxonomy): publisher brief/meta wins; else prefer-
+    reuse against the site's existing categories (conn.list_terms, fail-open)
+    → JEV Choice judge when lexical found nothing confident (env-gated via
+    OPENROUTER_API_KEY, swallowed on any failure) → title-cased propose-new.
+    The Article path submits title-only briefs, so without this every post
+    would land on the default category with zero tags."""
+    cached = meta.get("taxonomy")
+    if isinstance(cached, dict) and (cached.get("categories") or cached.get("tags")):
+        return cached
+    keyword = (str(meta.get("keyword") or "").strip()
+               or str(brief.get("keyword") or "").strip())
+    existing: list[str] = []
+    # Only read the site's taxonomy when we have to decide ourselves —
+    # publisher-supplied categories make the prefer-reuse input moot.
+    if not (_str_list(brief.get("categories")) or _str_list(meta.get("categories"))):
+        try:
+            existing = conn.list_terms("categories") or []
+        except Exception:  # noqa: BLE001 — prefer-reuse input is best-effort
+            existing = []
+    tax = derive_taxonomy(keyword=keyword, title=art.title or "", brief=brief,
+                          meta=meta, existing_categories=existing)
+    meta["taxonomy"] = tax
+    return tax
+
+
 def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     """§5.11 WordPress push for site_type=wordpress — best-effort, never raises.
 
     Builds the PreparedPost from the Article (blocks render target: meta
     description, Article+FAQ JSON-LD, Yoast/RankMath/AIOSEO meta, categories
-    from the brief mapping else the site default, featured/in-post images
-    from meta.images) and publishes through WordPressConnector. The status
-    flip already happened — a WP failure only appends {"ok": false, ...} so
-    the operator can fix and re-run; meta.wp_post_id dedupes a created post.
+    + tags via _article_taxonomy (brief override, else prefer-reuse/JEV/
+    propose-new — cached in meta["taxonomy"], default category only as the
+    last-resort safety net), featured/in-post images from meta.images) and
+    publishes through WordPressConnector. The status flip already happened —
+    a WP failure only appends {"ok": false, ...} so the operator can fix and
+    re-run; meta.wp_post_id dedupes a created post.
     """
     from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
 
@@ -888,13 +920,15 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     url = f"{base}/{slug}" if base else ""
     featured_path, featured_alt, inpost, temps = _wp_images(meta)
     try:
+        conn = WordPressConnector(cfg)
+        tax = _article_taxonomy(conn, art, meta, brief)
         post = build_prepared_post(
             title=art.title or slug,
             markdown=art.content_md,
             url=url,
             faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
-            categories=_str_list(brief.get("categories")) or _str_list(meta.get("categories")),
-            tags=_str_list(brief.get("tags")),
+            categories=tax["categories"],
+            tags=tax["tags"],
             meta_title=str(brief.get("meta_title") or ""),
             meta_description=str(brief.get("description") or meta.get("summary") or ""),
             canonical=url,
@@ -909,7 +943,6 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
             focus_keyphrase=_focus_keyphrase(meta, brief),
             render_target="blocks",
         )
-        conn = WordPressConnector(cfg)
         if not post.categories:
             fallback = conn.default_category()
             if fallback:
@@ -930,6 +963,8 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
                            "status": result.get("status", ""),
                            "slug": result.get("slug", ""),
                            "categories": list(post.categories),
+                           "tags": list(post.tags),
+                           "category_source": tax.get("category_source", ""),
                            "render_target": "blocks"}
     if result.get("featured_media"):
         out["featured_media"] = result["featured_media"]
@@ -1046,7 +1081,9 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
     WordPress (site_type="wordpress"): updates the EXISTING post in place —
     content + SEO meta + taxonomy + optional featured image — never creates a
     post and never changes its status (a refresh must not un-publish).
-    Requires `meta.wp_post_id` (set by publish).
+    Taxonomy follows publish: brief/meta override else the cached
+    `meta["taxonomy"]` (derived on first publish), so a refresh re-applies
+    the exact same categories/tags. Requires `meta.wp_post_id` (publish).
 
     Custom sites have no push: this re-renders the article and tells the caller
     to re-pull `GET /sdk/v1/articles/{id}/content` (or re-deliver the payload).
@@ -1085,13 +1122,15 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
         url = f"{base}/{slug}" if base else ""
         featured_path, featured_alt, inpost, temps = _wp_images(meta)
         try:
+            conn = WordPressConnector(cfg)
+            tax = _article_taxonomy(conn, art, meta, brief)
             post = build_prepared_post(
                 title=art.title or slug,
                 markdown=art.content_md,
                 url=url,
                 faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
-                categories=_str_list(brief.get("categories")) or _str_list(meta.get("categories")),
-                tags=_str_list(brief.get("tags")),
+                categories=tax["categories"],
+                tags=tax["tags"],
                 meta_title=str(brief.get("meta_title") or ""),
                 meta_description=str(brief.get("description") or meta.get("summary") or ""),
                 canonical=url,
@@ -1106,7 +1145,6 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                 focus_keyphrase=_focus_keyphrase(meta, brief),
                 render_target="blocks",
             )
-            conn = WordPressConnector(cfg)
             body = _render_wp_body(conn, post)
             res = conn.update_post(int(post_id), post, body_html=body,
                                    featured_image_path=featured_path)
@@ -1119,13 +1157,21 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                     os.unlink(tmp)
                 except OSError:
                     pass
+        # Assign-before-commit: persists the cached meta["taxonomy"] decided
+        # above (in-place mutation after an earlier commit would be invisible
+        # to SQLAlchemy — same pattern as publish_article).
+        art.meta = dict(meta)
         s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.refresh",
                        payload={"wp_post_id": int(post_id), "via": via,
-                                "url": res.get("url", "")}))
+                                "url": res.get("url", ""),
+                                "categories": list(post.categories),
+                                "tags": list(post.tags)}))
         s.commit()
         return {"article_id": art.id, "ok": True, "event": "article.refreshed",
                 "render_target": "blocks", "wp_post_id": int(post_id),
-                "url": res.get("url", ""), "status": res.get("status", "")}
+                "url": res.get("url", ""), "status": res.get("status", ""),
+                "categories": list(post.categories), "tags": list(post.tags),
+                "category_source": tax.get("category_source", "")}
     finally:
         s.close()
 

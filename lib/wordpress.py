@@ -227,6 +227,35 @@ class WordPressConnector:
         cat.raise_for_status()
         return (cat.json().get("name") or "").strip()
 
+    def list_terms(self, kind: str, per_page: int = 100) -> list[str]:
+        """Existing term NAMES for kind (categories|tags) — the prefer-reuse
+        input for lib.taxonomy.derive_taxonomy (§5.11 anti-drift: match what
+        the site already uses before inventing a new category).
+        Paginated (WP caps per_page at 100, 10 pages / 1000 terms max),
+        fail-open: a REST error returns what was collected so a publish is
+        never blocked by a taxonomy read."""
+        per_page = max(1, min(int(per_page or 100), 100))
+        names: list[str] = []
+        try:
+            for page in range(1, 11):
+                resp = self.session.get(
+                    self._url(f"/{kind}"),
+                    params={"per_page": per_page, "page": page,
+                            "hide_empty": "false"},
+                    timeout=self.cfg.timeout,
+                )
+                resp.raise_for_status()
+                batch = resp.json()
+                if not isinstance(batch, list) or not batch:
+                    break
+                names.extend(str(t.get("name") or "").strip()
+                             for t in batch if isinstance(t, dict))
+                if len(batch) < per_page:
+                    break
+        except Exception:  # noqa: BLE001 — fail-open read
+            pass
+        return [n for n in names if n]
+
     # --- media ---
 
     def upload_media(self, path: str, alt: str = "") -> dict:
