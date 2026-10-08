@@ -439,6 +439,25 @@ async def llms_txt(params: SiteSlugInput) -> str:
 
 
 @mcp.tool(
+    name="contentfte_sitemap",
+    annotations={"title": "Get Site XML Sitemap", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def sitemap_xml(params: SiteSlugInput) -> str:
+    """Compose the site's XML sitemap (§5.6, sitemaps.org 0.9) from PUBLISHED
+    articles — loc per article, lastmod = publish date. Custom sites serve it
+    at {base}/sitemap.xml; WordPress sites use their core sitemap instead.
+
+    Args:
+        params (SiteSlugInput): site_slug.
+
+    Returns:
+        str: JSON {"site", "count", "sitemap_xml"} or {"error", "next"}.
+    """
+    return _out(service.sitemap_xml(params.site_slug))
+
+
+@mcp.tool(
     name="contentfte_elementor_available",
     annotations={"title": "Probe Elementor REST Meta", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},

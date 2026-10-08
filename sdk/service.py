@@ -1049,6 +1049,18 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
                                "cost_usd": totals["total_usd"], "event": "article.published"}
         if wp_state is not None:
             out["wp"] = wp_state
+        # §5.6 concrete URL submission (IndexNow + Bing WMT) — best-effort,
+        # after the status flip; a ping failure never fails the publish.
+        live_url = str((wp_state or {}).get("url") or "")
+        base_url = ((art.site.base_url if art.site is not None else "") or "").strip()
+        if not live_url and base_url:
+            live_url = f"{base_url.rstrip('/')}/{_resolve_slug(art)}"
+        if live_url:
+            from lib.indexing import submit_published
+            try:
+                out["indexing"] = submit_published(live_url, site_url=base_url)
+            except Exception:  # noqa: BLE001 — never raise from a ping
+                out["indexing"] = {"url": live_url, "error": "submission failed"}
         return out
     finally:
         s.close()
@@ -1167,11 +1179,21 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                                 "categories": list(post.categories),
                                 "tags": list(post.tags)}))
         s.commit()
+        # §5.6 re-ping after an in-place refresh (updated content +
+        # dateModified bump) — same fail-open contract as publish.
+        indexing: dict = {}
+        if res.get("url"):
+            from lib.indexing import submit_published
+            try:
+                indexing = submit_published(res["url"], site_url=base)
+            except Exception:  # noqa: BLE001 — never raise from a ping
+                indexing = {"url": res.get("url", ""), "error": "submission failed"}
         return {"article_id": art.id, "ok": True, "event": "article.refreshed",
                 "render_target": "blocks", "wp_post_id": int(post_id),
                 "url": res.get("url", ""), "status": res.get("status", ""),
                 "categories": list(post.categories), "tags": list(post.tags),
-                "category_source": tax.get("category_source", "")}
+                "category_source": tax.get("category_source", ""),
+                "indexing": indexing}
     finally:
         s.close()
 
@@ -1202,7 +1224,16 @@ def get_images(article_id: int) -> dict:
     return {"images": images, "count": len(images)}
 
 
-def site_health(site_slug: str) -> dict:
+def site_health(site_slug: str, *, http_get=None) -> dict:
+    """§5.6 / pack technical-foundations pre-content gate.
+
+    Beyond the ledger + WP config checks, probes the live site when it has a
+    ``base_url`` (best-effort, 5s timeout each, injectable ``http_get`` for
+    tests): crawlability (``robots.txt``), indexation (WP sitemap /
+    engine-generated sitemap + WP search visibility ``blog_public``), and
+    structure (llms.txt/sitemap availability). A blocked search-visibility
+    flag is critical (flips ``ok``); robots/sitemap warnings stay advisory.
+    """
     init_db()
     s = get_session()
     try:
@@ -1221,9 +1252,109 @@ def site_health(site_slug: str) -> dict:
             "WordPress config: OK" if wp_ok else
             "WordPress config: missing WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD",
         ]
-        return {"site": site.slug, "ok": briefable > 0,
+        critical: list[str] = []
+        base = (site.base_url or "").strip().rstrip("/")
+        if base:
+            get = http_get
+            if get is None:
+                import requests as _requests
+                get = _requests.get
+            # --- crawlability: robots.txt ---
+            try:
+                r = get(f"{base}/robots.txt", timeout=5)
+                code = int(getattr(r, "status_code", 0) or 0)
+                if code == 200:
+                    checks.append("robots.txt: OK")
+                elif code == 404:
+                    checks.append("robots.txt: MISSING (crawl defaults apply — "
+                                  "consider adding one)")
+                else:
+                    checks.append(f"robots.txt: unreachable (HTTP {code})")
+            except Exception as exc:  # noqa: BLE001 — probe never raises
+                checks.append(f"robots.txt: unreachable ({type(exc).__name__})")
+            # --- indexation: sitemap ---
+            if (site.site_type or "") == "wordpress":
+                try:
+                    r = get(f"{base}/wp-sitemap.xml", timeout=5)
+                    code = int(getattr(r, "status_code", 0) or 0)
+                    if code == 200:
+                        checks.append("sitemap (wp-sitemap.xml): OK")
+                    else:
+                        checks.append(f"sitemap (wp-sitemap.xml): HTTP {code} — "
+                                      "enable WP core sitemaps (WP ≥ 5.5)")
+                except Exception as exc:  # noqa: BLE001
+                    checks.append(f"sitemap (wp-sitemap.xml): unreachable "
+                                  f"({type(exc).__name__})")
+            else:
+                checks.append(
+                    f"sitemap: engine-generated for {published} published page(s) "
+                    f"at /sdk/v1/sites/{site.slug}/sitemap.xml — serve it at "
+                    "{base}/sitemap.xml")
+            # --- indexation: WP search visibility (critical) ---
+            if (site.site_type or "") == "wordpress" and wp_ok:
+                try:
+                    r = get(f"{base}/wp-json/wp/v2/settings", timeout=5,
+                            auth=(os.environ.get("WP_USERNAME") or "",
+                                  os.environ.get("WP_APP_PASSWORD") or ""))
+                    code = int(getattr(r, "status_code", 0) or 0)
+                    if code == 200:
+                        visible = (r.json() or {}).get("blog_public")
+                        if visible == 1:
+                            checks.append("WP search visibility: OK "
+                                          "(blog_public=1, indexing allowed)")
+                        else:
+                            msg = ("WP search visibility: BLOCKED (blog_public=0 — "
+                                   "site discourages search engines; fix in "
+                                   "WP Settings → Reading)")
+                            checks.append(msg)
+                            critical.append(msg)
+                    else:
+                        checks.append(f"WP search visibility: unknown (HTTP {code})")
+                except Exception as exc:  # noqa: BLE001
+                    checks.append(f"WP search visibility: unknown "
+                                  f"({type(exc).__name__})")
+        else:
+            checks.append("site base_url: not set — live probes "
+                          "(robots/sitemap/visibility) skipped")
+        return {"site": site.slug, "ok": briefable > 0 and not critical,
                 "ledger": {"briefable": briefable, "published": published},
-                "wp_configured": wp_ok, "checks": checks}
+                "wp_configured": wp_ok, "base_url": base,
+                "checks": checks, "critical": critical}
+    finally:
+        s.close()
+
+
+def sitemap_xml(site_slug: str) -> dict:
+    """§5.6 XML sitemap maintained per site — published articles, newest first.
+
+    Returns JSON {"site", "count", "sitemap_xml"} (same shape as llms_txt);
+    the site serves the text at {base}/sitemap.xml. WordPress sites use their
+    core sitemap instead — this is the custom-site path.
+    """
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        from lib.geo import sitemap_xml as _sitemap_xml
+
+        base = (site.base_url or "").rstrip("/")
+        rows = s.execute(
+            select(Article).where(Article.site_id == site.id,
+                                  Article.status == "published")
+            .order_by(Article.published_at.desc())
+        ).scalars().all()
+        entries = []
+        for a in rows:
+            slug = _resolve_slug(a)
+            if not slug or slug == "untitled":
+                continue
+            dt = a.published_at or a.created_at
+            entries.append({"loc": f"{base}/{slug}" if base else slug,
+                            "lastmod": dt.strftime("%Y-%m-%d") if dt else ""})
+        return {"site": site.slug, "count": len(entries),
+                "sitemap_xml": _sitemap_xml(entries)}
     finally:
         s.close()
 

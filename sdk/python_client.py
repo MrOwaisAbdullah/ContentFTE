@@ -98,8 +98,12 @@ class ContentFTEClient:
         return self._request("GET", "/sdk/v1/sites")
 
     def llms_txt(self, site_slug: str) -> dict:
-        """Compose the site's llms.txt (§5.8) from its published articles."""
+        """Compose the site's llms.txt (5.8) from its published articles."""
         return self._request("GET", f"/sdk/v1/sites/{site_slug}/llms.txt")
+
+    def sitemap_xml(self, site_slug: str) -> dict:
+        """Compose the site's XML sitemap (5.6) from published articles."""
+        return self._request("GET", f"/sdk/v1/sites/{site_slug}/sitemap.xml")
 
     def list_articles(self, site_slug: str = "", status: str = "",
                       limit: int = 100, offset: int = 0) -> dict:

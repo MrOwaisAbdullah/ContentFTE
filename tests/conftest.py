@@ -25,6 +25,9 @@ _GUARDED = (
     "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
     "PEXELS_API_KEY",
     "WP_BASE_URL", "WP_USERNAME", "WP_APP_PASSWORD",
+    # §5.6 URL submission — a stray key in .env would make publish/refresh
+    # tests hit IndexNow/Bing over the network.
+    "INDEXNOW_KEY", "BING_WMT_API_KEY",
 )
 
 

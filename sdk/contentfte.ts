@@ -45,6 +45,13 @@ export interface LlmsTxtResult {
   llms_txt: string;
 }
 
+/** Result of `sitemapXml`. NOTE: `sitemap_xml` is the XML to serve at /sitemap.xml. */
+export interface SitemapResult {
+  site: string;
+  count: number;
+  sitemap_xml: string;
+}
+
 /** Result of `wpPost` (raw WordPress content + registered SEO meta). */
 export interface WpPostResult {
   id: number;
@@ -172,6 +179,11 @@ export class ContentFTEClient {
   /** Compose the site's llms.txt (§5.8) from its published articles. */
   async llmsTxt(siteSlug: string): Promise<LlmsTxtResult> {
     return this.request("GET", `/sdk/v1/sites/${siteSlug}/llms.txt`);
+  }
+
+  /** Compose the site's XML sitemap (§5.6) from published articles. */
+  async sitemapXml(siteSlug: string): Promise<SitemapResult> {
+    return this.request("GET", `/sdk/v1/sites/${siteSlug}/sitemap.xml`);
   }
 
   /** List articles newest-first (filter by site and/or status).

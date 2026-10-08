@@ -65,6 +65,17 @@ Update this file on every commit: `[ ]` → `[x]` + date + commit hash.
 - [x] Per-post cost ledger complete (`lib/cost_ledger.finalize` at publish; `Article.cost_usd`)
 - [x] Per-call cost/token accounting: `cost_ledger` rows currently persist **$0.00** (no per-LLM-call amounts recorded — tokens are now captured in `article.meta.generation.usage` by the comparison run but never priced into the ledger; needs model price table + a record call per runner response) _(found during the engine-vs-baseline comparison, 2026-10-08; **closed 2026-10-08**: `LLM_PRICES_USD_PER_MTOK` + `usage_cost` in `lib/cost_ledger.py`, `_merge_usage` → `record_cost(kind="llm")` from `generate_content`)_
 
+### A2. seo-pack audit gaps (2026-10-08 — engine vs skill-pack cross-check)
+- [x] 2026-10-08 — IndexNow + Bing WMT URL submission wired into publish (spec §5.6 "concrete mechanism, not just the ping"; `lib/geo.indexnow_payload` existed but was never called; `INDEXNOW_KEY`/`BING_WMT_API_KEY` in `.env.example` unread by any code) — **closed 2026-10-08**: new `lib/indexing.py` (IndexNow shared endpoint `api.indexnow.org/indexnow` + Bing `SubmitUrlBatch?apikey=`, 200/201/202 accept, fail-open), `publish_article`/`refresh_article` attach an `indexing` report post-flip, keys guarded in conftest
+- [ ] Intent-aware word floor: quality gate follows the brief's intent template (compact/transactional 400–500w pages fail the hard `GEN_MIN_WORDS=900`; pack onpage-aeo "length matches intent")
+- [ ] Fan-out queries section in every brief (pack brief-research: 5–10 observed queries; spec §5.15 discourse → fan-out queries)
+- [ ] Brand DNA distillation from samples (spec §5.1 CLI; `lib/brand_dna.py` docstring defers distillation "to a later wiring commit")
+- [ ] SERP drift job: monthly re-check of brief-time top-10 vs fresh SERP, flag brief/page for update (spec §5.16 "SERP snapshots & drift alerts"; `decay_job` covers click decay only)
+- [x] 2026-10-08 — XML sitemap per site (spec §5.6) + `site_health` crawlability/indexation/structure checks (pack technical-foundations; `site_health` currently checks ledger + WP env only) — **closed 2026-10-08**: `lib/geo.sitemap_xml` (sitemaps.org 0.9) + `service.sitemap_xml` + REST `/sites/{slug}/sitemap.xml` + MCP `contentfte_sitemap` + client methods; `site_health` probes robots.txt, WP sitemap, WP `blog_public` search visibility (critical flag) via injectable `http_get`
+- [ ] Linkguard depth/role rules: ≤3 clicks from homepage, hub→BOFU, guides link 2–3 money pages (pack authority-internal; `check_hygiene` covers counts + anchor diversity only)
+- [ ] GBP ↔ website consistency checker (playbook §9 "Factory-critical", wiring status "New work")
+- [ ] Win-announcement + press-release brief templates (pack geo-citability; `brief_templates` has 5 intents, neither exists)
+
 ---
 
 ## Phase 1B — WordPress adapter (§5.11) — REST first, plugin later

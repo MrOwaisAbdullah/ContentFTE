@@ -195,6 +195,7 @@ def test_mcp_tools_registered_and_thin_over_service():
         "contentfte_wp_post",
         "contentfte_site_health",
         "contentfte_llms_txt",
+        "contentfte_sitemap",
         "contentfte_elementor_available", "contentfte_elementor_document",
         "contentfte_elementor_save", "contentfte_elementor_build",
     }

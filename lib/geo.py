@@ -97,6 +97,33 @@ def indexnow_payload(host: str, key: str, urls: list[str]) -> dict:
     return {"host": host, "key": key, "keyLocation": f"https://{host}/{key}.txt", "urlList": urls}
 
 
+def sitemap_xml(entries: list[dict]) -> str:
+    """§5.6 XML sitemap (sitemaps.org protocol 0.9, UTF-8).
+
+    ``entries``: ``{"loc": <absolute url>, "lastmod": <W3C datetime>}``.
+    ``<loc>`` is required per URL; ``<lastmod>`` optional. Escape is on
+    both (query-string locs can contain ``&``).
+    """
+    from xml.sax.saxutils import escape
+
+    rows = []
+    for e in entries or []:
+        loc = str((e or {}).get("loc") or "").strip()
+        if not loc:
+            continue
+        row = f"  <url><loc>{escape(loc)}</loc>"
+        lastmod = str((e or {}).get("lastmod") or "").strip()
+        if lastmod:
+            row += f"<lastmod>{escape(lastmod)}</lastmod>"
+        rows.append(row + "</url>")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + ("\n".join(rows) + "\n" if rows else "")
+        + "</urlset>\n"
+    )
+
+
 def sources_box(sources: list[dict]) -> str:
     """§5.4 visible trust signal — every article ends with this."""
     lines = ["## Sources"]

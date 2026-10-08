@@ -242,6 +242,17 @@ def llms_txt(site_slug: str, x_site_key: str | None = Header(default=None)) -> d
     return _resolve(service.llms_txt(site_slug))
 
 
+@router.get("/sites/{site_slug}/sitemap.xml")
+def sitemap_xml(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    """Compose the site's XML sitemap (§5.6) from its published articles.
+
+    Returns JSON {"site", "count", "sitemap_xml"} — the site serves the XML
+    at its own /sitemap.xml URL (WordPress sites use core sitemaps instead).
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.sitemap_xml(site_slug))
+
+
 @router.get("/wp/posts/{post_id}")
 def wp_post(post_id: int, x_site_key: str | None = Header(default=None)) -> dict:
     """Read a WordPress post back (raw content + registered SEO meta) — the
