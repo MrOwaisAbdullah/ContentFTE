@@ -7,7 +7,9 @@ Pins the precedence and anti-drift rules:
     tokens, stopwords stripped, capped).
 
 Offline by construction: every test injects a `jev=` stub, or relies on the
-conftest env guard (OPENROUTER_API_KEY cleared → _jev_judge returns None).
+conftest offline guard (lib.jev_tools.jev_classify_category stubbed to "{}"
+-> _jev_judge swallows -> None). Catch-alls ("Uncategorized") are never
+reuse candidates, and the judge must answer action="reuse".
 """
 from lib import taxonomy as tax
 
@@ -203,3 +205,87 @@ def test_jev_judge_empty_existing_never_calls(monkeypatch):
     import lib.jev_tools
     monkeypatch.setattr(lib.jev_tools, "jev_classify_category", boom)
     assert tax._jev_judge("topic", []) is None
+
+
+# --- live-observed guards (first backfill: 3/3 jev_reuse=Uncategorized) -----
+
+def test_jev_judge_ignores_non_reuse_action(monkeypatch):
+    import lib.jev_tools
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        lib.jev_tools, "jev_classify_category",
+        lambda topic, existing:
+            '{"action": "propose_new", "category": "Uncategorized", '
+            '"confidence": 0.3}')
+    assert tax._jev_judge("topic", ["AI Agents"]) is None
+    monkeypatch.setattr(
+        lib.jev_tools, "jev_classify_category",
+        lambda topic, existing:
+            '{"category": "Uncategorized", "confidence": 0.9}')
+    assert tax._jev_judge("topic", ["AI Agents"]) is None
+
+
+def test_catch_all_is_never_a_reuse_candidate():
+    def jev_boom(topic, existing):
+        raise AssertionError(f"catch-all must be filtered before JEV: {existing}")
+
+    category, source = tax.resolve_category(
+        keyword="Anthropic Haiku 5.5 vs Deepseek V4.1 Flash",
+        title="Anthropic Haiku 5.5 vs DeepSeek V4.1 Flash: Which Should You Choose?",
+        existing=["Uncategorized", "Default Category"], jev=jev_boom)
+    assert source == "new"
+    assert category == "Anthropic Haiku 5.5 vs Deepseek V4.1 Flash".title()
+
+
+def test_catch_all_filtered_but_real_categories_still_reuse():
+    category, source = tax.resolve_category(
+        keyword="ai agent tools",
+        title="Best AI Agent Tools",
+        existing=["Uncategorized", "AI Agents"],
+        jev=_no_jev)
+    assert (category, source) == ("AI Agents", "lexical")
+
+
+# --- JEV tool: the choice must be able to say "none of these" ----------------
+
+def test_jev_tool_none_escape_maps_to_propose_new(monkeypatch):
+    import json
+    import types
+
+    import lib.jev_tools as jt
+
+    captured = {}
+
+    def fake_call_jev_sync(state, questions):
+        captured["criteria"] = questions["category"]["criteria"]
+        ans = types.SimpleNamespace(choice="(propose new: none of these fit)",
+                                    confidence=0.9)
+        usage = types.SimpleNamespace(model_dump=lambda: {"tokens": 1})
+        return types.SimpleNamespace(answers={"category": ans}, usage=usage)
+
+    monkeypatch.setattr(jt, "call_jev_sync", fake_call_jev_sync)
+    out = json.loads(jt.jev_classify_category("Haiku vs DeepSeek",
+                                              json.dumps(["SEO"])))
+    assert "(propose new: none of these fit)" in captured["criteria"]
+    assert out["action"] == "propose_new"
+    assert out["fallback"] is False
+    assert out["category"] == "Haiku vs DeepSeek".title()
+
+
+def test_jev_tool_still_reuses_a_confident_match(monkeypatch):
+    import json
+    import types
+
+    import lib.jev_tools as jt
+
+    def fake_call_jev_sync(state, questions):
+        ans = types.SimpleNamespace(choice="SEO", confidence=0.9)
+        usage = types.SimpleNamespace(model_dump=lambda: {"tokens": 1})
+        return types.SimpleNamespace(answers={"category": ans}, usage=usage)
+
+    monkeypatch.setattr(jt, "call_jev_sync", fake_call_jev_sync)
+    out = json.loads(jt.jev_classify_category("on-page SEO checklist",
+                                              json.dumps(["SEO", "Reviews"])))
+    assert out["action"] == "reuse"
+    assert out["category"] == "SEO"

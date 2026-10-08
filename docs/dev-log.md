@@ -13,7 +13,7 @@ future session can reconstruct *why* the code looks the way it does.
 
 ## 2026-10-08 — Auto-derived taxonomy (categories + tags) for WP posts
 **Branch:** `contentfte-phase1-engine-wp-sdk`
-**Tests:** 271/271 pytest (23 new)
+**Tests:** 276/276 pytest (28 new)
 
 ### Goal
 New engine posts landed on the site default category with **zero tags**: the
@@ -47,27 +47,64 @@ decision: lexical prefer-reuse first, **JEV judges the no-match case**
   derives + caches — that's the backfill path — later refreshes reuse;
   response and audit payload now carry categories/tags).
 - **`mcp_server/server.py`**: publish docstring documents auto-derivation.
-- **`tests/conftest.py`**: offline JEV guard stubs
-  `lib.jev_tools.jev_classify_category` (LIVE-gated). Deliberately **not**
-  clearing `OPENROUTER_API_KEY`: agent modules read it at import
-  (`tools/tools.py` `load_dotenv`) — the first full-suite run caught the
-  KeyError in 4 agent-wiring tests and the env deletion was reverted.
-- **Tests**: `tests/test_taxonomy.py` (20: precedence, lexical/JEV/propose
-  lanes, env gate, caps, None-tolerance) + `test_wp_publish.py` (+3 net:
+- **`tests/conftest.py`**: offline JEV guard stubs `call_jev_sync` (the
+  Decision API call, LIVE-gated) so the REAL `jev_classify_category` runs
+  and falls back to `action=propose_new` — the tool's choice criteria, the
+  none-of-these escape, and action mapping stay fully exercised while no
+  test can reach the network. Deliberately **not** clearing
+  `OPENROUTER_API_KEY`: agent modules read it at import (`tools/tools.py`
+  `load_dotenv`) — the first full-suite run caught the KeyError in 4
+  agent-wiring tests and the env deletion was reverted.
+- **Tests**: `tests/test_taxonomy.py` (25: precedence, lexical/JEV/propose
+  lanes, env gate, caps, None-tolerance, catch-all guard, action honoring,
+  JEV-tool none-escape) + `test_wp_publish.py` (+3 net:
   derive-when-brief-lacks-it, propose-new vs existing, refresh
   derive→cache-reuse with `list_terms` called exactly once, default-
   category safety net; fake connector gained `list_terms`/`existing_terms`).
+- **`scripts/backfill_taxonomy.py`** (new): refreshes every published
+  `comparison-run` article (link-guard retry like the driver) and read-back
+  verifies stored category/tag IDs through the WP REST API; exit 1 on any
+  failure.
+
+### Live backfill (LocalWP `speedline`) — two judge defects caught + fixed
+First run (3/3 "verified") exposed that **every post came back
+`category_source=jev_reuse` → `Uncategorized`** — two structural flaws:
+1. **Catch-all reuse**: "Uncategorized" means *no category*, and the JEV
+   choice question only offers the candidates it receives — with the site's
+   categories being exactly `["SEO", "Uncategorized"]`, the judge was
+   forced to "reuse" the catch-all (and later, alone among real options,
+   "SEO" for all three posts, including the auth comparison).
+2. **`action` ignored**: `_jev_judge` read only `parsed["category"]`, so
+   `action=propose_new`/fallback payloads (forced choice / `existing[0]`)
+   were honored as reuses.
+
+Fixes: `CATCH_ALL_CATEGORIES` filtered from candidates before both lanes
+(`resolve_category`); `_jev_judge` honors `action="reuse"` only;
+`jev_classify_category` now always offers
+`"(propose new: none of these fit)"` in its criteria (both existing
+consumers — engine + old posting-agent prompt — already documented that
+signal, the question just never provided it). Stale `meta["taxonomy"]`
+caches cleared via a one-off script, backfill re-run:
+
+| post | category (source=new) | tags |
+|---|---|---|
+| Haiku 5.5 vs DeepSeek V4.1 | Anthropic Haiku 5.5 Vs Deepseek V4.1 Flash | phrase + Anthropic, Haiku, Deepseek, V4 |
+| Astro vs React/Next.js | When To Choose Astro Over React Or Nextjs | phrase + Astro, React, Nextjs… |
+| Better Auth vs Auth.js | Better Auth Vs. Auth.Js (Next.Js) | phrase + Better, Auth, js, Next |
+
+All 3 read back through the WP REST API with distinct real categories,
+status `publish`, tags intact — `backfill: 3/3 posts verified`, exit 0.
 
 ### Verification
-- `python -m pytest tests/ -q --basetemp=D:/opencode-npm-temp/.test-tmp-phase1/pytest-tax-final`
-  → **271 passed, 1 warning, 63.5s** (248 → 271).
+- `python -m pytest tests/ -q --basetemp=D:/opencode-npm-temp/.test-tmp-phase1/pytest-final2`
+  → **276 passed, 1 warning, 93s** (248 → 276; intermediate run after the
+  first commit: 271).
 - Lexical test proves reuse ("AI Agents" matched from
   "ai agent tools…", `category_source == "lexical"`) and `meta.taxonomy`
-  persisted; refresh test proves the cache is reused across two refreshes.
+  persisted; refresh test proves the cache is reused across two refreshes;
+  catch-all/action/none-escape tests pin the live-observed guards.
 
 ### Open / next
-- Backfill the 3 live comparison posts: `refresh_article` on each (needs
-  LocalWP `speedline` running + `WP_*` env, currently unset in the shell).
 - Live re-verify a fresh publish on speedline when the Cloudflare image
   quota resets (shared with the quality-fix batch above).
 

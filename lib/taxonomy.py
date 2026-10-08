@@ -9,6 +9,14 @@ on the site default category with zero tags. Precedence per field:
     OPENROUTER_API_KEY is set: reuse an existing name, or judge a fresh one)
     ->  title-cased propose-new (also the JEV-unavailable fallback).
 
+Two live-observed guards keep reuse honest: catch-alls
+("Uncategorized"/"Default Category") are filtered out of the candidate list
+first — they mean "no category", and the JEV choice question forces a pick
+from the offered options, so a site whose only category is the catch-all
+would get it "reused" on every post. The judge must also answer
+`action="reuse"`: propose_new/fallback payloads carry a forced choice or
+`existing[0]`, not a validated name.
+
 Anti-drift is the point: reuse beats invention, the deterministic lane runs
 first (no latency), and the JEV lane only fires when lexical found nothing
 confident — same rule the old sheet posting agent enforced via
@@ -35,6 +43,12 @@ from typing import Any
 LEXICAL_MIN_SCORE = 0.34
 MAX_CATEGORIES = 3
 MAX_TAGS = 5
+
+# A catch-all category means "no category" — never a reuse target. The JEV
+# choice question only offers the candidates it receives, so with just
+# "Uncategorized" on the site the judge would happily pick it (observed on
+# the first live backfill: all 3 posts came back jev_reuse=Uncategorized).
+CATCH_ALL_CATEGORIES = frozenset({"uncategorized", "default category"})
 
 _STOPWORDS = frozenset({
     # function words
@@ -142,10 +156,12 @@ def _propose_new(keyword: str, title: str) -> str:
 
 
 def _jev_judge(topic: str, existing: list[str]) -> str | None:
-    """JEV Choice judgment over the existing taxonomy — reuse an existing
-    name or a judged-fresh one. Env-gated (OPENROUTER_API_KEY) and swallowed
-    whole: JEV down/timeout/misconfigured returns None so the caller falls
-    back to propose-new without ever blocking a publish. At most one JEV
+    """JEV Choice judgment over the existing taxonomy: returns an existing
+    name only when the judge answers `action="reuse"`. propose_new/fallback
+    payloads (forced choice / existing[0] / low confidence) return None so
+    the caller falls through to propose-new. Env-gated
+    (OPENROUTER_API_KEY) and swallowed whole: JEV down/timeout/misconfigured
+    returns None so a derivation never blocks a publish. At most one JEV
     call per derivation (taxonomy is cached in article meta afterwards)."""
     if not existing:
         return None
@@ -156,8 +172,14 @@ def _jev_judge(topic: str, existing: list[str]) -> str | None:
         parsed = json.loads(jev_classify_category(topic, json.dumps(existing[:255])))
     except Exception:  # noqa: BLE001 — judgment is optional
         return None
-    name = str(parsed.get("category") or "").strip() if isinstance(parsed, dict) else ""
-    return name or None
+    if not isinstance(parsed, dict):
+        return None
+    if str(parsed.get("action") or "").strip().lower() != "reuse":
+        return None
+    name = str(parsed.get("category") or "").strip()
+    if not name or name.lower() in CATCH_ALL_CATEGORIES:
+        return None
+    return name
 
 
 def derive_tags(*, keyword: str = "", title: str = "", brief: dict | None = None,
@@ -198,9 +220,11 @@ def resolve_category(*, keyword: str = "", title: str = "",
     """(category, source) with source in lexical|jev_reuse|jev_new|new.
 
     Precedence: prefer-reuse lexical >= LEXICAL_MIN_SCORE -> JEV judge ->
-    title-cased propose-new. `jev` injects the judge (tests pass stubs;
-    default resolves _jev_judge at call time so monkeypatch works)."""
+    title-cased propose-new. Catch-alls are filtered before both lanes.
+    `jev` injects the judge (tests pass stubs; default resolves _jev_judge
+    at call time so monkeypatch works)."""
     existing = [str(e).strip() for e in (existing or []) if str(e or "").strip()]
+    existing = [e for e in existing if e.lower() not in CATCH_ALL_CATEGORIES]
     if existing:
         topic = _topic(keyword, title)
         name, score = _lexical_match(topic, existing)

@@ -34,14 +34,22 @@ def _isolated_env(monkeypatch):
     if os.environ.get(_LIVE) not in _LIVE_ON:
         for key in _GUARDED:
             monkeypatch.delenv(key, raising=False)
-        # Keep the JEV category judge (lib.taxonomy) offline: stub the
-        # underlying call so _jev_judge swallows it -> None (propose-new
-        # fallback). OPENROUTER_API_KEY itself must stay untouched — the
-        # agent modules read it at import time (tools/tools.py load_dotenv).
+        # Keep the JEV category judge offline: make the Decision API call
+        # raise, so the REAL jev_classify_category falls back to
+        # action=propose_new (-> _jev_judge returns None -> the deterministic
+        # propose-new lane). Stubbing at the call_jev_sync layer (not the
+        # tool) keeps the tool's own logic — choice criteria, the
+        # none-of-these escape, action mapping — fully exercised. Tests that
+        # need specific JEV responses override call_jev_sync themselves.
+        # OPENROUTER_API_KEY itself must stay untouched — the agent modules
+        # read it at import time (tools/tools.py load_dotenv).
         try:
             import lib.jev_tools as _jev_tools
-            monkeypatch.setattr(_jev_tools, "jev_classify_category",
-                                lambda *a, **k: "{}")
-        except Exception:  # noqa: BLE001 — import fails -> _jev_judge swallows
+
+            def _offline_jev(*a, **k):
+                raise RuntimeError("offline test guard: no Decision API calls")
+
+            monkeypatch.setattr(_jev_tools, "call_jev_sync", _offline_jev)
+        except Exception:  # noqa: BLE001 — import fails -> tool falls back
             pass
     yield
