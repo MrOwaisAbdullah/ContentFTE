@@ -348,6 +348,31 @@ async def refresh_article(params: ArticleIdInput) -> str:
 
 
 @mcp.tool(
+    name="contentfte_stage_images",
+    annotations={"title": "Stage Images", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def stage_images(params: ArticleIdInput) -> str:
+    """Generate + stage featured/in-post images into the article (§5.9).
+
+    Section-aware: each in-post image is generated for one `## ` section
+    (its own prompt + alt) and tagged after_h2 so publish injects it INLINE
+    in the body, before the FAQ. Idempotent — articles that already have
+    images are left untouched. publish_article runs the same staging
+    automatically when images are missing; use this tool to pre-approve or
+    retry. Without provider credentials it skips cleanly (no error).
+
+    Args:
+        params (ArticleIdInput): article_id.
+
+    Returns:
+        str: JSON {"id", "event": "article.images", "images", "featured",
+        "inpost", "errors"?} or {"skipped", "reason"} or {"error", "next"}.
+    """
+    return _out(service.stage_images(params.article_id))
+
+
+@mcp.tool(
     name="contentfte_wp_post",
     annotations={"title": "Read WordPress Post", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},

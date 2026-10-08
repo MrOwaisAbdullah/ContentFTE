@@ -330,11 +330,27 @@ def _figure(src: str, alt: str, blocks: bool = False) -> str:
             f'alt="{html.escape(alt or "", quote=True)}"></figure>')
 
 
+def _trailing_boundary(body: str, blocks: bool) -> Optional[int]:
+    """Index where anchor-less images should go: just before the trailing
+    Sources / FAQ heading, so in-post images stay inside the article body
+    instead of landing after the FAQ at the very end."""
+    m = re.search(r"<h2[^>]*>\s*(sources|frequently asked questions|faqs?)\b",
+                  body, re.I)
+    if not m:
+        return None
+    if blocks:
+        start = body.rfind("<!-- wp:heading", 0, m.start())
+        if start != -1:
+            return start
+    return m.start()
+
+
 def inject_inpost_images(html_body: str, images: List[Dict[str, Any]]) -> str:
     """Insert each image after the `after_h2`-th `<h2>` (1-based).
 
     `images` items: {url|src, alt, after_h2?}. Missing/out-of-range after_h2
-    appends at the end so an image is never silently dropped.
+    places the image before the trailing Sources/FAQ heading (never after the
+    FAQ); only when neither exists does it append at the end.
 
     Auto-detects block mode: when the body contains `<!-- wp:` delimiters the
     image is inserted after the heading block's closing comment (never inside
@@ -360,7 +376,12 @@ def inject_inpost_images(html_body: str, images: List[Dict[str, Any]]) -> str:
         else:
             trailing.append(wrapped)
     if trailing:
-        body = body + "\n" + "\n".join(trailing)
+        chunk = "\n" + "\n".join(trailing) + "\n"
+        pos = _trailing_boundary(body, blocks)
+        if pos is None:
+            body = body + chunk
+        else:
+            body = body[:pos] + chunk + body[pos:]
     return body
 
 

@@ -11,6 +11,93 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-08 — Production quality-fix batch: revise loop, focus keyphrase, image staging, per-call cost pricing, quota guard
+**Branch:** `contentfte-phase1-engine-wp-sdk`
+**Tests:** 248/248 pytest (219 baseline + 29 new), ~67s
+
+### Goal
+Close the defect batch found on the published comparison posts (short posts,
+no first-try images, images injected after the FAQ, stale year, empty Yoast
+focus keyphrase, missing internal/citation links), plus the two operator
+asks: **cost-ledger pricing per LLM call** (TASKS A1 item 66, $0.00 gap) and
+an **image-provider quota guard** (Cloudflare 10k-neuron daily burn).
+
+### What changed
+- **Quality gates + bounded revise loop** (`sdk/service.py`): pure helpers
+  `_content_checks` (word floor `GEN_MIN_WORDS` default 900, TL;DR, Sources,
+  FAQs, stale-year regex `in 20(?:1\d|2[0-5])`, summary) + `_content_sections`
+  (H2 index skips Sources/FAQ); `generate_content` runs one feedback retry
+  when `CONTENTFTE_REVISE=1` (default) — failing checks fed back as
+  `PREVIOUS DRAFT FAILED THESE CHECKS` (prompt side: `lib/generation.py`
+  `render_prompt` reads `GEN_MIN_WORDS` at call time).
+- **Focus keyphrase**: `_focus_keyphrase(meta, brief)` (brief wins; first
+  non-empty title-ish token) wired into the WP meta payload
+  (`lib/wordpress.py`) and the service publish/refresh paths →
+  `_yoast_wpseo_focuskw` no longer empty; meta description capped ≤155.
+- **Internal/citation links**: `lib/generation.py` `build_brief_payload`
+  exposes `internal_links`/`site_base_url`/`sources` from `brief_meta` and
+  `render_prompt` instructs the draft to link them.
+- **Images first-try, in the right place**: `_stage_images_for` runs at
+  publish (and via new `POST /sdk/v1/articles/{id}/stage-images` + MCP
+  `contentfte_stage_images`): featured + 1–2 in-post images (`want = 2 if
+  words >= 1300 else 1`), in-post target = **second H2**, alt
+  `{keyword}: {heading}` / summary-truncated; staged paths persisted as
+  `meta["image_staging"]` (skip path is idempotent — only written when a
+  featured image exists). `lib/wp_render.py` injection boundary fixed so
+  images land **before** the FAQ block, not after.
+- **Quota guard** (`tools/tools.py` `_generate_image`): pre-loop
+  `_QUOTA_MARKERS` ("429", "rate limit", quota text) short-circuits to
+  `{"error": "...quota exhausted...", "quota": True}` with
+  `IMAGE_QUOTA_COOLDOWN_S` (default 3600) breaker — stock/Pexels unaffected.
+- **Per-call LLM pricing** (`lib/cost_ledger.py`): `LLM_PRICES_USD_PER_MTOK`
+  table (gemini-3.5-flash-lite/flash, deepseek… prefix match) + `usage_cost`
+  → `(0.0, {})` on empty, `detail.price_source` recorded;
+  `service.generate_content` merges `blog_agent.generation.LAST_USAGE` via
+  `_merge_usage` and calls `record_cost(kind="llm", …)` → **closes TASKS A1
+  item 66** (ledger was persisting $0.00).
+- **SQLAlchemy JSON in-place mutation bug (root cause of lost writes)**:
+  mutating `art.meta[...]` in place *after* an earlier `session.commit()`
+  makes the change permanently invisible — the in-memory "committed" object
+  mutates with it, flush history shows no net change, **no UPDATE fires**
+  (proved with SQL-level echo: Article dirty with the right dict, only the
+  audit-log INSERT emitted). Fixed at both sites (`stage_images`,
+  `publish_article`): compute costs first, assign `art.meta = dict(meta)`
+  **once**, *then* `record_cost`'s commit flushes meta + ledger row together.
+  Repro kept at `D:\opencode-npm-temp\opencode\debug_publish.py`.
+- **Test hygiene**: new `tests/conftest.py` autouse `_isolated_env` —
+  `CONTENTFTE_REVISE=0` + deletes live creds (`CLOUDFLARE_API_TOKEN`,
+  `CLOUDFLARE_ACCOUNT_ID`, `PEXELS_API_KEY`, `WP_*`) from module globals
+  unless `CONTENTFTE_TEST_LIVE`; `.env` never loaded by tests (only `main.py`).
+- **New tests**: `tests/test_quality_fixes.py` (29) — checks/revise loop,
+  link graph, staging placement + persistence, quota guard, pricing, focus
+  keyphrase, wp_render boundary, MCP/REST parity (`tests/test_api_mcp.py`).
+- **Docs/env**: `.env.example` documents `CONTENTFTE_REVISE`,
+  `GEN_MIN_WORDS`, `IMAGE_STAGING_DIR`, `IMAGE_QUOTA_COOLDOWN_S`,
+  `LLM_PRICE_INPUT_PER_M`/`LLM_PRICE_OUTPUT_PER_M`; local `.env` sets
+  `CONTENTFTE_REVISE=1`, `GEN_MIN_WORDS=900`,
+  `IMAGE_STAGING_DIR=D:\opencode-npm-temp\contentfte_images` (C: is full —
+  staging must live on D:). Driver `scripts/generate_compare_articles.py`
+  simplified to rely on engine-side staging.
+
+### Verification
+- `python -m pytest tests/ -q --basetemp=D:/opencode-npm-temp/.test-tmp-phase1/pytest-fix1`
+  → **248 passed, 1 warning (starlette anyio deprecation), 66.9s**.
+- Persistence fix proved at SQL level: final `meta.image_costs_recorded: True`
+  in sqlite; `test_stage_images_persists_section_aware_rows` asserts the
+  committed meta directly.
+- Test-safety audit: no test performs network calls (creds scrubbed;
+  `log_image_usage` stubbed in quota tests).
+
+### Open / next
+- Merge to `master` — user said **"Not yet"** (re-ask after this commit).
+- Cutover flip (TASKS 44/47) deferred by user; no live Postgres.
+- Cloudflare daily quota exhausted → live speedline verification
+  (post 104 fresh/regen: ≥900w, images before FAQ on first publish,
+  focus keyphrase, internal links, year 2026, staging writes on D:) waits
+  for reset.
+
+---
+
 ## 2026-10-08 — Engine vs. baseline comparison run + per-post time/token logging
 **Branch:** `contentfte-phase1-engine-wp-sdk`
 **Tests:** 219/219 pytest

@@ -52,10 +52,9 @@ ARTICLES = [
         "title": "Better Auth vs. Auth.js: Why Developers Are Migrating Their Next.js Apps",
     },
 ]
-IMG_DIR = Path(os.environ.get("TEMP", "D:/opencode-npm-temp")) / "contentfte_compare"
 WP_BASE = (os.environ.get("WP_BASE_URL") or "http://speedline.local").rstrip("/")
 RESULTS = Path(os.environ.get("TEMP", "D:/opencode-npm-temp")) / "phaseD_results.json"
-MIN_WORDS = 300
+MIN_WORDS = int(os.environ.get("GEN_MIN_WORDS") or "900")
 MAX_GEN_ATTEMPTS = 3
 
 
@@ -72,84 +71,6 @@ def wait_for_wp(timeout_s: int = 1500) -> bool:
     return False
 
 
-def _local_or_url(value: str) -> dict:
-    v = str(value or "").strip()
-    if not v:
-        return {}
-    if v.startswith("http://") or v.startswith("https://"):
-        return {"url": v}
-    if v.startswith("file://"):
-        p = v[7:]
-        if os.path.isfile(p):
-            return {"path": p}
-        return {}
-    if os.path.isfile(v):
-        return {"path": v}
-    return {}
-
-
-def _materialize(res: dict, stem: str, slot: str) -> dict:
-    raw = str(res.get("image_url") or "").strip()
-    direct = _local_or_url(raw)
-    if direct.get("path"):
-        return {"slot": slot, **direct, "alt": res.get("alt_text") or ""}
-    if direct.get("url") and raw.startswith("http"):
-        IMG_DIR.mkdir(parents=True, exist_ok=True)
-        suffix = ".png" if "png" in raw.lower() else ".jpg"
-        dest = IMG_DIR / f"{stem}_{slot}{suffix}"
-        try:
-            urllib.request.urlretrieve(raw, dest)
-            return {"slot": slot, "path": str(dest), "alt": res.get("alt_text") or ""}
-        except Exception as e:
-            print(f"  image[{slot}] download failed: {e}", flush=True)
-            return {"slot": slot, "url": raw, "alt": res.get("alt_text") or ""}
-    return {}
-
-
-def stage_images(keyword: str, title: str, summary: str) -> list[dict]:
-    from tools.tools import _generate_image, _select_inpost_image
-    IMG_DIR.mkdir(parents=True, exist_ok=True)
-    stem = keyword[:40].replace(" ", "_").replace("/", "-").replace(":", "")[:40]
-    staged = []
-
-    t0 = time.time()
-    try:
-        res = _generate_image(keyword=keyword, title=title, summary=summary, slot="featured")
-        if isinstance(res, dict) and res.get("image_url"):
-            row = _materialize(res, stem, "featured")
-            row.setdefault("alt", keyword)
-            if row:
-                staged.append(row)
-                qa = res.get("qa") or {}
-                print(f"  image[featured] ok in {time.time() - t0:.0f}s "
-                      f"qa={qa.get('passed')} blog={qa.get('matches_blog')} "
-                      f"attempts={qa.get('attempts')}", flush=True)
-        else:
-            print(f"  image[featured] failed: {str(res)[:160]}", flush=True)
-    except Exception as e:
-        print(f"  image[featured] error: {e}", flush=True)
-
-    t0 = time.time()
-    try:
-        res = _select_inpost_image(topic=keyword, section_summary=summary or title,
-                                   alt_text=summary or title)
-        if isinstance(res, dict) and res.get("image_url"):
-            row = _materialize(res, stem, "inpost")
-            row.setdefault("alt", res.get("alt_text") or title)
-            if row:
-                row["alt"] = res.get("alt_text") or row.get("alt") or title
-                staged.append(row)
-                gate = res.get("gate") or {}
-                print(f"  image[inpost] ok in {time.time() - t0:.0f}s "
-                      f"decision={gate.get('decision')} score={gate.get('stock_score')}",
-                      flush=True)
-        else:
-            print(f"  image[inpost] failed: {str(res)[:160]}", flush=True)
-    except Exception as e:
-        print(f"  image[inpost] error: {e}", flush=True)
-    return staged
-
-
 def record(results: dict):
     RESULTS.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -162,19 +83,6 @@ def read_generation(aid: int) -> dict:
         title = a.title if a is not None else ""
     gen = meta.get("generation") if isinstance(meta.get("generation"), dict) else {}
     return {"meta": meta, "gen": gen, "words": words, "title": title}
-
-
-def do_images(aid: int, keyword: str, title: str, summary: str) -> list[dict]:
-    imgs = stage_images(keyword, title, summary)
-    if imgs:
-        with get_session() as s:
-            a = s.get(ArticleModel, aid)
-            m = dict(a.meta or {})
-            m["images"] = imgs
-            a.meta = m
-            s.commit()
-        print(f"  staged {len(imgs)} image(s)", flush=True)
-    return imgs
 
 
 def finish_wp(aid: int, wp_up_ref: list) -> dict:
@@ -239,9 +147,25 @@ def run_regen(results: dict) -> int:
             row["usage"] = gen_meta.get("usage")
             print(f"  wall_s={row['wall_s']} tokens={row['usage']}", flush=True)
 
+            # Images are staged by the service — regen rewrites the content,
+            # so clear the old rows first to force a fresh, section-aware
+            # staging pass (publish does the same automatically for fresh
+            # posts that never staged any).
+            with get_session() as s:
+                a = s.get(ArticleModel, aid)
+                m = dict(a.meta or {})
+                m.pop("images", None)
+                m.pop("image_staging", None)
+                m.pop("image_costs_recorded", None)
+                a.meta = m
+                s.commit()
             t0 = time.time()
-            do_images(aid, spec["keyword"], info["title"], gen_meta.get("summary") or "")
+            img_state = service.stage_images(aid)
             row["img_s"] = round(time.time() - t0, 1)
+            row["images"] = img_state.get("images")
+            print(f"  staged {img_state.get('images')} image(s) "
+                  f"(featured={img_state.get('featured')} "
+                  f"inpost={img_state.get('inpost')})", flush=True)
 
             app = service.approve_article(aid, approved=True, note="comparison run (regen)")
             row["gate_status"] = app.get("status")
@@ -308,9 +232,19 @@ def run_fresh(results: dict) -> int:
             row["wall_s"] = info["gen"].get("wall_s")
             row["usage"] = info["gen"].get("usage")
 
+            # Images are staged by the service (publish for fresh posts,
+            # this op for regen) — section-aware, not whole-article prompts.
             t0 = time.time()
-            do_images(aid, spec["keyword"], info["title"], info["gen"].get("summary") or "")
+            img_state = service.stage_images(aid)
             row["img_s"] = round(time.time() - t0, 1)
+            row["images"] = img_state.get("images")
+            if img_state.get("skipped") or img_state.get("error"):
+                print(f"  images: {img_state.get('skipped') or img_state.get('error')}",
+                      flush=True)
+            else:
+                print(f"  staged {img_state.get('images')} image(s) "
+                      f"(featured={img_state.get('featured')} "
+                      f"inpost={img_state.get('inpost')})", flush=True)
 
             app = service.approve_article(aid, approved=True, note="comparison run")
             row["gate_status"] = app.get("status")

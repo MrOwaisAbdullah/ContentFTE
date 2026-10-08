@@ -552,6 +552,44 @@ IMAGE_ROUTER = (os.environ.get("IMAGE_ROUTER") or "1").strip().lower() not in (
 # neuron spend bounded (3 x ~110 n ~= 330 n of the 10,000/day pool).
 IMAGE_MAX_REVISIONS = int(os.environ.get("IMAGE_MAX_REVISIONS") or "3")
 
+# Image-provider quota circuit breaker: once a provider reports a
+# quota/rate-limit (e.g. Cloudflare's daily neuron pool exhausted -- seen
+# live 2026-10-08), EVERY image generation call short-circuits for the
+# cooldown window instead of burning the revision loop on guaranteed
+# failures. Cooldown is env-tunable; stock (Pexels) is unaffected.
+IMAGE_QUOTA_COOLDOWN_S = int(os.environ.get("IMAGE_QUOTA_COOLDOWN_S") or "3600")
+_IMAGE_QUOTA_UNTIL = 0.0
+_QUOTA_MARKERS = ("quota", "rate limit", "ratelimit", "too many requests",
+                  "429", "daily limit", "exceeded your", "exhausted",
+                  "out of capacity", "insufficient credit", "limit reached")
+
+
+def image_quota_active() -> bool:
+    """True while the quota circuit breaker is engaged (fails open)."""
+    try:
+        return time.time() < _IMAGE_QUOTA_UNTIL
+    except Exception:
+        return False
+
+
+def _mark_image_quota(detail: str) -> bool:
+    """Arm the breaker when an API error smells like quota/rate-limiting.
+    Returns True (and arms) only for quota-shaped errors; anything else
+    leaves the loop to handle the failure normally."""
+    global _IMAGE_QUOTA_UNTIL
+    low = (detail or "").lower()
+    if not any(marker in low for marker in _QUOTA_MARKERS):
+        return False
+    try:
+        _IMAGE_QUOTA_UNTIL = time.time() + max(60, IMAGE_QUOTA_COOLDOWN_S)
+    except Exception:
+        pass
+    logger.warning(
+        f"Image provider quota/rate-limit detected; skipping image "
+        f"generation for {IMAGE_QUOTA_COOLDOWN_S}s: {detail[:200]}"
+    )
+    return True
+
 # Jev gate: VLM assessment passes only if BOTH the blog-topic match AND the
 # house-style match clear these floors. Below either floor, regenerate with
 # the previous image attached as reference plus the VLM's stated mismatches.
@@ -655,6 +693,9 @@ def _generate_image_cloudflare(
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN")
     if not account_id or not api_token:
         logger.info("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set; skipping Cloudflare Workers AI image generation.")
+        return None
+    if image_quota_active():
+        logger.info("Image quota circuit breaker active; skipping Cloudflare Workers AI call.")
         return None
     model = model or CLOUDFLARE_IMAGE_MODEL
 
@@ -776,6 +817,11 @@ def _generate_image_cloudflare(
             last_error = detail
             logger.error(f"Cloudflare Workers AI image generation failed: {detail}")
             _log_attempt("error", attempt_started, detail=detail[:500], with_ref=with_ref)
+            # Quota/rate-limit errors arm the circuit breaker: stop BOTH the
+            # retry loop and the router ladder immediately (every further
+            # call would fail the same way and only burn latency/log rows).
+            if _mark_image_quota(detail):
+                return None
             # Workers AI's moderation flag (code 3030) fires intermittently on
             # the very same prompt -- live evidence: the identical request
             # succeeded seconds earlier and failed later. One blind retry is
@@ -1052,6 +1098,21 @@ def _generate_image(keyword: str, title: Optional[str] = None,
     # stock-first gate already ran, so it also reports failure).
     loop_started = time.time()
     for attempt in range(1, IMAGE_MAX_REVISIONS + 1):
+        if image_quota_active():
+            log_image_usage(
+                CLOUDFLARE_IMAGE_MODEL,
+                "result",
+                title or keyword,
+                "skipped",
+                time.time() - loop_started,
+                detail=f"attempts=0/{IMAGE_MAX_REVISIONS} quota circuit breaker active "
+                       f"(provider rate/quota limit)",
+                cost_usd=0.0,
+                slot=slot,
+            )
+            return {"error": "Image provider quota exhausted - skipping generation "
+                             "(circuit breaker; retry after cooldown)",
+                    "quota": True, "slot": slot}
         model, text_mode = _image_plan(attempt)
         router_plan.append(f"a{attempt}={model.rsplit('/', 1)[-1]}/{text_mode}")
         base_prompt = _build_house_prompt(

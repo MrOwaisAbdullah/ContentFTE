@@ -66,6 +66,7 @@ class PreparedPost:
     tags: list[str] = field(default_factory=list)
     meta_title: str = ""
     meta_description: str = ""
+    focus_keyphrase: str = ""
     canonical: str = ""
     featured_image_path: str | None = None
     featured_alt: str = ""
@@ -97,6 +98,7 @@ def build_prepared_post(
     tags: list | None = None,
     meta_title: str = "",
     meta_description: str = "",
+    focus_keyphrase: str = "",
     canonical: str = "",
     slug: str = "",
     excerpt: str = "",
@@ -133,6 +135,12 @@ def build_prepared_post(
         # elementor mode leaves the body FAQ-free — publish() feeds post.faqs
         # to build_blog_page_data, which emits a native accordion widget.
         body += "\n" + wp_render.render_faq_block(faqs, blocks=True)
+    # Yoast truncates displayed meta descriptions at ~156 chars — cut at a
+    # word boundary so the snippet never ends mid-word or overflows.
+    meta_description = (meta_description or "").strip()
+    if len(meta_description) > 155:
+        cut = meta_description[:155].rsplit(" ", 1)[0].rstrip(" ,;.-")
+        meta_description = cut or meta_description[:155]
     return PreparedPost(
         title=title,
         html=body,
@@ -143,6 +151,7 @@ def build_prepared_post(
         tags=list(tags or []),
         meta_title=meta_title or title,
         meta_description=meta_description,
+        focus_keyphrase=(focus_keyphrase or "").strip(),
         canonical=canonical,
         featured_image_path=featured_image_path,
         featured_alt=featured_alt,
@@ -270,9 +279,11 @@ class WordPressConnector:
             "meta": {
                 "_yoast_wpseo_title": post.meta_title,
                 "_yoast_wpseo_metadesc": post.meta_description,
+                "_yoast_wpseo_focuskw": post.focus_keyphrase,
                 "_yoast_wpseo_canonical": post.canonical,
                 "rank_math_title": post.meta_title,
                 "rank_math_description": post.meta_description,
+                "rank_math_focus_keyword": post.focus_keyphrase,
                 "rank_math_canonical_url": post.canonical,
                 "_aioseo_title": post.meta_title,
                 "_aioseo_description": post.meta_description,

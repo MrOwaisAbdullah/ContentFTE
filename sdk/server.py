@@ -194,6 +194,18 @@ def refresh_article(article_id: int, x_site_key: str | None = Header(default=Non
     return _resolve(service.refresh_article(article_id, via="sdk"))
 
 
+@router.post("/articles/{article_id}/stage-images")
+def stage_images(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    """Stage featured/in-post images into meta.images (§5.9).
+
+    Publish does this automatically when the article has no images yet;
+    this route exists for pre-approval visibility and retries. No provider
+    credentials (CLOUDFLARE_API_TOKEN / PEXELS_API_KEY) -> clean skip.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.stage_images(article_id))
+
+
 @router.get("/articles/{article_id}/content")
 def get_content(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)

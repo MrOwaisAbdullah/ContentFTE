@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -29,7 +32,7 @@ from sqlalchemy import func, select
 from lib import custom_site
 from lib import generation
 from lib.db import Article, Article as ArticleModel, AuditLog, KeywordLedger, Site, get_session, init_db
-from lib.cost_ledger import finalize
+from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 
 
@@ -225,6 +228,303 @@ def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None)
         s.close()
 
 
+def _focus_keyphrase(meta: dict, brief: dict) -> str:
+    """Focus keyphrase for the SEO meta (Yoast/Rank Math): the submitted
+    keyword first (what the page was written for), then the brief's."""
+    for src in (brief, meta):
+        val = str((src or {}).get("keyword") or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _content_sections(md: str) -> list[dict]:
+    """`## ` sections of a draft: {index, heading, text}.
+
+    `index` counts ALL H2 headings (1-based) so it lines up with
+    wp_render.inject_inpost_images' heading-block anchors; trailing
+    Sources/FAQ sections are excluded as image targets."""
+    text = md or ""
+    heads = list(re.finditer(r"^##[ \t]+(.+)$", text, re.M))
+    out: list[dict] = []
+    for pos, m in enumerate(heads):
+        heading = m.group(1).strip()
+        if re.match(r"(sources|frequently asked questions|faqs?)\b",
+                    heading, re.I):
+            continue
+        end = heads[pos + 1].start() if pos + 1 < len(heads) else len(text)
+        out.append({"index": pos + 1, "heading": heading,
+                    "text": text[m.end():end].strip()})
+    return out
+
+
+def _content_checks(*, content: str, title: str, summary: str,
+                    faqs: list | None, brief: dict) -> dict:
+    """Deterministic draft gate — every check is {pass, value, need}.
+
+    Checks whose inputs are absent (no link candidates, no sources) pass
+    fail-open so a sparse brief never dead-locks generation; only provable
+    failures report. `GEN_MIN_WORDS` (default 900) is the hard word floor."""
+    words = len((content or "").split())
+    min_words = int(os.environ.get("GEN_MIN_WORDS") or "900")
+    md_links = re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", content or "")
+    site_base = str(brief.get("site_base_url") or "").rstrip("/")
+    internal = [l for l in md_links if site_base and l.startswith(site_base)]
+    external = [l for l in md_links
+                if l.startswith(("http://", "https://"))
+                and not (site_base and l.startswith(site_base))]
+    stale_re = re.compile(r"\bin\s+20(?:1\d|2[0-5])\b", re.I)
+    checks: dict[str, dict] = {
+        "words": {"pass": words >= min_words, "value": words, "need": min_words},
+        "tldr": {"pass": bool(re.search(r"TL\s*;?\s*DR", (content or "")[:800], re.I))},
+        "sources": {"pass": bool(re.search(r"^##[ \t]+Sources\b", content or "", re.M | re.I))},
+        "faqs": {"pass": len(faqs or []) >= 3, "value": len(faqs or []), "need": 3},
+        "stale_year": {"pass": not stale_re.search(title or "")
+                       and not stale_re.search(content or "")},
+        "summary": {"pass": 0 < len((summary or "").strip()) <= 160,
+                    "value": len((summary or "").strip()), "need": 160},
+    }
+    candidates = brief.get("internal_links") or []
+    if candidates:
+        need = min(3, len(candidates))
+        checks["internal_links"] = {"pass": len(internal) >= need,
+                                    "value": len(internal), "need": need}
+    if brief.get("sources"):
+        checks["external_links"] = {"pass": len(external) >= 1,
+                                    "value": len(external), "need": 1}
+    return checks
+
+
+def _checks_pass(checks: dict) -> bool:
+    return all(bool(c.get("pass")) for c in (checks or {}).values())
+
+
+def _merge_usage(base: dict, add: dict) -> dict:
+    """Sum token usage across revise-loop attempts (models deduped)."""
+    if not add:
+        return base
+    if not base:
+        return dict(add)
+    out = dict(base)
+    for k in ("requests", "input_tokens", "output_tokens", "total_tokens"):
+        out[k] = int(out.get(k) or 0) + int(add.get(k) or 0)
+    models = list(out.get("models") or [])
+    for m in (add.get("models") or []):
+        if m not in models:
+            models.append(m)
+    if models:
+        out["models"] = models
+    return out
+
+
+def _enrich_brief_with_links(art: ArticleModel, brief: dict, keyword: str) -> dict:
+    """Embed REAL internal-link candidates into the generation brief.
+
+    The generator's own link tools only know the Sanity site; WordPress
+    articles need candidates from the target WP itself. Production-only
+    (site_type=wordpress + WP_* env) — CI/tests never satisfy both, so no
+    network in tests. Fail-open: any problem means the brief stays as-is."""
+    if (getattr(art.site, "site_type", "") or "") != "wordpress":
+        return brief
+    try:
+        from lib.wordpress import WPConfig, WordPressConnector
+
+        cfg = WPConfig.from_env()
+        if not (cfg.base_url and cfg.username and cfg.app_password):
+            return brief
+        conn = WordPressConnector(cfg)
+        own = _resolve_slug(art)
+        picked: list[dict] = []
+        seen: set[str] = {own}
+
+        def _add(links: list[dict]) -> None:
+            for l in links or []:
+                slug = str(l.get("slug") or "").rstrip("/")
+                url = str(l.get("url") or "")
+                if not url or (slug and slug in seen):
+                    continue
+                if slug:
+                    seen.add(slug)
+                picked.append({"title": str(l.get("title") or "").strip(),
+                               "url": url})
+                if len(picked) >= 6:
+                    return
+
+        _add(conn.fetch_internal_links(keyword or art.title or "", per_page=10))
+        if len(picked) < 3:
+            _add(conn.list_posts(per_page=10))
+        if not picked:
+            return brief
+        out = dict(brief)
+        out["internal_links"] = picked
+        out["site_base_url"] = cfg.base_url.rstrip("/")
+        return out
+    except Exception:
+        return brief
+
+
+def _stage_copy(src: str, art_id: int, slot: str, n: int = 0) -> str | None:
+    """Copy a generated image to a stable staging path so the file survives
+    past the NamedTemporaryFile that produced it (publish/refresh re-upload
+    from meta.images later)."""
+    try:
+        d = os.environ.get("IMAGE_STAGING_DIR") or os.path.join(
+            tempfile.gettempdir(), "contentfte_images")
+        os.makedirs(d, exist_ok=True)
+        ext = os.path.splitext(src)[1] or ".jpg"
+        suffix = f"_{n}" if n else ""
+        dst = os.path.join(d, f"article{art_id}_{slot}{suffix}{ext}")
+        shutil.copyfile(src, dst)
+        return dst
+    except Exception:
+        return None
+
+
+def _stage_images_for(art: ArticleModel, meta: dict, *,
+                      reason: str = "manual") -> dict:
+    """Generate + stage featured/in-post images into meta.images (§5.9).
+
+    Stock-first in-section in-post via _select_inpost_image; featured is
+    AI-only. Section-aware: each in-post image is generated for one `## `
+    section (its own prompt headline + summary, never the whole-article
+    title) with `after_h2` set so publish injects it INLINE, before the
+    FAQ. Skips cleanly with no provider credentials (CI/tests: zero
+    network). Never raises — returns what happened."""
+    if isinstance(meta.get("images"), list) and meta["images"]:
+        return {"skipped": "images already staged", "reason": reason}
+    if not (os.environ.get("CLOUDFLARE_API_TOKEN")
+            or os.environ.get("PEXELS_API_KEY")):
+        return {"skipped": "no image provider credentials "
+                           "(CLOUDFLARE_API_TOKEN / PEXELS_API_KEY)",
+                "reason": reason}
+    try:
+        from tools.tools import _generate_image, _select_inpost_image
+    except Exception as exc:  # noqa: BLE001 — fail-open contract
+        return {"error": f"image tools unavailable: {exc}", "reason": reason}
+
+    keyword = str(meta.get("keyword") or art.title or "").strip()
+    title = str(art.title or "")
+    summary = str(meta.get("summary") or "")
+    rows: list[dict] = []
+    out: dict[str, Any] = {"reason": reason, "featured": False,
+                           "inpost": 0, "errors": []}
+
+    try:
+        res = _generate_image(keyword=keyword, title=title,
+                              summary=summary, slot="featured")
+    except Exception as exc:  # noqa: BLE001
+        res = {"error": str(exc)}
+    if isinstance(res, dict) and res.get("image_url"):
+        staged = _stage_copy(str(res["image_url"]), art.id, "featured") \
+            or str(res["image_url"])
+        alt = (summary or keyword or title)[:125].strip()
+        row: dict[str, Any] = {"slot": "featured", "path": staged, "alt": alt}
+        if res.get("source"):
+            row["source"] = str(res["source"])[:120]
+        if isinstance(res.get("cost_usd"), (int, float)):
+            row["cost_usd"] = float(res["cost_usd"])
+        rows.append(row)
+        out["featured"] = True
+    elif isinstance(res, dict) and (res.get("error") or res.get("skipped")):
+        out["errors"].append(f"featured: {res.get('error') or res.get('skipped')}")
+
+    sections = [s for s in _content_sections(art.content_md or "")
+                if s["heading"]]
+    words = len((art.content_md or "").split())
+    want = 2 if words >= 1300 else 1
+    pool = sections[1:] or sections
+    picks: list[dict] = []
+    if pool:
+        picks = [pool[0]]
+        if want == 2 and len(pool) > 1:
+            picks.append(pool[-1])
+    for i, sec in enumerate(picks):
+        alt_ip = f"{keyword}: {sec['heading']}"[:125] if keyword \
+            else sec["heading"][:125]
+        try:
+            r2 = _select_inpost_image(
+                topic=sec["heading"] or keyword,
+                section_summary=(sec["text"] or summary)[:600],
+                alt_text=alt_ip)
+        except Exception as exc:  # noqa: BLE001
+            r2 = {"error": str(exc)}
+        src = ""
+        if isinstance(r2, dict):
+            src = str(r2.get("image_url") or r2.get("url") or "")
+        if src:
+            local = os.path.isfile(src)
+            staged = _stage_copy(src, art.id, "inpost", i) if local else None
+            row = {"slot": "inpost", ("path" if (staged or local) else "url"):
+                   staged or src, "alt": alt_ip, "after_h2": sec["index"]}
+            if isinstance(r2.get("cost_usd"), (int, float)):
+                row["cost_usd"] = float(r2["cost_usd"])
+            rows.append(row)
+            out["inpost"] += 1
+        else:
+            err = (r2 or {}).get("error") if isinstance(r2, dict) else "failed"
+            out["errors"].append(
+                f"inpost[{sec['heading'][:40]}]: {err or 'no image'}")
+    if rows:
+        meta["images"] = rows
+    return out
+
+
+def stage_images(article_id: int) -> dict:
+    """Public op: stage images into meta.images when missing (§5.9).
+
+    Wired REST `POST /sdk/v1/articles/{id}/stage-images` + MCP
+    `contentfte_stage_images`. publish_article calls the same helper
+    automatically, so this is for pre-approval visibility / retries."""
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found",
+                        "submit one first: contentfte_submit_article")
+        meta = dict(art.meta) if isinstance(art.meta, dict) else {}
+        out = _stage_images_for(art, meta, reason="manual")
+        if meta.get("images"):
+            # Mirror publish: record what this call did on the article. The
+            # skip paths never set `featured`, so an idempotent re-call won't
+            # clobber publish-time metadata.
+            if out.get("featured") is not None:
+                meta["image_staging"] = {k: out.get(k)
+                                         for k in ("reason", "featured",
+                                                   "inpost", "errors", "skipped")
+                                         if out.get(k) is not None}
+            img_usd = 0.0
+            if not meta.get("image_costs_recorded"):
+                img_usd = sum(float(r.get("cost_usd") or 0.0)
+                              for r in (meta.get("images") or [])
+                              if isinstance(r, dict))
+                meta["image_costs_recorded"] = True
+            # Single assignment AFTER every mutation: record_cost below
+            # commits this flush together with its ledger row. Mutating
+            # `meta` in place after an earlier commit is invisible to
+            # SQLAlchemy (the in-memory committed object mutates too, so
+            # history shows no net change and the UPDATE never fires).
+            art.meta = dict(meta)
+            if img_usd > 0:
+                try:
+                    record_cost(s, art.id, "image", round(img_usd, 6),
+                                detail={"slots": len(meta["images"]),
+                                        "reason": "manual staging"})
+                except Exception:
+                    pass
+            s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                           action="article.images",
+                           payload={"event": "article.images_staged",
+                                    **{k: out.get(k)
+                                       for k in ("featured", "inpost",
+                                                 "skipped", "errors")}}))
+            s.commit()
+        return {"id": art.id, "event": "article.images",
+                "images": len(meta.get("images") or []), **out}
+    finally:
+        s.close()
+
+
 async def _default_generate(brief: dict) -> str:
     """Production generation seam: lazily runs content_generator_agent
     (heavy agents stack loads only on first generation). Tests and the MCP
@@ -277,47 +577,91 @@ async def generate_content(article_id: int, *, generate_fn=None,
             keyword=str(meta.get("keyword") or brief_meta.get("keyword") or art.title or "").strip(),
             intent=intent, brief_meta=brief_meta,
             research_snapshot=research, volume=volume, difficulty=difficulty)
+        # Real internal-link candidates for WordPress sites so even a
+        # tool-skipping model can weave genuine links (checks enforce it).
+        brief = _enrich_brief_with_links(art, brief, str(brief.get("keyword") or ""))
 
         fn = generate_fn if generate_fn is not None else _default_generate
+        revise_on = os.environ.get("CONTENTFTE_REVISE", "1").strip().lower() \
+            not in ("0", "off", "false", "no")
+        max_attempts = 2 if revise_on else 1
         gen_started = time.time()
-        try:
-            output = await fn(brief)
-        except Exception as exc:  # runner/provider failure — fail-open
-            return _err(
-                f"generation failed: {exc}",
-                "check LLM keys (OPENROUTER_API_KEY / GEMINI_API_KEY / ...) "
-                "and retry generate_content")
-        gen_wall_s = round(time.time() - gen_started, 1)
         gen_usage: dict = {}
-        try:
-            from blog_agent import generation as agent_generation
-            gen_usage = dict(getattr(agent_generation, "LAST_USAGE", None) or {})
-        except Exception:
-            gen_usage = {}
+        parsed = None
+        checks: dict = {}
+        revisions = 0
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                output = await fn(brief)
+            except Exception as exc:  # runner/provider failure — fail-open
+                if attempt == 1:
+                    return _err(
+                        f"generation failed: {exc}",
+                        "check LLM keys (OPENROUTER_API_KEY / GEMINI_API_KEY / ...) "
+                        "and retry generate_content")
+                break
+            try:
+                from blog_agent import generation as agent_generation
+                gen_usage = _merge_usage(
+                    gen_usage, dict(getattr(agent_generation, "LAST_USAGE", None) or {}))
+            except Exception:
+                pass
+            cand = generation.parse_generation_output(output)
+            if cand is None or str(generation.get_field(cand, "status") or "").lower() == "error":
+                if attempt == 1:
+                    if cand is None:
+                        return _err("agent returned no usable content",
+                                    "retry generate_content (fallback model skipped both "
+                                    "the JSON envelope and a salvageable Markdown post)")
+                    message = str(generation.get_field(cand, "message") or "").strip()
+                    return _err(message or "generation failed per agent envelope",
+                                "fix the brief (contentfte_get_brief) and retry")
+                break
+            cand_content = str(generation.get_field(cand, "Generated Content") or "").strip()
+            if len(cand_content) < 50:
+                if attempt == 1:
+                    return _err("generated content missing or too short",
+                                "retry generate_content")
+                break
+            parsed = cand
+            content = cand_content
+            title = str(generation.get_field(cand, "Title") or "").strip()
+            summary = str(generation.get_field(cand, "Summary") or "").strip()
+            faqs = generation.parse_faqs(generation.get_field(cand, "FAQs")) \
+                or generation.parse_faqs(brief_meta.get("faqs"))
+            checks = _content_checks(content=content, title=title,
+                                     summary=summary, faqs=faqs, brief=brief)
+            if _checks_pass(checks) or attempt >= max_attempts:
+                break
+            # One bounded revision: feed the failing checks back verbatim.
+            revisions += 1
+            feedback = [f"{name}: {json.dumps(val)}"
+                        for name, val in checks.items() if not val.get("pass")]
+            brief = dict(brief)
+            brief["revision_feedback"] = feedback
 
-        parsed = generation.parse_generation_output(output)
+        gen_wall_s = round(time.time() - gen_started, 1)
         if parsed is None:
             return _err("agent returned no usable content",
-                        "retry generate_content (fallback model skipped both "
-                        "the JSON envelope and a salvageable Markdown post)")
-        if str(generation.get_field(parsed, "status") or "").lower() == "error":
-            message = str(generation.get_field(parsed, "message") or "").strip()
-            return _err(message or "generation failed per agent envelope",
-                        "fix the brief (contentfte_get_brief) and retry")
-        content = str(generation.get_field(parsed, "Generated Content") or "").strip()
-        if len(content) < 50:
-            return _err("generated content missing or too short",
                         "retry generate_content")
-
-        title = str(generation.get_field(parsed, "Title") or "").strip()
         previous_title = art.title
-        summary = str(generation.get_field(parsed, "Summary") or "").strip()
-        faqs = generation.parse_faqs(generation.get_field(parsed, "FAQs")) \
-            or generation.parse_faqs(brief_meta.get("faqs"))
         quality = generation.parse_score(generation.get_field(parsed, "Quality Score"))
         warnings = generation.get_field(parsed, "warnings") or []
         errors = generation.get_field(parsed, "errors") or []
         claims_notes = str(generation.get_field(parsed, "Claims Notes") or "").strip()
+
+        # Mechanical stale-year fix in the title only ("in 2025" -> current
+        # year): safe because the pattern is explicit; body years are left to
+        # the model instructions + the revise feedback above.
+        stale_title = re.search(r"\bin\s+20(?:1\d|2[0-5])\b", title or "", re.I)
+        if stale_title:
+            year = datetime.now(timezone.utc).year
+            title = re.sub(r"\bin\s+20(?:1\d|2[0-5])\b", f"in {year}",
+                           title, flags=re.I)
+            checks = _content_checks(content=content, title=title,
+                                     summary=summary, faqs=faqs, brief=brief)
 
         if art.keyword_id:
             try:
@@ -342,6 +686,8 @@ async def generate_content(article_id: int, *, generate_fn=None,
             "regenerated": regenerate,
             "wall_s": gen_wall_s,
             "usage": gen_usage or None,
+            "checks": checks,
+            "revisions": revisions,
             "claims_notes": claims_notes,
             "warnings": warnings if isinstance(warnings, list) else [str(warnings)],
             "errors": errors if isinstance(errors, list) else [str(errors)],
@@ -350,16 +696,33 @@ async def generate_content(article_id: int, *, generate_fn=None,
         if quality is not None:
             art.scores = {**(art.scores or {}), "overall": quality}
 
+        words = len(content.split())
         s.add(AuditLog(
             article_id=art.id, site_id=art.site_id, action="article.generate",
             payload={"event": "article.drafted", "keyword": meta.get("keyword"),
-                     "regenerated": regenerate, "words": len(content.split()),
-                     "quality_score": quality,
+                     "regenerated": regenerate, "words": words,
+                     "quality_score": quality, "revisions": revisions,
+                     "checks_pass": _checks_pass(checks),
                      **({"title": title} if title and title != previous_title else {})}))
         s.commit()
+
+        # §5.10-6: price the run's token usage into the per-post cost ledger
+        # (models priced in lib.cost_ledger; unpriced usage records nothing).
+        llm_usd = 0.0
+        if gen_usage.get("input_tokens") or gen_usage.get("output_tokens"):
+            try:
+                llm_usd, price_detail = usage_cost(gen_usage)
+                if llm_usd > 0:
+                    record_cost(s, art.id, "llm", round(llm_usd, 6),
+                                detail=price_detail)
+            except Exception:
+                llm_usd = 0.0
         return {"id": art.id, "status": art.status, "event": "article.drafted",
-                "title": art.title, "words": len(content.split()),
-                **({"quality_score": quality} if quality is not None else {})}
+                "title": art.title, "words": words,
+                "checks": checks, "needs_revision": not _checks_pass(checks),
+                "revisions": revisions,
+                **({"quality_score": quality} if quality is not None else {}),
+                **({"llm_usd": round(llm_usd, 6)} if llm_usd > 0 else {})}
     finally:
         s.close()
 
@@ -543,6 +906,7 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
             entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
             date_published=_iso(art.created_at),
             date_modified=_iso(art.published_at or art.created_at),
+            focus_keyphrase=_focus_keyphrase(meta, brief),
             render_target="blocks",
         )
         conn = WordPressConnector(cfg)
@@ -601,15 +965,48 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
         wp_state: dict | None = None
         site_type = (art.site.site_type if art.site is not None else "") or ""
         if site_type == "wordpress":
+            # §5.9 first-try images: if the generator never staged any
+            # (single-shot models skip _image_plan), generate them here so
+            # the very first publish already carries featured + inline art.
+            staging = _stage_images_for(art, meta, reason="publish")
+            if meta.get("images"):
+                meta["image_staging"] = {k: staging.get(k)
+                                         for k in ("reason", "featured", "inpost",
+                                                   "errors", "skipped")
+                                         if staging.get(k) is not None}
+                # §5.10-6 price AI image generations into the same ledger
+                # (once — retries see image_costs_recorded and skip).
+                img_usd = 0.0
+                if not meta.get("image_costs_recorded"):
+                    img_usd = sum(float(r.get("cost_usd") or 0.0)
+                                  for r in (meta.get("images") or [])
+                                  if isinstance(r, dict))
+                    meta["image_costs_recorded"] = True
+                # Single assignment AFTER every mutation so the staged rows
+                # persist even if the push below fails, and record_cost's
+                # commit flushes meta together with its ledger row. (Mutating
+                # `meta` in place after an earlier commit is invisible to
+                # SQLAlchemy: the in-memory committed object mutates too, so
+                # history shows no net change and the UPDATE never fires.)
+                art.meta = dict(meta)
+                if img_usd > 0:
+                    try:
+                        record_cost(s, art.id, "image", round(img_usd, 6),
+                                    detail={"slots": len(meta["images"]),
+                                            "reason": "publish staging"})
+                    except Exception:
+                        pass
             wp_state = _wp_push(art, meta, mode)
             if wp_state.get("ok") and wp_state.get("post_id") and not wp_state.get("deduplicated"):
                 meta["wp_post_id"] = wp_state["post_id"]
                 meta["wp_url"] = wp_state.get("url") or ""
-                art.meta = meta
+                art.meta = dict(meta)
 
         payload: dict[str, Any] = {"mode": mode, "via": via}
         if wp_state is not None:
             payload["wp"] = wp_state
+        if meta.get("image_staging"):
+            payload["image_staging"] = meta["image_staging"]
         s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                        action="article.publish", payload=payload))
         s.commit()
@@ -706,6 +1103,7 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                 entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
                 date_published=_iso(art.created_at),
                 date_modified=_iso(datetime.now(timezone.utc)),
+                focus_keyphrase=_focus_keyphrase(meta, brief),
                 render_target="blocks",
             )
             conn = WordPressConnector(cfg)
@@ -945,6 +1343,7 @@ def elementor_build(article_id: int, post_id: int | None = None,
             entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
             date_published=_iso(art.created_at),
             date_modified=_iso(art.published_at or art.created_at),
+            focus_keyphrase=_focus_keyphrase(meta, brief),
             render_target="elementor",
         )
 

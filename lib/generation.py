@@ -10,7 +10,9 @@ transitions, persistence, audit) lives in sdk/service.generate_content.
 from __future__ import annotations
 
 import json
+import os
 import re
+from datetime import datetime, timezone
 
 from lib.brief_templates import template_text
 from lib.run_result_utils import loads_lenient
@@ -132,6 +134,9 @@ def build_brief_payload(*, keyword: str, intent: str = "",
     if not isinstance(sources, list):
         sources = [sources] if sources else []
     faqs = parse_faqs(meta.get("faqs")) or []
+    internal_links = meta.get("internal_links") or []
+    if not isinstance(internal_links, list):
+        internal_links = []
     return {
         "keyword": keyword,
         "intent": intent,
@@ -140,6 +145,11 @@ def build_brief_payload(*, keyword: str, intent: str = "",
         "sources": sources,
         "summary": str(meta.get("summary") or description or "").strip(),
         "template_intent": intent,
+        # Link graph for the article path: real candidates the publisher
+        # supplied (or service enrichment found on the WP site). Rendered
+        # as hard requirements by render_prompt; never invent URLs.
+        "internal_links": internal_links,
+        "site_base_url": str(meta.get("site_base_url") or "").strip(),
     }
 
 
@@ -150,28 +160,90 @@ def render_prompt(brief: dict) -> str:
     content_briefs, append to generated_posts). This prompt overrides that
     for the Article path: the brief is embedded here, and the orchestrator
     (service.generate_content) persists the envelope — no worksheet reads
-    or writes are needed for this run."""
+    or writes are needed for this run.
+
+    Also carries the deterministic gates the checks in service._content_checks
+    enforce (word floor, current year, internal/external links, Bottom Line),
+    so a single-shot model has everything it needs in one message."""
     payload = json.dumps(brief, ensure_ascii=False, default=str)
-    return (
-        "Generate ONE complete blog post for the brief below.\n\n"
-        "IMPORTANT — Article-path overrides (this run):\n"
+    today = datetime.now(timezone.utc)
+    year = today.year
+    min_words = int(os.environ.get("GEN_MIN_WORDS") or "900")
+    internal_links = brief.get("internal_links") or []
+    sources = brief.get("sources") or []
+    site_base = str(brief.get("site_base_url") or "").strip()
+    revision_feedback = brief.get("revision_feedback") or []
+
+    lines = [
+        "Generate ONE complete blog post for the brief below.",
+        "",
+        "IMPORTANT — Article-path overrides (this run):",
         "- The brief is provided in this message. Do NOT call "
         "manage_sheet_data_tool / find_row_by_key to look up content_briefs "
-        "— there is nothing to find; work only from the JSON below.\n"
+        "— there is nothing to find; work only from the JSON below.",
         "- Do NOT append to any worksheet (no generated_posts, no "
         "content_briefs writes). The orchestrator persists your result; a "
-        "worksheet write is unnecessary for this run.\n"
+        "worksheet write is unnecessary for this run.",
         "- Follow the rest of your instructions (author context, brain "
         "notes, tactics pack, TL;DR block, question-form H2s, Sources box, "
-        "anti-AI-pattern checklist).\n\n"
-        "Return ONLY the JSON envelope (no prose before/after):\n"
+        "anti-AI-pattern checklist).",
+        "",
+        "HARD REQUIREMENTS (checked deterministically after you return):",
+        f"- TODAY IS {today.strftime('%d %B %Y')}. The current year is "
+        f"{year}. Never write the post as if it belongs to a past year: "
+        f"no \"in {year - 1}\" (or older) in the title, headings, or body "
+        f"unless quoting a historical event with an explicit date.",
+        f"- Length: at least {min_words} words (aim 1500-2500 for a "
+        "flagship post). Short drafts are rejected and re-run.",
+        "- Structure: TL;DR near the top (first ~800 chars), `## Sources` "
+        "as the LAST section, 3+ FAQs, question-form H2s.",
+        "- Close with a `## Bottom Line` section (60-100 words) placed "
+        "immediately BEFORE `## Sources`: a decisive verdict/answer that "
+        "summarizes the takeaway and includes 1-2 of the internal links "
+        "below — this is what a reader who stops at the summary still "
+        "gets (and where they go next).",
+    ]
+    if internal_links:
+        lines.append(
+            f"- INTERNAL LINKS: weave at least 3 of these REAL URLs into "
+            f"the body prose (not a link list) as natural anchors "
+            f"(e.g. \"see our {site_base or 'related'} guide\"):\n"
+            + "\n".join(f"  - {l.get('title', '')}: {l.get('url', '')}"
+                        for l in internal_links if isinstance(l, dict))
+            + "\n  Never invent internal URLs. Anchor text should read "
+            "naturally and mention the target topic."
+        )
+    else:
+        lines.append("- INTERNAL LINKS: none were supplied — do NOT invent "
+                     "site URLs (broken links are a publish blocker).")
+    if sources:
+        lines.append(
+            f"- EXTERNAL SOURCES: cite at least 1 of the brief's sources "
+            "NATURALLY IN THE BODY PROSE (a sentence that links to it while "
+            "making the point), not only in the `## Sources` list:\n"
+            + "\n".join(f"  - {s}" if isinstance(s, str)
+                        else f"  - {s.get('title', s.get('url', ''))}: "
+                             f"{s.get('url', '')}"
+                        for s in sources)
+        )
+    if revision_feedback:
+        lines += [
+            "",
+            "PREVIOUS DRAFT FAILED THESE CHECKS — fix every one:",
+            *[f"- {fb}" for fb in revision_feedback],
+        ]
+    lines += [
+        "",
+        "Return ONLY the JSON envelope (no prose before/after):",
         '{"status": "success", "Title": "...", "Generated Content": "<full '
         'markdown body, NO H1 — Title is the H1>", "Summary": "<50-160 '
         'chars, meta description>", "FAQs": "<JSON string array of '
         '{question, answer} pairs, 5-7>", "Quality Score": "<0-100>", '
-        '"Claims Notes": "...", "errors": [], "warnings": []}\n\n'
-        f"BRIEF (JSON):\n{payload}"
-    )
+        '"Claims Notes": "...", "errors": [], "warnings": []}',
+        "",
+        f"BRIEF (JSON):\n{payload}",
+    ]
+    return "\n".join(lines)
 
 
 def parse_generation_output(output) -> dict | None:

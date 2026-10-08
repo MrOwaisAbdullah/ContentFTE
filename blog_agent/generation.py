@@ -28,7 +28,11 @@ def _usage_from_result(result: Any) -> dict[str, Any]:
     runner shape carries no usage (fail-open: never blocks generation)."""
     responses = getattr(result, "raw_responses", None) or []
     requests = input_tokens = output_tokens = total_tokens = 0
+    models: list[str] = []
     for resp in responses:
+        model = getattr(resp, "model", None)
+        if model and str(model) not in models:
+            models.append(str(model))
         usage = getattr(resp, "usage", None)
         if usage is None:
             continue
@@ -50,6 +54,8 @@ def _usage_from_result(result: Any) -> dict[str, Any]:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
+        # model ids the run billed (pricing keys off these — cost_ledger)
+        "models": models,
     }
 
 
