@@ -131,8 +131,13 @@ def _dataforseo_fetch(keyword: str) -> dict:
     }
 
 
-def get_keyword_data(session: Session, keyword: str, manual: dict | None = None) -> dict:
-    """Main entry. `manual` supplies the off-mode fields when provider=off."""
+def get_keyword_data(session: Session, keyword: str, manual: dict | None = None,
+                     force_refresh: bool = False) -> dict:
+    """Main entry. `manual` supplies the off-mode fields when provider=off.
+
+    `force_refresh=True` (§5.16 SERP drift job) bypasses the read cache but
+    still writes the fresh payload back — the new data becomes the baseline
+    the next drift comparison runs against."""
     provider = provider_name()
     keyword = keyword.strip()
     if provider == "off":
@@ -144,7 +149,7 @@ def get_keyword_data(session: Session, keyword: str, manual: dict | None = None)
             intent=str(m.get("intent", "informational")),
             serp_notes=str(m.get("serp_notes", "")),
         )
-    cached = _cache_get(session, provider, keyword)
+    cached = None if force_refresh else _cache_get(session, provider, keyword)
     if cached is not None:
         return {**cached, "cache_hit": True}
     if provider == "openseo":

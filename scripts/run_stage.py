@@ -2116,6 +2116,43 @@ async def run_decay() -> None:
     _notify_discord_status("decay", success=True, detail=detail)
 
 
+async def run_serp_drift() -> None:
+    """§5.16 monthly SERP drift scan — brief-time top-10 vs fresh SERP;
+    drift flags the keyword for refresh (audit row + `review_at`). Thin
+    wrapper over scripts/serp_drift_job.py's `run()`. Provider=off (CI
+    default) skips cleanly — reported, not raised."""
+    import importlib.util
+    import pathlib
+
+    job_path = pathlib.Path(__file__).with_name("serp_drift_job.py")
+    spec = importlib.util.spec_from_file_location("serp_drift_job", job_path)
+    job = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(job)
+
+    res = job.run()
+    if res.get("status") == "skipped":
+        print(f"[serp_drift] skipped: {res.get('message')}")
+        _notify_discord_status("serp_drift", success=True,
+                               detail=f"Skipped: {res.get('message')}")
+        return
+    if res.get("status") != "ok":
+        raise RuntimeError(f"serp drift job failed: {res.get('message')}")
+    print(f"[serp_drift] site={res['site']} provider={res['provider']} "
+          f"checked={res['checked']} drift={res['drift_count']} "
+          f"fetch_errors={res['fetch_errors']}")
+    for d in res["drifted"]:
+        print(f"[serp_drift]   {d['keyword']}: overlap={d['overlap_score']} "
+              f"dropped={len(d['dropped'])} new={len(d['new'])}")
+    if res["drift_count"]:
+        detail = (f"{res['drift_count']} keyword(s) drifted: "
+                  + ", ".join(f"{d['keyword']} (overlap {d['overlap_score']})"
+                              for d in res["drifted"][:5]))
+    else:
+        detail = (f"Checked {res['checked']} keyword SERP(s) — no drift "
+                  f"(fetch errors: {res['fetch_errors']}).")
+    _notify_discord_status("serp_drift", success=True, detail=detail)
+
+
 STAGE_HANDLERS = {
     "research": run_research,
     "brief": run_brief,
@@ -2129,6 +2166,7 @@ STAGE_HANDLERS = {
     "mine_feedback": run_mine_feedback,
     "log_coverage": run_log_coverage,
     "decay": run_decay,
+    "serp_drift": run_serp_drift,
 }
 
 
@@ -2154,7 +2192,7 @@ def main() -> None:
         if args.stage not in (
             "research", "brief", "content", "post", "edit_post", "repurpose",
             "freshness_sweep", "search_performance_review", "mine_feedback",
-            "decay",
+            "decay", "serp_drift",
         ):
             _notify_discord_status(args.stage, success=True)
 
