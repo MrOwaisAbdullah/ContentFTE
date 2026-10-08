@@ -9,7 +9,7 @@ npm install @owais-abdullah/contentfte
 | Import | What it is |
 |---|---|
 | `@owais-abdullah/contentfte` | Typed HTTP client — dependency-free `fetch`, works in browsers, Node 18+, Next.js, Astro, Vite |
-| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` — React component that renders the delivery payload (title `<h1>`, markdown body, FAQ section, Article + FAQPage JSON-LD) |
+| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` — React component that renders the delivery payload (title `<h1>`, markdown body, FAQ accordion (`<details>`), Article + FAQPage JSON-LD) |
 | `@owais-abdullah/contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload (also usable without React) |
 
 ## 1. Get connected
@@ -108,8 +108,9 @@ const payload = await client.getContent(art.id);              // unified deliver
 ```
 
 `getContent` returns the unified payload: `title`, `slug`, `url`, `excerpt`,
-`html` (server-rendered body), `markdown`, `markdown_alternate` (front-matter
-variant for static generators), and `schema` (`article` + `faq` JSON-LD).
+`html` (server-rendered body), `faq_html` (FAQ `<details>` accordion for
+non-React sites), `markdown`, `markdown_alternate` (front-matter variant for
+static generators), and `schema` (`article` + `faq` JSON-LD).
 
 - **Events** returned in every mutating response: `article.ready`,
   `article.drafted`, `article.needs_review`, `article.published` — forward
@@ -143,7 +144,7 @@ What it handles for you:
 - GFM tables/strikethrough, `==highlight==` → `<mark>`, external links open in
   a new tab (`rel="noopener noreferrer"`), tables get an overflow wrapper
 - heading ids for TOC/scrollspy anchors (`#quick-comparison`)
-- FAQ section from `payload.schema.faq` (`<section id="faqs">`)
+- FAQ accordion (`<details>`) from `payload.schema.faq` (`<section id="faqs">`)
 - Article + FAQPage JSON-LD (with `<` escaped so it can never break out)
 - `siteOrigin` keeps your own links in-tab; every other absolute link is
   marked external. Omit it to treat all absolute links as external.

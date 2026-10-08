@@ -93,16 +93,21 @@ const list = await client.listArticles("my-site", "published"); // enumerate
 | **Plain HTML / Node** | `payload.html` |
 
 The React renderer handles GFM, `==highlight==`, heading anchors, external-link
-`target`, a FAQ section, and emits the JSON-LD — sanitized. Other stacks use the
-engine's `html` or run `markdown` through their own renderer.
+`target`, a FAQ **accordion** (`<details>`, from `schema.faq`), and emits the
+JSON-LD — sanitized. Other stacks use the engine's `html` + `faq_html`, or run
+`markdown` through their own renderer.
 
 ### 5. Ship the SEO/AEO/GEO assets
 - **JSON-LD:** inject `payload.schema.article` and `payload.schema.faq` as
   `<script type="application/ld+json">` (the React renderer does it for you).
 - **`.md` alternate (per article):** serve `payload.markdown_alternate` at
   `/blog/{slug}.md`.
-- **`llms.txt` (site-level):** `GET /sdk/v1/sites/{slug}/llms.txt` (composed from
-  published articles) → serve at `/llms.txt`.
+- **`FAQ`:** the renderer (`<ContentFTEFaq>` / `<ContentFTEArticle>`) emits a
+  native `<details>` **accordion**; non-React sites render `payload.faq_html`
+  (same `<details>` markup as the WordPress/Elementor output).
+- **`llms.txt` (site-level):** `GET /sdk/v1/sites/{slug}/llms.txt` returns
+  `{site, count, llms_txt}` — serve the **`llms_txt` string** at `/llms.txt`
+  (do **not** serve the raw JSON). In the client: `const { llms_txt } = await client.llmsTxt(slug)`, then `return new Response(llms_txt, { headers: { "content-type": "text/plain" } })`.
 - **Styles:** import `@owais-abdullah/contentfte/contentfte-prose.css` (wrap the
   article in `cfte-prose`).
 
@@ -116,7 +121,20 @@ engine's `html` or run `markdown` through their own renderer.
 ## Common pitfalls
 
 - **Using the React renderer in a non-React site** — it pulls React in. Astro/Vue/
-  Svelte should use `payload.html` or their own markdown renderer + the CSS.
+  Svelte should use `payload.html` (+ `payload.faq_html`) or their own markdown
+  renderer + the CSS.
+- **Serving `llmsTxt()` raw** — it returns `{site, count, llms_txt}` JSON; serve
+  the `llms_txt` string.
+- **`slug` → id** — `getContent()` needs the numeric article id. Map a URL slug to
+  an id with `listArticles(site, "published")` (returns `slug` per row), or store
+  the id at publish time.
+- **Next 15/16 `params` are Promises** — `await params` in pages and `await
+  context.params` in route handlers; the old sync form fails.
+- **`/blog/[slug].md` route** — App Router can't nest a literal `.md` folder; add
+  a `rewrite` (or a `/blog/[slug]/md` route) — see `references/stacks.md`.
+- **Tailwind scaffold preflight** — a fresh `create-next-app` ships Tailwind; its
+  preflight can fight `contentfte-prose.css`. Scope prose styles to `cfte-prose`
+  or drop the scaffold CSS.
 - **Astro content collections for remote content** — collections are build-time;
   a server-rendered site should fetch the payload at request time (or via a
   content **loader** with `renderMarkdown()`). See `references/stacks.md#astro`.

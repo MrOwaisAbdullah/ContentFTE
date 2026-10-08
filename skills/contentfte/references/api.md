@@ -12,7 +12,7 @@ dicts carry `{"error", "next"}` (actionable).
 | GET | `/sites` | list sites |
 | POST | `/sites` | create/update a site (`slug, name, site_type: wordpress\|custom, base_url`) |
 | GET | `/sites/{slug}/health` | site health |
-| GET | `/sites/{slug}/llms.txt` | site `llms.txt` (§5.8) from published articles |
+| GET | `/sites/{slug}/llms.txt` | site `llms.txt` (§5.8) from published articles — returns `{site, count, llms_txt}` (serve `.llms_txt`) |
 | POST | `/articles` | submit a brief/keyword (idempotent per site+keyword) |
 | GET | `/articles` | list articles (`site_slug`, `status`, `limit`, `offset`) |
 | GET | `/articles/{id}` | status + scores + cost |
@@ -46,6 +46,7 @@ dicts carry `{"error", "next"}` (actionable).
   "id": 12, "title": "…", "slug": "…", "url": "https://site/blog/…",
   "excerpt": "Meta description…",
   "html": "<h2>…</h2>…",            // engine-rendered (no block comments)
+  "faq_html": "<section class=\"faq-block\">…<details class=\"faq-item\" name=\"contentfte-faq\"><summary>Q</summary><p>A</p></details>…</section>",  // FAQ accordion for non-React sites
   "markdown": "## …",                // source
   "markdown_alternate": "---\n{…}\n---\n\n# Title\n\n…",  // agent-ready .md
   "schema": { "article": { "@type": "Article", … }, "faq": { "@type": "FAQPage", … } | null },

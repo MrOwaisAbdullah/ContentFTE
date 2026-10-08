@@ -322,6 +322,8 @@ def test_content_route_is_unified_delivery_payload():
     assert body["excerpt"] == "A meta description."
     # article metadata still present (get_images reads meta.images)
     assert body["meta"]["summary"] == "A meta description."
+    # FAQ accordion HTML for non-React custom sites (same markup as WP)
+    assert "<details" in body["faq_html"] and "contentfte-faq" in body["faq_html"]
     assert body["status"] == "briefed" and body["scores"] == {}
 
 

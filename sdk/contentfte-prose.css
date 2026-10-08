@@ -184,9 +184,11 @@
   margin-top: 0;
 }
 .cfte-prose .cfte-faq-item { margin-top: 1.5em; }
-.cfte-prose .cfte-faq-item h3 {
+.cfte-prose .cfte-faq-item summary {
   margin-top: 0;
   font-size: 1.2rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 .cfte-prose .cfte-faq-item p { margin-top: 0.5em; }
 

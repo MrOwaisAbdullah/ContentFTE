@@ -138,6 +138,13 @@ Non-block mode (`blocks=False`) renders the same accordion as plain
 - [ ] Push/merge the branch (23 commits ahead of `master`).
 - [x] Republished npm **`0.2.0`** — **LIVE** (npmjs.com/package/@owais-abdullah/contentfte)
       with the new client methods (`listArticles`, `refreshArticle`, `wpPost`, `llmsTxt`).
+- [x] **Next.js dogfood (TASKS 90) PASSED** — a fresh Next app (agent-driven, using
+      only `skills/contentfte/SKILL.md`) rendered a published article end-to-end in
+      ~25 min. Findings + fixes in `docs/dogfood-nextjs-report.md`: **FAQ is now a
+      `<details>` accordion** in the React renderer + **`payload.faq_html`** for
+      non-React sites; typed client returns; `get_article` returns the resolved
+      slug; skill/docs fixed for llms.txt (serve `.llms_txt`), Next 15/16
+      `await params`, slug→id, `.md` route, Tailwind preflight.
 - [x] **npm publish `@owais-abdullah/contentfte@0.1.0`** — **LIVE**
       (https://www.npmjs.com/package/@owais-abdullah/contentfte). Path there:
       the unscoped `contentfte` name was **rejected by npm's similarity guard**

@@ -12,15 +12,34 @@ import "@owais-abdullah/contentfte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 
-export default async function Post({ params }: { params: { slug: string } }) {
-  // resolve the article id however you store it (DB, route param, listArticles)
-  const id = Number(params.slug);
-  const payload = await client.getContent(id) as ContentFTEPayload;
+export default async function Post({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;                 // Next 15/16: params is a Promise
+  const id = Number(slug);                       // or map slug → id via client.listArticles(...)
+  const payload = await client.getContent(id);
   return <ContentFTEArticle content={payload} siteOrigin={process.env.SITE_ORIGIN} />;
 }
 ```
-The renderer emits the `<h1>`, GFM body, FAQ section, and the Article + FAQPage
-JSON-LD (sanitized). Keep the client in server code (route handler / RSC).
+
+`.md` alternate — `app/blog/[slug]/md/route.ts` (App Router can't nest a literal
+`.md` folder, so add a rewrite):
+```ts
+export async function GET(_req: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const p = await client.getContent(Number(slug));
+  return new Response(p.markdown_alternate, { headers: { "content-type": "text/markdown" } });
+}
+// next.config.ts: rewrites: () => [{ source: "/blog/:slug.md", destination: "/blog/:slug/md" }]
+```
+
+`llms.txt` — `app/llms.txt/route.ts`:
+```ts
+export async function GET() {
+  const { llms_txt } = await client.llmsTxt("my-site");   // returns {site,count,llms_txt}
+  return new Response(llms_txt, { headers: { "content-type": "text/plain" } });
+}
+```
+The renderer emits the `<h1>`, GFM body, a `<details>` FAQ accordion, and the
+Article + FAQPage JSON-LD. Keep the client in server code (RSC / route handler).
 
 ## Astro (no React — pull + render)
 
@@ -38,6 +57,7 @@ const body = marked.parse(p.markdown);
     <h1>{p.title}</h1>
     <p class="dek">{p.excerpt}</p>
     <div set:html={body} />
+    <div set:html={p.faq_html} />       {/* FAQ accordion (<details>) */}
   </article>
   <script type="application/ld+json" set:html={JSON.stringify(p.schema.article)} />
   {p.schema.faq && <script type="application/ld+json" set:html={JSON.stringify(p.schema.faq)} />}
@@ -58,7 +78,7 @@ const body = marked.parse(p.markdown);        // or p.html
 useHead({ script: [{ type: "application/ld+json", innerHTML: JSON.stringify(p.schema.article) }] });
 </script>
 <template>
-  <article class="cfte-prose"><h1>{{ p.title }}</h1><div v-html="body" /></article>
+  <article class="cfte-prose"><h1>{{ p.title }}</h1><div v-html="body" /><div v-html="p.faq_html" /></article>
 </template>
 ```
 
@@ -72,6 +92,7 @@ useHead({ script: [{ type: "application/ld+json", innerHTML: JSON.stringify(p.sc
 <article class="cfte-prose">
   <h1>{data.p.title}</h1>
   <Markdown md={data.p.markdown} />
+  {@html data.p.faq_html}
 </article>
 <svelte:head><script type="application/ld+json">{@html JSON.stringify(data.p.schema.article)}</script></svelte:head>
 ```
@@ -82,7 +103,7 @@ useHead({ script: [{ type: "application/ld+json", innerHTML: JSON.stringify(p.sc
 ```js
 const p = await (await fetch(`${process.env.CONTENTFTE_URL}/sdk/v1/articles/${id}/content`,
   { headers: { "X-Site-Key": process.env.CONTENTFTE_SITE_KEY } })).json();
-// server-render: <article class="cfte-prose"><h1>${p.title}</h1>${p.html}</article>
+// server-render: <article class="cfte-prose"><h1>${p.title}</h1>${p.html}${p.faq_html}</article>
 // + <link rel="stylesheet" href="/path/to/contentfte-prose.css">
 // + <script type="application/ld+json">${JSON.stringify(p.schema.article)}</script>
 ```

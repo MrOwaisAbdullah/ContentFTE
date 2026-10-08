@@ -144,7 +144,9 @@ function jsonLd(data: Record<string, unknown>) {
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
-/** FAQ section rendered from payload.schema.faq (schema.org FAQPage shape). */
+/** FAQ section rendered from payload.schema.faq (schema.org FAQPage shape).
+ *  A native <details> accordion — consistent with the engine's WordPress
+ *  (core/details) and Elementor (accordion widget) output. */
 export function ContentFTEFaq({ schema }: { schema?: ContentFTESchema }) {
   const items = schema?.faq?.mainEntity ?? [];
   if (items.length === 0) return null;
@@ -152,10 +154,10 @@ export function ContentFTEFaq({ schema }: { schema?: ContentFTESchema }) {
     <section id="faqs" aria-label="Frequently asked questions" className="cfte-faq">
       <h2>Frequently asked questions</h2>
       {items.map((item, i) => (
-        <div key={i} className="cfte-faq-item">
-          <h3>{item.name}</h3>
+        <details key={i} className="cfte-faq-item" name="contentfte-faq">
+          <summary>{item.name}</summary>
           <p>{item.acceptedAnswer?.text}</p>
-        </div>
+        </details>
       ))}
     </section>
   );

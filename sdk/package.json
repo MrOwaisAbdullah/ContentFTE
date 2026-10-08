@@ -1,6 +1,6 @@
 {
   "name": "@owais-abdullah/contentfte",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "ContentFTE SDK — typed TypeScript/JavaScript client for the ContentFTE content API plus a React renderer that turns delivery payloads into SEO-ready article pages (GFM, heading anchors, FAQ, Article + FAQPage JSON-LD).",
   "license": "CC-BY-NC-4.0",
   "author": "Owais Abdullah",

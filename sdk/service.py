@@ -361,7 +361,7 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
         if art is None:
             return _err(f"article {article_id} not found", "run generate_article first")
         data: dict[str, Any] = {"id": art.id, "site_id": art.site_id, "title": art.title,
-                                "slug": art.slug, "status": art.status,
+                                "slug": _resolve_slug(art), "status": art.status,
                                 "scores": art.scores or {}, "cost_usd": art.cost_usd,
                                 "keyword_id": art.keyword_id}
         if include_content:

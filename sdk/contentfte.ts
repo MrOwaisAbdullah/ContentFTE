@@ -16,6 +16,72 @@
 
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/** One row from `listArticles`. */
+export interface ArticleSummary {
+  id: number;
+  site_id: number;
+  site_slug: string;
+  title: string;
+  slug: string;
+  status: string;
+  created_at: string | null;
+  published_at: string | null;
+  cost_usd: number;
+}
+
+/** Result of `listArticles` (newest-first, paginated). */
+export interface ArticleListResult {
+  articles: ArticleSummary[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Result of `llmsTxt`. NOTE: `llms_txt` is the text to serve at /llms.txt. */
+export interface LlmsTxtResult {
+  site: string;
+  count: number;
+  llms_txt: string;
+}
+
+/** Result of `wpPost` (raw WordPress content + registered SEO meta). */
+export interface WpPostResult {
+  id: number;
+  slug: string;
+  status: string;
+  title: string;
+  content_raw: string;
+  excerpt: string;
+  url: string;
+  modified: string;
+  featured_media: number;
+  categories: number[];
+  tags: number[];
+  meta: Record<string, unknown>;
+}
+
+/** The unified delivery payload returned by `getContent`. */
+export interface DeliveryPayload {
+  id: number;
+  title: string;
+  slug: string;
+  url: string;
+  excerpt: string;
+  html: string;
+  markdown: string;
+  markdown_alternate: string;
+  faq_html: string;
+  schema: {
+    article?: Record<string, unknown>;
+    faq?: Record<string, unknown> | null;
+  };
+  status?: string;
+  scores?: Record<string, number>;
+  cost_usd?: number;
+  meta?: Record<string, unknown>;
+}
+
 export class ContentFTEClient {
   constructor(
     private baseUrl: string,
@@ -68,7 +134,7 @@ export class ContentFTEClient {
     );
   }
 
-  async getArticle(id: number) {
+  async getArticle(id: number): Promise<Record<string, unknown>> {
     return this.request("GET", `/sdk/v1/articles/${id}`);
   }
 
@@ -91,11 +157,11 @@ export class ContentFTEClient {
   }
 
   /** Read a WordPress post back (raw content + registered SEO meta). */
-  async wpPost(postId: number) {
+  async wpPost(postId: number): Promise<WpPostResult> {
     return this.request("GET", `/sdk/v1/wp/posts/${postId}`);
   }
 
-  async getContent(id: number) {
+  async getContent(id: number): Promise<DeliveryPayload> {
     return this.request("GET", `/sdk/v1/articles/${id}/content`);
   }
 
@@ -104,13 +170,13 @@ export class ContentFTEClient {
   }
 
   /** Compose the site's llms.txt (§5.8) from its published articles. */
-  async llmsTxt(siteSlug: string) {
+  async llmsTxt(siteSlug: string): Promise<LlmsTxtResult> {
     return this.request("GET", `/sdk/v1/sites/${siteSlug}/llms.txt`);
   }
 
   /** List articles newest-first (filter by site and/or status).
    *  Content-loader usage: list published ids, then getContent(id) each. */
-  async listArticles(siteSlug = "", status = "", limit = 100, offset = 0) {
+  async listArticles(siteSlug = "", status = "", limit = 100, offset = 0): Promise<ArticleListResult> {
     const qs = new URLSearchParams({
       site_slug: siteSlug, status, limit: String(limit), offset: String(offset),
     });

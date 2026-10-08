@@ -42,6 +42,10 @@ def build_delivery_payload(
         "html": wp_render.markdown_to_wp_html(markdown, blocks=False),
         "markdown": markdown,
         "markdown_alternate": markdown_alternate(title, markdown, {"description": meta_description}),
+        # FAQ accordion HTML for sites that don't render markdown themselves
+        # (React can use <ContentFTEFaq> instead). Same <details> markup as the
+        # WordPress + Elementor output — FAQs are always an accordion.
+        "faq_html": wp_render.render_faq_block(faqs, blocks=False) if faqs else "",
         "schema": {
             "article": article_schema(title, url or slug, date_published, date_modified),
             "faq": build_faq_schema(faqs) if faqs else None,
