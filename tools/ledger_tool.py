@@ -146,7 +146,9 @@ def get_brief_template(intent: str = "informational") -> Dict[str, Any]:
 
     Args:
         intent: One of informational, commercial, transactional, local,
-            navigational.
+            navigational, announcement, press-release (aliases like
+            "comparison" or "pr" map onto the closest template; unknown
+            intents fall back to informational).
 
     Returns:
         {"status": "ok", "template": {...}, "template_text": "..."}.

@@ -10,11 +10,10 @@ transitions, persistence, audit) lives in sdk/service.generate_content.
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime, timezone
 
-from lib.brief_templates import template_text
+from lib.brief_templates import template_for, template_text, word_floor_for
 from lib.run_result_utils import loads_lenient
 
 # Same turn budget as the content stage in scripts/run_stage.py.
@@ -163,12 +162,14 @@ def render_prompt(brief: dict) -> str:
     or writes are needed for this run.
 
     Also carries the deterministic gates the checks in service._content_checks
-    enforce (word floor, current year, internal/external links, Bottom Line),
-    so a single-shot model has everything it needs in one message."""
+    enforce (intent-aware word floor, current year, internal/external links,
+    Bottom Line), so a single-shot model has everything it needs in one message."""
     payload = json.dumps(brief, ensure_ascii=False, default=str)
     today = datetime.now(timezone.utc)
     year = today.year
-    min_words = int(os.environ.get("GEN_MIN_WORDS") or "900")
+    intent = str(brief.get("template_intent") or brief.get("intent") or "")
+    min_words = word_floor_for(intent)
+    target = str(template_for(intent).get("word_target", "1500-2500"))
     internal_links = brief.get("internal_links") or []
     sources = brief.get("sources") or []
     site_base = str(brief.get("site_base_url") or "").strip()
@@ -193,8 +194,9 @@ def render_prompt(brief: dict) -> str:
         f"{year}. Never write the post as if it belongs to a past year: "
         f"no \"in {year - 1}\" (or older) in the title, headings, or body "
         f"unless quoting a historical event with an explicit date.",
-        f"- Length: at least {min_words} words (aim 1500-2500 for a "
-        "flagship post). Short drafts are rejected and re-run.",
+        f"- Length: at least {min_words} words (this brief's intent targets "
+        f"{target} — length matches intent; a flagship informational post "
+        "should aim 1500-2500). Short drafts are rejected and re-run.",
         "- Structure: TL;DR near the top (first ~800 chars), `## Sources` "
         "as the LAST section, 3+ FAQs, question-form H2s.",
         "- Close with a `## Bottom Line` section (60-100 words) placed "

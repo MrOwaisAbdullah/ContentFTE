@@ -265,9 +265,14 @@ def _content_checks(*, content: str, title: str, summary: str,
 
     Checks whose inputs are absent (no link candidates, no sources) pass
     fail-open so a sparse brief never dead-locks generation; only provable
-    failures report. `GEN_MIN_WORDS` (default 900) is the hard word floor."""
+    failures report. The word floor is intent-aware (`word_floor_for` —
+    compact buyer-intent pages floor at their template's 400-500, flagship
+    informational at 900) with `GEN_MIN_WORDS` as an operator override."""
+    from lib.brief_templates import word_floor_for
+
     words = len((content or "").split())
-    min_words = int(os.environ.get("GEN_MIN_WORDS") or "900")
+    min_words = word_floor_for(
+        str(brief.get("template_intent") or brief.get("intent") or ""))
     md_links = re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", content or "")
     site_base = str(brief.get("site_base_url") or "").rstrip("/")
     internal = [l for l in md_links if site_base and l.startswith(site_base)]

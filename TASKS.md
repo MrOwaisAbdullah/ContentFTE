@@ -67,14 +67,14 @@ Update this file on every commit: `[ ]` → `[x]` + date + commit hash.
 
 ### A2. seo-pack audit gaps (2026-10-08 — engine vs skill-pack cross-check)
 - [x] 2026-10-08 — IndexNow + Bing WMT URL submission wired into publish (spec §5.6 "concrete mechanism, not just the ping"; `lib/geo.indexnow_payload` existed but was never called; `INDEXNOW_KEY`/`BING_WMT_API_KEY` in `.env.example` unread by any code) — **closed 2026-10-08**: new `lib/indexing.py` (IndexNow shared endpoint `api.indexnow.org/indexnow` + Bing `SubmitUrlBatch?apikey=`, 200/201/202 accept, fail-open), `publish_article`/`refresh_article` attach an `indexing` report post-flip, keys guarded in conftest
-- [ ] Intent-aware word floor: quality gate follows the brief's intent template (compact/transactional 400–500w pages fail the hard `GEN_MIN_WORDS=900`; pack onpage-aeo "length matches intent")
-- [ ] Fan-out queries section in every brief (pack brief-research: 5–10 observed queries; spec §5.15 discourse → fan-out queries)
+- [x] 2026-10-08 — Intent-aware word floor: quality gate follows the brief's intent template (compact/transactional 400–500w pages fail the hard `GEN_MIN_WORDS=900`; pack onpage-aeo "length matches intent") — **closed 2026-10-08**: `word_floor_for()` (GEN_MIN_WORDS stays the operator override) wired into `generation.render_prompt` + `service._content_checks`; floors per template (txn 400, local 700, nav 500, info/commercial 900)
+- [x] 2026-10-08 — Fan-out queries section in every brief (pack brief-research: 5–10 observed queries; spec §5.15 discourse → fan-out queries) — **closed 2026-10-08**: brief-agent step 3 mandates a "## Fan-out Queries" section sourced from research related-queries + PAA + discourse (no invented volume numbers)
 - [ ] Brand DNA distillation from samples (spec §5.1 CLI; `lib/brand_dna.py` docstring defers distillation "to a later wiring commit")
 - [ ] SERP drift job: monthly re-check of brief-time top-10 vs fresh SERP, flag brief/page for update (spec §5.16 "SERP snapshots & drift alerts"; `decay_job` covers click decay only)
 - [x] 2026-10-08 — XML sitemap per site (spec §5.6) + `site_health` crawlability/indexation/structure checks (pack technical-foundations; `site_health` currently checks ledger + WP env only) — **closed 2026-10-08**: `lib/geo.sitemap_xml` (sitemaps.org 0.9) + `service.sitemap_xml` + REST `/sites/{slug}/sitemap.xml` + MCP `contentfte_sitemap` + client methods; `site_health` probes robots.txt, WP sitemap, WP `blog_public` search visibility (critical flag) via injectable `http_get`
 - [ ] Linkguard depth/role rules: ≤3 clicks from homepage, hub→BOFU, guides link 2–3 money pages (pack authority-internal; `check_hygiene` covers counts + anchor diversity only)
 - [ ] GBP ↔ website consistency checker (playbook §9 "Factory-critical", wiring status "New work")
-- [ ] Win-announcement + press-release brief templates (pack geo-citability; `brief_templates` has 5 intents, neither exists)
+- [x] 2026-10-08 — Win-announcement + press-release brief templates (pack geo-citability; `brief_templates` has 5 intents, neither exists) — **closed 2026-10-08**: `announcement` + `press-release` templates (inverted pyramid, [VERIFY] marks, no invented quotes) + alias mapping (comparison→commercial, pr/press→press-release, news/milestone→announcement); brief-agent step 2d routes PR keywords to them
 
 ---
 

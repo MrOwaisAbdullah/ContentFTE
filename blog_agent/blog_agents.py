@@ -805,6 +805,13 @@ brief_agent = Agent(
           `build_comparison_page_tool(client, competitor)` and add a
           "## Comparison Page Spec" section (neutral tone, client first,
           competitor linked, fact-check required - never strawman).
+        - Announcement/PR keyword (win, milestone, award, funding, launch,
+          "announces", "press release"): call
+          `get_brief_template_tool("announcement")` or
+          `get_brief_template_tool("press-release")` and follow THAT template
+          instead of the default structure - facts, dates and sourced numbers
+          only; mark anything unconfirmed as [VERIFY]; NEVER invent a quote
+          from a real person or a metric you cannot source.
         - Cluster planning: call
           `plan_keyword_cluster_tool(seed_keyword, keywords_json)` with the
           keyword plus its related queries from research, and add a
@@ -845,6 +852,14 @@ brief_agent = Agent(
             "Keyword" "how do I") and collect 5-8 real user questions/angles -
             paraphrased, no usernames, no invented quotes. Save as a
             "## Discourse Appendix" section at the end of the Brief Content.
+          - Fan-out queries (pack brief-research): add a "## Fan-out Queries"
+            section listing 5-10 observed queries this cluster should also
+            cover - pull from the research row's related queries, the PAA
+            questions you collected, and the Discourse appendix phrasing (plus
+            natural reformulations: who/what/how/vs/best/alternative/for
+            <audience>). One query per line annotated with the hub or spoke
+            page that should serve it; the writer uses these as H2/FAQ seed
+            material. Do NOT invent search-volume numbers for them.
           - SERP gaps: once your H2 list is final, compare it against the top
             results (research row SERP data if present, otherwise
             `tavily_search_tool` + up to 3 `tavily_extract_tool` URL reads).
