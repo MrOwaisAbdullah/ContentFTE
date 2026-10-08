@@ -2,7 +2,7 @@
 name: contentfte
 description: |
   Integrate the ContentFTE content engine into a website or app. Covers
-  installing the `@owais-abdullah/contentfte` SDK (or calling the REST/MCP API),
+  installing the `content-fte` SDK (or calling the REST/MCP API),
   configuring credentials, pulling the unified `/content` payload, and rendering
   SEO/AEO/GEO-ready articles correctly for the user's stack — Next.js/React,
   Astro, Vue/Nuxt, Svelte/SvelteKit, plain HTML/Node, WordPress, or an AI agent
@@ -21,13 +21,13 @@ The engine owns the *content*; your site owns the *layout*.
 
 ## What the SDK gives you
 
-The npm package `@owais-abdullah/contentfte` has three entry points:
+The npm package `content-fte` has three entry points:
 
 | Import | What it is |
 | :--- | :--- |
-| `@owais-abdullah/contentfte` | `ContentFTEClient` — typed client (fetch, retry/backoff, idempotency keys) |
-| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
-| `@owais-abdullah/contentfte/contentfte-prose.css` | Framework-agnostic typography (wrapper class `cfte-prose`) |
+| `content-fte` | `ContentFTEClient` — typed client (fetch, retry/backoff, idempotency keys) |
+| `content-fte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
+| `content-fte/contentfte-prose.css` | Framework-agnostic typography (wrapper class `cfte-prose`) |
 
 The engine returns a **unified payload** at `GET /sdk/v1/articles/{id}/content`:
 `title, slug, url, excerpt, html, markdown, markdown_alternate, schema{article, faq}, meta`.
@@ -63,7 +63,7 @@ knowledge is in this skill.
 
 ### 1. Install
 ```bash
-npm install @owais-abdullah/contentfte        # React/Next/Bundlers
+npm install content-fte        # React/Next/Bundlers
 ```
 No npm? Call REST directly (`GET /sdk/v1/articles/{id}/content`) — see `references/api.md`.
 
@@ -77,7 +77,7 @@ never in client bundles.
 
 ### 3. Fetch content
 ```ts
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEClient } from "content-fte";
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 const payload = await client.getContent(12);          // one article
 const list = await client.listArticles("my-site", "published"); // enumerate
@@ -108,7 +108,7 @@ JSON-LD — sanitized. Other stacks use the engine's `html` + `faq_html`, or run
 - **`llms.txt` (site-level):** `GET /sdk/v1/sites/{slug}/llms.txt` returns
   `{site, count, llms_txt}` — serve the **`llms_txt` string** at `/llms.txt`
   (do **not** serve the raw JSON). In the client: `const { llms_txt } = await client.llmsTxt(slug)`, then `return new Response(llms_txt, { headers: { "content-type": "text/plain" } })`.
-- **Styles:** import `@owais-abdullah/contentfte/contentfte-prose.css` (wrap the
+- **Styles:** import `content-fte/contentfte-prose.css` (wrap the
   article in `cfte-prose`).
 
 ### 6. Verify

@@ -3,14 +3,14 @@
 One install gives you everything:
 
 ```bash
-npm install @owais-abdullah/contentfte
+npm install content-fte
 ```
 
 | Import | What it is |
 |---|---|
-| `@owais-abdullah/contentfte` | Typed HTTP client — dependency-free `fetch`, works in browsers, Node 18+, Next.js, Astro, Vite |
-| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` — React component that renders the delivery payload (title `<h1>`, markdown body, FAQ accordion (`<details>`), Article + FAQPage JSON-LD) |
-| `@owais-abdullah/contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload (also usable without React) |
+| `content-fte` | Typed HTTP client — dependency-free `fetch`, works in browsers, Node 18+, Next.js, Astro, Vite |
+| `content-fte/renderer` | `<ContentFTEArticle>` — React component that renders the delivery payload (title `<h1>`, markdown body, FAQ accordion (`<details>`), Article + FAQPage JSON-LD) |
+| `content-fte/contentfte-prose.css` | Framework-agnostic typography for the payload (also usable without React) |
 
 ## 1. Get connected
 
@@ -37,7 +37,7 @@ uvicorn main:app --port 8000
 
 ```ts
 // app/api/contentfte/route.ts
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEClient } from "content-fte";
 
 const client = new ContentFTEClient(
   process.env.CONTENTFTE_URL!,    // e.g. https://engine.example.com
@@ -65,7 +65,7 @@ const { id } = await res.json();
 ### Direct from a client component / Vite
 
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEClient } from "content-fte";
 
 const client = new ContentFTEClient(
   import.meta.env.VITE_CONTENTFTE_URL,
@@ -80,7 +80,7 @@ const art = await client.submitArticle("mysite", "best crm for agencies", {}, cr
 ```ts
 // src/pages/api/contentfte.ts (or .ts route handler)
 import type { APIRoute } from "astro";
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEClient } from "content-fte";
 
 const client = new ContentFTEClient(
   import.meta.env.PUBLIC_CONTENTFTE_URL,
@@ -125,9 +125,9 @@ static generators), and `schema` (`article` + `faq` JSON-LD).
 ### React / Next.js — `<ContentFTEArticle>`
 
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import { ContentFTEArticle, type ContentFTEPayload } from "@owais-abdullah/contentfte/renderer";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle, type ContentFTEPayload } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 
@@ -156,8 +156,8 @@ No React needed: the payload already ships server-rendered HTML.
 
 ```astro
 ---
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(
   import.meta.env.PUBLIC_CONTENTFTE_URL,

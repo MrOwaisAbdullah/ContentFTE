@@ -1,9 +1,9 @@
 # contentfte
 
-[![npm version](https://img.shields.io/npm/v/@owais-abdullah/contentfte.svg?logo=npm)](https://www.npmjs.com/package/@owais-abdullah/contentfte)
+[![npm version](https://img.shields.io/npm/v/content-fte.svg?logo=npm)](https://www.npmjs.com/package/content-fte)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](./LICENSE)
 
-Published on npm as **`@owais-abdullah/contentfte`** — https://www.npmjs.com/package/@owais-abdullah/contentfte
+Published on npm as **`content-fte`** — https://www.npmjs.com/package/content-fte
 
 One `npm install` gives you the ContentFTE engine SDK: a typed HTTP client
 plus a React renderer that turns the unified `/content` delivery payload into
@@ -11,7 +11,7 @@ a fully SEO'd article page (title H1, GFM, FAQ section, Article + FAQPage
 JSON-LD).
 
 ```bash
-npm install @owais-abdullah/contentfte
+npm install content-fte
 ```
 
 > Requires the ContentFTE engine (self-hosted, `uvicorn main:app`) or a
@@ -22,14 +22,14 @@ npm install @owais-abdullah/contentfte
 
 | Import | What you get |
 |---|---|
-| `@owais-abdullah/contentfte` | `ContentFTEClient` — dependency-free `fetch`, built-in retry/backoff, idempotency keys |
-| `@owais-abdullah/contentfte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
-| `@owais-abdullah/contentfte/contentfte-prose.css` | Framework-agnostic typography for the payload |
+| `content-fte` | `ContentFTEClient` — dependency-free `fetch`, built-in retry/backoff, idempotency keys |
+| `content-fte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
+| `content-fte/contentfte-prose.css` | Framework-agnostic typography for the payload |
 
 ### Client
 
 ```ts
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
+import { ContentFTEClient } from "content-fte";
 
 const client = new ContentFTEClient("https://engine.example.com", "site-key");
 
@@ -42,9 +42,9 @@ const payload = await client.getContent(art.id); // unified delivery payload
 ### Renderer (React / Next.js)
 
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import { ContentFTEArticle, type ContentFTEPayload } from "@owais-abdullah/contentfte/renderer";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle, type ContentFTEPayload } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 

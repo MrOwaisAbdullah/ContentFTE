@@ -22,7 +22,7 @@ The code lives in `sdk/service.py` (canonical ops) → `sdk/server.py`
 | :--- | :--- |
 | **Site** | A row keyed by `slug` with `site_type` = `custom` \| `wordpress`, an optional `base_url`, and `publish_mode`. Create it once. |
 | **Article lifecycle** | `briefed` → `drafted` → `approved` → `published`; a rejected review sets `needs_review`. `publish_article` only accepts `approved` (or `published`). |
-| **Interfaces** | Everything below is available three ways, same behavior: **REST** (`/sdk/v1/*`), **MCP** (`contentfte_*` tools), and the **clients** (`sdk/python_client.py`, npm `@owais-abdullah/contentfte`). |
+| **Interfaces** | Everything below is available three ways, same behavior: **REST** (`/sdk/v1/*`), **MCP** (`contentfte_*` tools), and the **clients** (`sdk/python_client.py`, npm `content-fte`). |
 | **Auth** | REST/MCP: `X-Site-Key` header == `SDK_MASTER_KEY` (dev-open when unset). |
 | **Audit + cost** | Every mutating op writes an `AuditLog` row; publish finalizes the per-article cost into `Article.cost_usd`. |
 | **Fail-open** | A WordPress/Elementor/webhook failure never loses the article or rolls back status — the outcome rides in the response (`wp.ok=false`, …) and a re-run retries. |
@@ -364,18 +364,18 @@ The payload deliberately ships all three:
 
 So Astro is **not** forced to HTML: use `p.markdown` to render it yourself, or
 `p.html` for the engine's exact rendering. The React renderer in
-`@owais-abdullah/contentfte` is the markdown path — it compiles `payload.markdown`
+`content-fte` is the markdown path — it compiles `payload.markdown`
 via `react-markdown` (and falls back to `payload.html` when markdown is empty),
 which is why React/Next below looks "markdown-first".
 
 **React / Next** — install the published renderer once:
 ```bash
-npm install @owais-abdullah/contentfte
+npm install content-fte
 ```
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import { ContentFTEArticle } from "@owais-abdullah/contentfte/renderer";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 const payload = await client.getContent(12);

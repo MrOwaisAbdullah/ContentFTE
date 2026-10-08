@@ -11,6 +11,26 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-08 — npm package renamed to `content-fte` (0.3.0)
+**Branch:** `contentfte-phase1-engine-wp-sdk`
+**Tests:** 219/219 pytest + SDK typecheck/build/smoke 20/20
+
+- Renamed the npm package **`@owais-abdullah/contentfte` → `content-fte`**
+  (user: the scoped name is too long). Updated `sdk/package.json` (name +
+  version **0.3.0**), install/import specifiers in both READMEs, quickstart,
+  the skill (`SKILL.md` + `references/stacks.md`), `docs/site-onboarding-flow.md`,
+  `docs/phase1-feature-map.md`, `ContentFTEArticle.tsx`, `contentfte-prose.css.d.ts`.
+  Historical dev-log/TASKS/dogfood rows intentionally keep the old name.
+- The `0.2.1` publish attempt failed **404 → real cause 401** (`npm whoami`
+  Unauthorized): the npm login session had expired (npm reports scoped PUTs as
+  404 when unauthenticated). Fix: `npm login`, then publish `content-fte@0.3.0`.
+- `content-fte` verified available on the registry; bare `contentfte` remains
+  blocked by npm's similarity guard vs `contentful`. After the new package is
+  live, deprecate the old one so existing links show a warning.
+- Dogfood processes (uvicorn `:8123`, `next dev` `:3000`) stopped — ports free.
+
+---
+
 ## 2026-10-07 — L80 live acceptance ✓ + FAQ accordion + packaging
 **Branch:** `contentfte-phase1-engine-wp-sdk` (23 commits ahead of `master`)
 **Commits:** `9c2c2cc` (this session) ← `fe30ff7` ← `3ea31cd` ← `5bb0a53` ← `bba7522` ← `0e445e1`

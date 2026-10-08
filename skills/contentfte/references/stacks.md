@@ -6,9 +6,9 @@ All snippets assume env `CONTENTFTE_URL` and `CONTENTFTE_SITE_KEY` (server-side)
 
 `app/blog/[slug]/page.tsx` (App Router, server component):
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import { ContentFTEArticle, type ContentFTEPayload } from "@owais-abdullah/contentfte/renderer";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle, type ContentFTEPayload } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 

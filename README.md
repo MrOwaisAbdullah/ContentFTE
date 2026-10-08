@@ -6,7 +6,7 @@
 [![Adapters: WordPress | Shopify | Wix](https://img.shields.io/badge/Adapters-WordPress%20%7C%20Shopify%20%7C%20Wix-green.svg)](https://github.com/MrOwaisAbdullah/ContentFTE)
 [![Gateways: Discord | Telegram | WhatsApp](https://img.shields.io/badge/Gateways-Discord%20%7C%20Telegram%20%7C%20WhatsApp-5865F2.svg)](https://github.com/MrOwaisAbdullah/ContentFTE)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](./LICENSE)
-[![npm: @owais-abdullah/contentfte](https://img.shields.io/npm/v/@owais-abdullah/contentfte.svg?logo=npm&label=npm)](https://www.npmjs.com/package/@owais-abdullah/contentfte)
+[![npm: content-fte](https://img.shields.io/npm/v/content-fte.svg?logo=npm&label=npm)](https://www.npmjs.com/package/content-fte)
 
 > **Autonomous multi-agent Digital FTE that researches, writes, and publishes 15–17 SEO-optimized articles daily. Directly pushes to Sanity CMS with extensible adapters for WordPress, Shopify, Wix, and Headless CMS platforms, integrated with Discord, Telegram, and WhatsApp gateways for real-time notifications and approvals.**
 
@@ -43,17 +43,17 @@ frontend, a script, or an AI agent can drive the pipeline:
 | :--- | :--- |
 | **REST API** (`/sdk/v1/*`) | Canonical service ops — sites, briefs, articles, generate, gate/approve, publish, WordPress/Elementor build |
 | **MCP server** (`/mcp`) | `contentfte_*` tools (`list_sites`, `get_brief`, `generate_article`, `get_article_status`, `get_image`, `publish_article`, `site_health`, `elementor_*`) for Claude Code or any MCP client |
-| **npm package** | [`@owais-abdullah/contentfte`](https://www.npmjs.com/package/@owais-abdullah/contentfte) — typed TS/JS client + React renderer that turns the unified `/content` payload into a fully SEO'd page (GFM, heading anchors, FAQ accordion, Article + FAQPage JSON-LD) |
+| **npm package** | [`content-fte`](https://www.npmjs.com/package/content-fte) — typed TS/JS client + React renderer that turns the unified `/content` payload into a fully SEO'd page (GFM, heading anchors, FAQ accordion, Article + FAQPage JSON-LD) |
 | **Python client** | `sdk/python_client.py` for scripts and scheduled jobs |
 
 ```bash
-npm install @owais-abdullah/contentfte
+npm install content-fte
 ```
 
 ```tsx
-import { ContentFTEClient } from "@owais-abdullah/contentfte";
-import { ContentFTEArticle } from "@owais-abdullah/contentfte/renderer";
-import "@owais-abdullah/contentfte/contentfte-prose.css";
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
 
 const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
 const payload = await client.getContent(articleId);
