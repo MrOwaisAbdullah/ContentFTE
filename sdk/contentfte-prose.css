@@ -1,0 +1,208 @@
+/* ContentFTE prose — framework-agnostic typography for the delivery payload.
+ *
+ * Scoped to `.cfte-prose` (the ContentFTEArticle wrapper; add the class to
+ * any container you render `payload.html` into yourself). Mirrors the
+ * reference portfolio's editorial serif style (Newsreader body, -0.02em
+ * headings, accent underlined links, italic blockquotes) but needs no
+ * Tailwind and no font import — fonts/colors fall back to system values.
+ *
+ * Theming: every value is a use-site fallback (never a self-referencing
+ * custom property, which would be a CSS cycle). Override on any ancestor:
+ *   :root { --cfte-font-body: "Newsreader", Georgia, serif; --cfte-accent: #0f766e; }
+ */
+.cfte-prose {
+  color: var(--cfte-text, #1f2937);
+  font-family: var(--cfte-font-body, Georgia, "Times New Roman", serif);
+  font-size: 1.125rem;
+  line-height: 1.8;
+  max-width: 46rem;
+}
+
+.cfte-prose > * + * {
+  margin-top: 1.2em;
+}
+
+/* --- headings: sans, 600, tight tracking, anchor offset for sticky navs --- */
+.cfte-prose h1,
+.cfte-prose h2,
+.cfte-prose h3,
+.cfte-prose h4,
+.cfte-prose h5,
+.cfte-prose h6 {
+  font-family: var(--cfte-font-heading, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--cfte-text, #1f2937);
+  scroll-margin-top: 6rem; /* TOC / scrollspy anchors clear a sticky header */
+}
+.cfte-prose h1 {
+  font-size: clamp(1.75rem, 1.3rem + 2vw, 2.5rem);
+  line-height: 1.2;
+  margin-top: 0;
+}
+.cfte-prose h2 {
+  font-size: 1.75rem;
+  margin-top: 2em;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--cfte-border, #e5e7eb);
+}
+.cfte-prose h3 { font-size: 1.375rem; margin-top: 1.8em; }
+.cfte-prose h4 { font-size: 1.125rem; margin-top: 1.6em; }
+.cfte-prose h5,
+.cfte-prose h6 { font-size: 1rem; margin-top: 1.5em; }
+/* the title <h1> is never first-of-type after a dek — keep rhythm sane */
+.cfte-prose h1 + p { margin-top: 0.75em; }
+
+/* --- paragraph / dek --- */
+.cfte-prose p { margin-top: 1.2em; }
+.cfte-prose .cfte-dek {
+  font-size: 1.2rem;
+  color: var(--cfte-text-muted, #4b5563);
+  line-height: 1.6;
+}
+
+/* --- links --- */
+.cfte-prose a {
+  color: var(--cfte-accent, #0f766e);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.cfte-prose a:hover { color: var(--cfte-accent-hover, #115e59); }
+
+/* --- emphasis --- */
+.cfte-prose strong,
+.cfte-prose b { font-weight: 700; color: var(--cfte-text, #1f2937); }
+.cfte-prose em,
+.cfte-prose i { font-style: italic; }
+.cfte-prose del { color: var(--cfte-text-muted, #4b5563); }
+.cfte-prose mark {
+  background: var(--cfte-mark-bg, rgba(15, 118, 110, 0.15));
+  color: inherit;
+  padding: 0.05em 0.2em;
+  border-radius: 0.2em;
+}
+
+/* --- blockquote (opens with the TL;DR answer block) --- */
+.cfte-prose blockquote {
+  font-family: var(--cfte-font-body, Georgia, "Times New Roman", serif);
+  font-style: italic;
+  color: var(--cfte-text-muted, #4b5563);
+  border-left: 3px solid var(--cfte-accent, #0f766e);
+  background: var(--cfte-code-bg, rgba(15, 23, 42, 0.06));
+  padding: 0.9rem 1.25rem;
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+.cfte-prose blockquote > * { margin-top: 0.5em; }
+.cfte-prose blockquote > :first-child { margin-top: 0; }
+.cfte-prose blockquote strong { color: var(--cfte-text, #1f2937); }
+
+/* --- lists --- */
+.cfte-prose ul,
+.cfte-prose ol { padding-left: 1.5rem; }
+.cfte-prose li { margin-top: 0.4em; }
+.cfte-prose li::marker { color: var(--cfte-accent, #0f766e); }
+.cfte-prose li > ul,
+.cfte-prose li > ol { margin-top: 0.4em; }
+
+/* --- code --- */
+.cfte-prose code {
+  font-family: var(--cfte-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 0.875em;
+  background: var(--cfte-code-bg, rgba(15, 23, 42, 0.06));
+  padding: 0.15em 0.4em;
+  border-radius: 0.3rem;
+}
+.cfte-prose pre {
+  background: var(--cfte-code-bg, rgba(15, 23, 42, 0.06));
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+.cfte-prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+/* --- tables: horizontal scroll on narrow screens --- */
+.cfte-table-wrap,
+.cfte-prose .cfte-table-wrap {
+  overflow-x: auto;
+  margin-top: 1.5em;
+}
+.cfte-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.cfte-prose th,
+.cfte-prose td {
+  border: 1px solid var(--cfte-border, #e5e7eb);
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  vertical-align: top;
+}
+.cfte-prose th {
+  font-family: var(--cfte-font-heading, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-weight: 600;
+  background: var(--cfte-code-bg, rgba(15, 23, 42, 0.06));
+}
+.cfte-prose tr:nth-child(even) td { background: var(--cfte-code-bg, rgba(15, 23, 42, 0.06)); }
+
+/* --- images / figures / hr --- */
+.cfte-prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin-top: 1.5em;
+}
+.cfte-prose figure { margin-top: 1.5em; }
+.cfte-prose figcaption {
+  font-size: 0.9rem;
+  color: var(--cfte-text-muted, #4b5563);
+  margin-top: 0.5em;
+}
+.cfte-prose hr {
+  border: 0;
+  border-top: 1px solid var(--cfte-border, #e5e7eb);
+  margin-top: 2.5em;
+}
+
+/* --- FAQ section --- */
+.cfte-prose .cfte-faq {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--cfte-border, #e5e7eb);
+}
+.cfte-prose .cfte-faq > h2 {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+.cfte-prose .cfte-faq-item { margin-top: 1.5em; }
+.cfte-prose .cfte-faq-item summary {
+  margin-top: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cfte-prose .cfte-faq-item p { margin-top: 0.5em; }
+
+/* --- dark scheme: opt in with data-cfte-theme="auto" on the wrapper --- */
+@media (prefers-color-scheme: dark) {
+  .cfte-prose[data-cfte-theme="auto"] {
+    --cfte-text: #e5e7eb;
+    --cfte-text-muted: #9ca3af;
+    --cfte-border: #374151;
+    --cfte-code-bg: rgba(255, 255, 255, 0.07);
+    --cfte-accent: #2dd4bf;
+    --cfte-accent-hover: #5eead4;
+    --cfte-mark-bg: rgba(45, 212, 191, 0.2);
+    color: var(--cfte-text, #e5e7eb);
+    font-family: var(--cfte-font-body, Georgia, "Times New Roman", serif);
+  }
+}

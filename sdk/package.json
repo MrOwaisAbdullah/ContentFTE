@@ -1,0 +1,145 @@
+{
+  "name": "content-fte",
+  "version": "0.3.0",
+  "description": "ContentFTE SDK — typed TypeScript/JavaScript client for the ContentFTE content API plus a React renderer that turns delivery payloads into SEO-ready article pages (GFM, heading anchors, FAQ, Article + FAQPage JSON-LD).",
+  "license": "CC-BY-NC-4.0",
+  "author": "Owais Abdullah",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrOwaisAbdullah/ContentFTE.git"
+  },
+  "homepage": "https://github.com/MrOwaisAbdullah/ContentFTE#readme",
+  "keywords": [
+    "contentfte",
+    "seo",
+    "aeo",
+    "geo",
+    "content-automation",
+    "ai-content",
+    "blog",
+    "article",
+    "sdk",
+    "api-client",
+    "typescript",
+    "javascript",
+    "react",
+    "react-markdown",
+    "nextjs",
+    "astro",
+    "json-ld",
+    "schema-org",
+    "faq-schema",
+    "headless-cms",
+    "digital-fte",
+    "ai-agents"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "main": "./dist/contentfte.cjs",
+  "module": "./dist/contentfte.js",
+  "types": "./dist/contentfte.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/contentfte.d.ts",
+        "default": "./dist/contentfte.js"
+      },
+      "require": {
+        "types": "./dist/contentfte.d.cts",
+        "default": "./dist/contentfte.cjs"
+      }
+    },
+    "./renderer": {
+      "import": {
+        "types": "./dist/renderer.d.ts",
+        "default": "./dist/renderer.js"
+      },
+      "require": {
+        "types": "./dist/renderer.d.cts",
+        "default": "./dist/renderer.cjs"
+      }
+    },
+    "./contentfte-prose.css": {
+      "import": {
+        "types": "./contentfte-prose.css.d.ts",
+        "default": "./contentfte-prose.css"
+      },
+      "require": {
+        "types": "./contentfte-prose.css.d.cts",
+        "default": "./contentfte-prose.css"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "renderer": [
+        "./dist/renderer.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "contentfte.ts",
+    "ContentFTEArticle.tsx",
+    "contentfte-prose.css",
+    "contentfte-prose.css.d.ts",
+    "contentfte-prose.css.d.cts",
+    "quickstart.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node smoke.mjs",
+    "test": "npm run typecheck && npm run build && npm run smoke",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "rehype-slug": "^6.0.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "tsup": {
+    "entry": {
+      "contentfte": "contentfte.ts",
+      "renderer": "ContentFTEArticle.tsx"
+    },
+    "format": [
+      "esm",
+      "cjs"
+    ],
+    "dts": true,
+    "sourcemap": true,
+    "clean": true,
+    "external": [
+      "react",
+      "react-dom"
+    ]
+  },
+  "bugs": {
+    "url": "https://github.com/MrOwaisAbdullah/ContentFTE/issues"
+  }
+}

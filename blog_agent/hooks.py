@@ -1,4 +1,16 @@
+import sys
+
 from agents import Agent, AgentHooks, RunContextWrapper, Tool
+
+# Tool results contain emoji (brand context: 🚀🤖...) — on Windows, a piped
+# stdout defaults to the locale codepage (cp1252) and print() would raise
+# UnicodeEncodeError *inside the hook*, which the SDK then reports as
+# "Error running tool ...". Force UTF-8 (replace, never crash the run).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 — already-wrapped/closed streams
+        pass
 
 
 class MyAgentHooks(AgentHooks):

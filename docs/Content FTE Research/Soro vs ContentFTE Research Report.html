@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="data:," />
+  <title>AI SEO Automation Landscape — ContentFTE Launch Report</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      color-scheme:light dark;
+      --bg:#f3f5f1;--paper:#fbfcf8;--ink:#12211b;--muted:#55635c;--line:#cfd7d0;
+      --green:#0b6b4d;--green-2:#dcefe5;--orange:#c85720;--orange-2:#f9e5d8;
+      --blue:#245b78;--blue-2:#dceaf1;--red:#9d2f2f;--red-2:#f6dddd;--shadow:0 12px 32px rgba(18,33,27,.08);
+    }
+    @media (prefers-color-scheme:dark){
+      :root{--bg:#101713;--paper:#17201b;--ink:#edf5ef;--muted:#adbbb2;--line:#33423a;
+      --green:#65cf9f;--green-2:#173d2d;--orange:#f09a69;--orange-2:#4a291c;--blue:#8bc5e0;--blue-2:#1c3847;
+      --red:#ff9999;--red-2:#462226;--shadow:0 12px 32px rgba(0,0,0,.26)}
+    }
+    *{box-sizing:border-box} html{scroll-behavior:auto} body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",sans-serif;line-height:1.55}
+    a{color:var(--green);text-underline-offset:3px} a:hover{text-decoration-thickness:2px}
+    .shell{max-width:1440px;margin:auto;display:grid;grid-template-columns:230px minmax(0,1fr);gap:38px;padding:28px clamp(18px,4vw,60px) 80px}
+    .rail{position:sticky;top:18px;align-self:start;height:calc(100vh - 36px);display:flex;flex-direction:column;gap:22px}
+    .rail .stamp{font-size:.76rem;color:var(--muted);padding-bottom:18px;border-bottom:1px solid var(--line)}
+    .rail nav{display:flex;flex-direction:column;gap:4px}
+    .rail nav a{color:var(--muted);text-decoration:none;padding:7px 10px;border-left:2px solid transparent;font-size:.86rem}
+    .rail nav a:hover,.rail nav a:focus{color:var(--ink);border-left-color:var(--green);background:var(--green-2)}
+    .rail .note{margin-top:auto;font-size:.75rem;color:var(--muted)}
+    main{min-width:0}.hero{background:var(--paper);border-top:6px solid var(--green);padding:clamp(26px,5vw,64px);box-shadow:var(--shadow)}
+    .eyebrow{font-weight:700;color:var(--green);font-size:.82rem;letter-spacing:.04em}.hero h1{font:700 clamp(2.6rem,7vw,6.8rem)/.91 "Source Serif 4",serif;letter-spacing:-.06em;margin:18px 0 22px;max-width:880px}.hero h1 span{color:var(--orange)}
+    .dek{font:600 clamp(1.08rem,2.1vw,1.5rem)/1.42 "Source Serif 4",serif;max-width:850px;margin:0;color:var(--ink)}
+    .verdict{margin-top:34px;display:grid;grid-template-columns:1.25fr .75fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+    .verdict>div{background:var(--paper);padding:20px}.verdict strong{display:block;font-size:.78rem;color:var(--green);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}.verdict p{margin:0;font-size:.98rem}
+    section{scroll-margin-top:20px;margin-top:52px}.section-head{display:grid;grid-template-columns:70px 1fr;gap:14px;align-items:start;margin-bottom:22px}.num{font:700 2rem/1 "Source Serif 4",serif;color:var(--orange)}h2{font:700 clamp(1.8rem,4vw,3.5rem)/1 "Source Serif 4",serif;letter-spacing:-.035em;margin:0}.section-head p{margin:10px 0 0;color:var(--muted);max-width:820px}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric{background:var(--paper);padding:18px;border-top:3px solid var(--line);min-height:132px}.metric.good{border-color:var(--green)}.metric.warn{border-color:var(--orange)}.metric .value{font:700 clamp(1.65rem,3vw,2.45rem)/1 "Source Serif 4",serif}.metric .label{font-weight:600;margin-top:10px}.metric small{color:var(--muted);display:block;margin-top:5px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}.panel{background:var(--paper);padding:clamp(18px,3vw,30px);border:1px solid var(--line)}.panel h3{font:700 1.35rem/1.15 "Source Serif 4",serif;margin:0 0 14px}.panel p:last-child{margin-bottom:0}.source-tag{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:600;padding:4px 7px;background:var(--blue-2);color:var(--blue);text-decoration:none;margin:2px 2px 2px 0}
+    .estimate{background:var(--orange-2);border-left:4px solid var(--orange);padding:18px 20px;margin-top:18px}.estimate strong{color:var(--orange)}
+    .bars{margin-top:22px}.barrow{display:grid;grid-template-columns:120px 1fr 72px;gap:12px;align-items:center;margin:10px 0;font-size:.86rem}.track{height:12px;background:var(--line);position:relative}.fill{height:100%;background:var(--green)}.fill.orange{background:var(--orange)}.barrow b{text-align:right}
+    .matrix{border:1px solid var(--line);background:var(--paper)}.mrow{display:grid;grid-template-columns:1.05fr 1fr 1fr;border-top:1px solid var(--line)}.mrow:first-child{border-top:0}.mrow>div{padding:15px 16px;border-left:1px solid var(--line)}.mrow>div:first-child{border-left:0;font-weight:600}.mhead{background:var(--ink);color:var(--paper);font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}.win{color:var(--green);font-weight:700}.gap{color:var(--orange);font-weight:700}
+    .stack{display:flex;gap:7px;flex-wrap:wrap}.chip{border:1px solid var(--line);padding:5px 9px;font-size:.8rem;background:var(--bg)}
+    .quote{border-top:1px solid var(--line);padding:14px 0}.quote:first-of-type{border-top:0}.quote p{margin:0 0 6px}.quote small{color:var(--muted)}
+    .issue-list{counter-reset:issues;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.issue{counter-increment:issues;background:var(--paper);padding:20px;border:1px solid var(--line)}.issue:before{content:"0" counter(issues);font-weight:700;color:var(--orange);font-size:.78rem}.issue h3{margin:8px 0 6px;font-size:1.05rem}.issue p{margin:0;color:var(--muted);font-size:.9rem}
+    .cost{display:grid;grid-template-columns:.9fr 1.1fr;gap:18px}.calc{background:var(--ink);color:var(--paper);padding:26px}.calc h3{font:700 1.5rem "Source Serif 4",serif;margin:0 0 20px}.control{display:grid;grid-template-columns:1fr 95px;align-items:center;gap:12px;margin:13px 0}.control label{font-size:.88rem}.control input{width:100%;background:transparent;color:inherit;border:1px solid #66756c;padding:9px;border-radius:0;font:inherit}.total{border-top:1px solid #66756c;margin-top:22px;padding-top:18px;display:flex;align-items:end;justify-content:space-between;gap:15px}.total output{font:700 2.8rem/1 "Source Serif 4",serif;color:#8be2b5}.total small{display:block;color:#b8c3bc;max-width:230px}.formula{font-size:.76rem;color:#b8c3bc;margin-top:12px}.cost-table{background:var(--paper);border:1px solid var(--line)}.cost-row{display:grid;grid-template-columns:1.25fr .75fr .75fr;border-top:1px solid var(--line)}.cost-row:first-child{border-top:0}.cost-row>div{padding:12px 14px}.cost-row.header{font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--muted)}.cost-row.total-row{font-weight:700;background:var(--green-2)}
+    .callout{background:var(--green);color:#fff;padding:clamp(22px,4vw,40px);margin-top:18px}.callout h3{font:700 clamp(1.5rem,3vw,2.4rem)/1.1 "Source Serif 4",serif;margin:0 0 10px}.callout p{max-width:780px;margin:0}.callout a{color:#fff}
+    .schema{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.table-card{background:var(--paper);border-top:3px solid var(--green);padding:16px}.table-card code{font-weight:700;color:var(--green)}.table-card p{font-size:.82rem;color:var(--muted);margin:8px 0 0}
+    .roadmap{border-left:3px solid var(--line);margin-left:18px}.phase{position:relative;padding:0 0 28px 28px}.phase:before{content:"";position:absolute;left:-8px;top:2px;width:13px;height:13px;border-radius:50%;background:var(--bg);border:3px solid var(--green)}.phase h3{margin:0 0 6px}.phase p{margin:0;color:var(--muted)}
+    .sources{background:var(--paper);border:1px solid var(--line);padding:24px}.sources ol{columns:2;column-gap:44px;margin:0;padding-left:22px}.sources li{break-inside:avoid;margin:0 0 10px;font-size:.82rem}.sources a{overflow-wrap:anywhere}.footnote{font-size:.79rem;color:var(--muted);margin-top:18px}
+    .pill{display:inline-block;padding:4px 8px;background:var(--green-2);color:var(--green);font-size:.76rem;font-weight:700}.pill.caution{background:var(--orange-2);color:var(--orange)}
+    .landscape-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.competitor{background:var(--paper);border:1px solid var(--line);padding:20px;display:flex;flex-direction:column;min-height:245px}.competitor h3{font:700 1.35rem/1.1 "Source Serif 4",serif;margin:10px 0 5px}.competitor .price{font-weight:700;color:var(--green)}.competitor .meta{font-size:.79rem;color:var(--muted);margin:4px 0 12px}.competitor p{font-size:.88rem;margin:0 0 14px}.competitor .source-tag{margin-top:auto;align-self:flex-start}.channel{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--orange)}
+    .landscape-grid .competitor.featured{grid-column:span 2;border-top:4px solid var(--green)}.landscape-grid .competitor.caution-card{border-top:4px solid var(--orange)}
+    .review-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.review-card{background:var(--paper);border-top:3px solid var(--line);padding:20px}.review-card h3{margin:0 0 8px;font:700 1.2rem "Source Serif 4",serif}.review-card .rating{font-weight:700;color:var(--green)}.review-card p{margin:9px 0;font-size:.9rem}.review-card .complaint{color:var(--muted)}
+    .priority-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.priority{background:var(--paper);border:1px solid var(--line);padding:22px}.priority h3{font:700 1.35rem "Source Serif 4",serif;margin:0 0 14px}.priority ol,.priority ul{margin:0;padding-left:21px}.priority li{margin:0 0 12px}.priority li:last-child{margin-bottom:0}.priority .why{display:block;color:var(--muted);font-size:.84rem;margin-top:3px}.open{background:var(--blue-2);color:var(--blue);padding:14px 16px;font-size:.86rem;margin-top:14px}
+    .pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.tier{background:var(--paper);border:1px solid var(--line);padding:24px;display:flex;flex-direction:column}.tier.recommended{border-top:5px solid var(--green)}.tier .tier-name{font-weight:700;color:var(--green)}.tier .tier-price{font:700 2.4rem/1 "Source Serif 4",serif;margin:10px 0 4px}.tier .tier-price small{font:500 .8rem "IBM Plex Sans",sans-serif;color:var(--muted)}.tier .allowance{color:var(--muted);font-size:.85rem;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:14px}.tier ul{padding-left:18px;margin:0 0 18px}.tier li{margin-bottom:8px;font-size:.88rem}.tier .margin{margin-top:auto;font-weight:700;font-size:.82rem;color:var(--orange)}
+    .usp-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}.usp{background:var(--paper);border-top:3px solid var(--green);padding:16px}.usp b{display:block;font:700 1.05rem/1.2 "Source Serif 4",serif;margin-bottom:7px}.usp span{font-size:.82rem;color:var(--muted)}
+    .routing{display:grid;grid-template-columns:1fr 34px 1fr 34px 1fr;align-items:stretch;gap:8px;margin-top:18px}.route-node{background:var(--paper);border:1px solid var(--line);padding:18px}.route-node b{display:block;color:var(--green);margin-bottom:6px}.route-node span{font-size:.84rem;color:var(--muted)}.route-arrow{display:grid;place-items:center;color:var(--orange);font-weight:700;font-size:1.35rem}
+    @media(max-width:950px){.shell{grid-template-columns:1fr;padding-top:14px}.rail{position:static;height:auto}.rail nav{flex-direction:row;flex-wrap:wrap;padding-bottom:5px}.rail nav a{white-space:nowrap;border-left:0;border-bottom:2px solid transparent}.rail .note{display:none}.metrics{grid-template-columns:repeat(2,1fr)}.verdict,.cost,.priority-grid{grid-template-columns:1fr}.landscape-grid{grid-template-columns:repeat(2,1fr)}.usp-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:650px){body{overflow-x:hidden}.shell{width:100%;max-width:100%;padding-inline:12px;gap:16px}.shell main,.hero{min-width:0;max-width:100%}.rail nav{gap:2px}.rail nav a{padding:6px 8px;font-size:.78rem}.hero{padding:25px 18px;overflow-wrap:break-word}.hero h1{font-size:clamp(2.35rem,12vw,3rem);letter-spacing:-.055em}.dek{font-size:1.05rem}.section-head{grid-template-columns:45px 1fr}.grid2,.issue-list,.schema,.landscape-grid,.review-grid,.pricing-grid,.usp-grid{grid-template-columns:1fr}.landscape-grid .competitor.featured{grid-column:auto}.metrics{grid-template-columns:1fr 1fr;gap:7px}.metric{padding:14px;min-height:118px}.mrow{grid-template-columns:1fr}.mrow>div{border-left:0;border-top:1px dashed var(--line)}.mrow>div:first-child{border-top:0;background:var(--bg)}.mhead{display:none}.mrow>div:nth-child(2):before{content:"MAIN WEAKNESS · ";font-weight:700;font-size:.72rem;color:var(--muted)}.mrow>div:nth-child(3):before{content:"CONTENTFTE RESPONSE · ";font-weight:700;font-size:.72rem;color:var(--muted)}.barrow{grid-template-columns:90px 1fr 58px}.cost-row{grid-template-columns:1.2fr .8fr}.cost-row>div:nth-child(3){display:none}.sources ol{columns:1}.panel{padding:18px}.control{grid-template-columns:1fr 80px}.routing{grid-template-columns:1fr}.route-arrow{transform:rotate(90deg);min-height:22px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="stamp"><strong>Launch decision report</strong><br>Research snapshot · 03 Oct 2026<br>All currency in USD</div>
+      <nav aria-label="Report sections">
+        <a href="#snapshot">Landscape</a><a href="#market">Channels</a><a href="#comparison">Comparison</a><a href="#reviews">Reviews</a><a href="#cost">Cost model</a><a href="#images">AI images</a><a href="#pricing">Pricing & USP</a><a href="#architecture">Architecture</a><a href="#plan">Build order</a><a href="#sources">Sources</a>
+      </nav>
+      <div class="note">“Verified live” means checked in-browser on 03 Oct 2026. Indexed facts, conflicts and estimates stay labeled.</div>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div class="eyebrow">COMPETITIVE LANDSCAPE / WORDPRESS + CUSTOM LAUNCH</div>
+        <h1>The market is crowded. The <span>quality gate</span> isn’t.</h1>
+        <p class="dek">Soro is one competitor, not the category. Seven more products show where buyers now expect keyword discovery, internal links, schema, brand voice, calendars, native publishing, and visible search performance.</p>
+        <div class="verdict">
+          <div><strong>Launch decision</strong><p>Start with custom sites and WordPress as planned. Keep the existing internal-linking and stock-image systems, then complete keyword discovery, metadata, schema, scheduling, and a thin WordPress plugin. Put ContentFTE’s 90+ gate, JEV judgments, and chat approvals at the center of the product.</p></div>
+          <div><strong>Positioning</strong><p><b>“Autonomous SEO publishing with a quality gate.”</b> The category automates output. ContentFTE can own supervised autonomy: sources, revision history, site facts, approval in chat, and no silent publish below the configured threshold.</p></div>
+        </div>
+      </header>
+
+      <section id="snapshot">
+        <div class="section-head"><div class="num">01</div><div><h2>Seven more competitors, three different games</h2><p>SEOWILL and StoreSEO are Shopify SEO suites. Jolt is a small Shopify content app. Koala, Autoblogging.ai, BlogSEO.ai and Abun are the relevant WordPress/custom-site benchmarks.</p></div></div>
+        <div class="metrics">
+          <article class="metric good"><div class="value">4/7</div><div class="label">serve WordPress or custom sites</div><small>Koala, Autoblogging.ai, BlogSEO.ai and Abun</small></article>
+          <article class="metric good"><div class="value">0/7</div><div class="label">offer messaging-native approvals</div><small>ContentFTE’s clearest workflow advantage</small></article>
+          <article class="metric"><div class="value">1/7</div><div class="label">has strong brand-voice training</div><small>Koala’s Brand DNA is the benchmark</small></article>
+          <article class="metric warn"><div class="value">$10–$2k</div><div class="label">paid monthly price span</div><small>Jolt Pro to Koala Scale III</small></article>
+        </div>
+        <div class="landscape-grid" style="margin-top:18px">
+          <article class="competitor"><div class="channel">Shopify SEO suite</div><h3>SEOWILL</h3><div class="price">Free · $29.99 · $59.99/mo</div><div class="meta">4.8★ · about 1,634–1,667 Shopify reviews</div><p>Audit, images, meta, schema, rank tracking, backlinks and GEO/AEO, with a credit-metered AI blog generator attached. Strong distribution; billing confusion and weaker large-catalog audits are the recurring risks.</p><a class="source-tag" href="https://apps.shopify.com/seo-master" target="_blank" rel="noopener">Shopify listing · index</a></article>
+          <article class="competitor"><div class="channel">Shopify AI SEO agent</div><h3>StoreSEO</h3><div class="price">Free · $14.99–$249.99/mo</div><div class="meta">5.0★ rounded · about 694–750 reviews</div><p>Deep on GEO/AEO: AI Brand Visibility, llms.txt, Agents.md, schema, GSC insights and an MCP server. White-glove onboarding drives reviews, but some users report upsell pressure and review solicitation.</p><a class="source-tag" href="https://storeseo.com/#pricing" target="_blank" rel="noopener">Pricing · verified live</a></article>
+          <article class="competitor caution-card"><div class="channel">Shopify micro-app</div><h3>Jolt</h3><div class="price">Free · $10 · $20/mo</div><div class="meta">4.5★ · 70 Shopify reviews</div><p>Daily posts, images, scheduling and product incorporation. Its public 1★ hallucination—fake product, testimonials and broken links—is the category’s clearest warning about auto-publishing without grounding.</p><a class="source-tag" href="https://apps.shopify.com/joltai" target="_blank" rel="noopener">Shopify listing · index</a></article>
+          <article class="competitor featured"><div class="channel">WordPress/custom category leader</div><h3>Koala AI</h3><div class="price">$25–$2,000/mo · 9 paid tiers</div><div class="meta">20,000 paid creators claimed · review ratings conflict</div><p>The fullest product benchmark: SERP research, Brand DNA, internal linking, editor scores, content-calendar autopilot, GSC/Analytics, API, MCP and an official WordPress plugin. Its weaknesses are quota complexity, refund/support complaints and polarized trust signals.</p><a class="source-tag" href="https://koala.sh/pricing" target="_blank" rel="noopener">Pricing · verified live</a></article>
+          <article class="competitor caution-card"><div class="channel">Agency / volume</div><h3>Autoblogging.ai</h3><div class="price">$19–$999/mo</div><div class="meta">40,000+ users claimed · critical TrustScore cited as 2.6</div><p>Ten-plus generation modes, 500-article CSV batches, direct multi-site publishing, schema, links, images and proofreading. Feature-rich, but credit disappearance, blocked accounts, support and founder-conduct allegations create a material trust deficit.</p><a class="source-tag" href="https://autoblogging.ai/knowledge-base/" target="_blank" rel="noopener">Official knowledge base · index</a></article>
+          <article class="competitor featured"><div class="channel">Closest structural competitor</div><h3>BlogSEO.ai</h3><div class="price">Free · $31 · $79 · $135/mo</div><div class="meta">4.2★ · about 46–48 Shopify reviews</div><p>Keyword research → generation → scheduled autoblogging → multi-CMS publish, plus GSC and AI-search visibility. It is the closest match to ContentFTE’s intended product shape, but has a thin review footprint and a paid-review allegation.</p><a class="source-tag" href="https://blogseo.ai/pricing" target="_blank" rel="noopener">Pricing · verified live</a></article>
+          <article class="competitor"><div class="channel">End-to-end WordPress pipeline</div><h3>Abun</h3><div class="price">$24–$149/mo</div><div class="meta">3,216+ marketers claimed · zero third-party reviews found</div><p>Keyword discovery, SERP-based article types, links, images, JSON-LD, programmatic SEO, calendar and WordPress publishing. Broad promise, but several features remain “Coming Soon” and independent trust proof is absent.</p><a class="source-tag" href="https://abun.com" target="_blank" rel="noopener">Product & pricing · verified live</a></article>
+        </div>
+      </section>
+
+      <section id="market">
+        <div class="section-head"><div class="num">02</div><div><h2>Choose the right battlefield</h2><p>The largest review counts belong to Shopify SEO utilities, not autonomous blog systems. For a WordPress/custom launch, Koala, Autoblogging.ai, BlogSEO.ai and Abun are the product benchmarks; SEOWILL, StoreSEO and Jolt are feature and failure-pattern references.</p></div></div>
+        <div class="grid2">
+          <div class="panel"><h3>Shopify review footprint</h3><div class="bars" aria-label="Approximate Shopify review counts">
+            <div class="barrow"><span>SEOWILL</span><div class="track"><div class="fill" style="width:100%"></div></div><b>~1,667</b></div>
+            <div class="barrow"><span>StoreSEO</span><div class="track"><div class="fill" style="width:45%"></div></div><b>~750</b></div>
+            <div class="barrow"><span>Jolt</span><div class="track"><div class="fill orange" style="width:4.2%"></div></div><b>70</b></div>
+            <div class="barrow"><span>BlogSEO</span><div class="track"><div class="fill orange" style="width:2.9%"></div></div><b>~48</b></div>
+          </div><p class="footnote">Counts are approximate 03 Oct 2026 index snapshots and can move. They measure review presence, not active installs or revenue.</p></div>
+          <div class="panel"><h3>The useful segmentation</h3><p><b>Distribution suites:</b> SEOWILL and StoreSEO win by bundling many merchant SEO chores and owning Shopify discovery.</p><p><b>Volume factories:</b> Koala and Autoblogging.ai sell throughput, modes, publishing reach and integrations.</p><p><b>Workflow products:</b> BlogSEO.ai and Abun connect keyword selection, production, scheduling and publishing. These are the closest launch comps.</p><p><b>Supervised autonomy:</b> no researched competitor exposes messaging-native approve/reject plus a revision gate. That is ContentFTE’s wedge.</p></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>Scale estimates — directional only</h3><p>Research estimates: SEOWILL <b>~$0.8–1.3M ARR</b>; StoreSEO <b>~$0.4M ARR</b>; Jolt <b>~$5–15k MRR</b>; Koala <b>~$5–12M ARR</b>; Autoblogging.ai <b>~$1–3M ARR</b>; BlogSEO.ai and Abun each <b>~$0.5–0.7M ARR</b>.</p><div class="estimate"><strong>Do not treat these as audited revenue.</strong> They combine vendor user claims, review footprints, assumed paid conversion and assumed ARPU. Team, funding and exact customer counts were not public for several products.</div></div>
+          <div class="panel"><h3>What the category already expects</h3><div class="stack"><span class="chip">keyword discovery</span><span class="chip">SERP research</span><span class="chip">internal links</span><span class="chip">meta fields</span><span class="chip">schema</span><span class="chip">images</span><span class="chip">calendar</span><span class="chip">multi-CMS publish</span><span class="chip">GSC feedback</span><span class="chip">multilingual</span></div><p class="footnote">A good generator is no longer enough. Buyers evaluate the full path from topic selection to publishing and measurement.</p></div>
+        </div>
+      </section>
+
+      <section id="comparison">
+        <div class="section-head"><div class="num">03</div><div><h2>Competitor-by-competitor response</h2><p>Each row turns a competitor’s strongest implementation into a concrete decision for ContentFTE’s WordPress/custom-site launch.</p></div></div>
+        <div class="matrix" role="table" aria-label="Competitor response matrix">
+          <div class="mrow mhead" role="row"><div>Competitor / strongest implementation</div><div>Main weakness</div><div>ContentFTE response</div></div>
+          <div class="mrow" role="row"><div><b>Soro</b><br><small>Fast onboarding, calendar, daily delivery, broad CMS reach</small></div><div>Generic copy, editing limits and unfinished SEO details in reviews</div><div class="win">Match productization; beat it with visible sources, facts and quality gates</div></div>
+          <div class="mrow" role="row"><div><b>SEOWILL</b><br><small>GEO audit, llms.txt, rank tracking, schema, backlinks</small></div><div>AI-credit confusion; weaker audit confidence at catalog scale</div><div>Add GEO basics later; use flat post allowances and transparent metering</div></div>
+          <div class="mrow" role="row"><div><b>StoreSEO</b><br><small>AI Brand Visibility, separate SEO/GEO scores, MCP, onboarding</small></div><div>Blog automation is secondary; upsell and review-solicitation optics</div><div>Build answer-engine visibility after launch; keep reviews organic</div></div>
+          <div class="mrow" role="row"><div><b>Jolt</b><br><small>Simple scheduled posts and images inside Shopify</small></div><div class="gap">Documented fake product/testimonials and broken links</div><div class="win">Site-fact grounding + product/page allowlists + publish blocker</div></div>
+          <div class="mrow" role="row"><div><b>Koala AI</b><br><small>Brand DNA, internal links, GSC dashboard, plugin, API + MCP</small></div><div>Quota multipliers; support/refund complaints; trust polarization</div><div>Copy Brand DNA and plugin ergonomics; avoid multiplier pricing</div></div>
+          <div class="mrow" role="row"><div><b>Autoblogging.ai</b><br><small>10+ modes, 500-row bulk, broad publishing, schema and links</small></div><div>Trust deficit; credit/account complaints; no clear quality gate</div><div class="win">Sell reliability and review-before-publish—not just volume</div></div>
+          <div class="mrow" role="row"><div><b>BlogSEO.ai</b><br><small>Closest full workflow: research, schedule, multi-CMS, GSC, AI visibility</small></div><div>Thin review proof; no-refund default; paid-review allegation</div><div>Use as the feature-completeness benchmark, not the trust model</div></div>
+          <div class="mrow" role="row"><div><b>Abun</b><br><small>Funnel keywords, article-type selection, JSON-LD, programmatic SEO</small></div><div>Zero third-party reviews found; some roadmap items not shipped</div><div>Copy programmatic page types after the core WordPress loop is stable</div></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>ContentFTE already leads</h3><div class="stack"><span class="chip">90+ evaluation gate</span><span class="chip">JEV micro-judgments</span><span class="chip">revision loop</span><span class="chip">automatic internal links</span><span class="chip">stock-image selection</span><span class="chip">WhatsApp approvals</span><span class="chip">Telegram approvals</span><span class="chip">Discord approvals</span><span class="chip">OpenRouter model routing</span><span class="chip">GSC feedback loop</span></div></div>
+          <div class="panel"><h3>ContentFTE must close</h3><div class="stack"><span class="chip">keyword discovery UI</span><span class="chip">internal-link backfill QA</span><span class="chip">FAQ + Article schema</span><span class="chip">confirmed SEO meta writes</span><span class="chip">calendar UI</span><span class="chip">brand profiles</span><span class="chip">multilingual</span><span class="chip">WordPress.org plugin</span><span class="chip">custom-site SDK</span><span class="chip">MCP server</span></div></div>
+        </div>
+        <p class="footnote">Repository-backed capabilities now reflected here: internal-link retrieval in the posting flow, stock imagery with automated selection, and JEV structured micro-judgments through OpenRouter. The custom-site SDK and MCP server remain proposed builds, not shipped capabilities. “Adapter” is not treated as equivalent to a marketplace-listed native integration.</p>
+      </section>
+
+      <section id="reviews">
+        <div class="section-head"><div class="num">04</div><div><h2>Reviews reveal the product requirements</h2><p>The useful signal is not the star average alone. It is what users repeatedly reward—and the failure modes that turn automation into cleanup work.</p></div></div>
+        <div class="review-grid">
+          <article class="review-card"><h3>SEOWILL <span class="rating">4.8★</span></h3><p><b>Praised:</b> named support, free-plan value, image compression, simple UI and broken-link scanning.</p><p class="complaint"><b>Complaints:</b> surprise or extra AI charges and unreliable audits on very large catalogs.</p><a class="source-tag" href="https://apps.shopify.com/seo-master" target="_blank" rel="noopener">~1,634–1,667 reviews · index</a></article>
+          <article class="review-card"><h3>StoreSEO <span class="rating">5.0★ rounded</span></h3><p><b>Praised:</b> 1:1 onboarding, ease of use, clear SEO/GEO score changes and fast support.</p><p class="complaint"><b>Complaints:</b> tier upsells during calls, requests to post a review while on the call, occasional slow support and one broken-image report.</p><a class="source-tag" href="https://apps.shopify.com/storeseo" target="_blank" rel="noopener">~694–750 reviews · index</a></article>
+          <article class="review-card"><h3>Jolt <span class="rating">4.5★</span></h3><p><b>Praised:</b> easy workflow, good image generation and responsive founder support.</p><p class="complaint"><b>Critical failure:</b> a January 2026 reviewer reported a fabricated product, fake testimonials and broken links; the developer said automated posting could not access shop products and issued a refund.</p><a class="source-tag" href="https://apps.shopify.com/joltai" target="_blank" rel="noopener">70 reviews · index</a></article>
+          <article class="review-card"><h3>Koala AI <span class="rating">disputed</span></h3><p><b>Praised:</b> deep SERP research, bulk output, affiliate data and relatively low editing effort.</p><p class="complaint"><b>Complaints:</b> slow support, refund disputes, quota multipliers, credit expiry and AI-detection/quality concerns. Indexed Trustpilot summaries conflict from about 2.3 to 4.5.</p><a class="source-tag" href="https://www.getapp.co.uk/software/2068852/koala-ai" target="_blank" rel="noopener">GetApp 4.5/70 · index</a></article>
+          <article class="review-card"><h3>Autoblogging.ai <span class="rating">polarized</span></h3><p><b>Praised:</b> speed, Godlike SERP mode, bulk publishing and human-like drafts.</p><p class="complaint"><b>Complaints:</b> disappearing credits, account blocks, refund/support problems, poor UX and no pre-publish quality gate. High 4.8–4.9 claims surfaced through an affiliate Medium network and were not independently confirmed.</p><a class="source-tag" href="https://ciroapp.com/id/autoblogging-ai-review/" target="_blank" rel="noopener">Critical review summary · index</a></article>
+          <article class="review-card"><h3>BlogSEO.ai <span class="rating">4.2★</span></h3><p><b>Praised:</b> quick onboarding, immediate automated publishing, research and optimization at an affordable price.</p><p class="complaint"><b>Complaint:</b> a January 2026 1★ review alleged a paid-review scheme. No Trustpilot, G2 or Capterra footprint was found.</p><a class="source-tag" href="https://apps.shopify.com/blogseo-ai/reviews?page=2" target="_blank" rel="noopener">~46–48 reviews · index</a></article>
+          <article class="review-card"><h3>Abun <span class="rating">no third-party rating found</span></h3><p><b>Onsite/Product Hunt praise:</b> long-form quality, keyword tools, auto links/images and fast generation.</p><p class="complaint"><b>Complaints:</b> non-English inconsistency and need for editorial personalization. Trustpilot, G2, Capterra, SoftwareSuggest and SourceForge showed zero third-party reviews in the research.</p><a class="source-tag" href="https://WWW.PRODUCTHUNT.COM/products/abun" target="_blank" rel="noopener">Product Hunt · index</a></article>
+        </div>
+        <div class="issue-list" style="margin-top:18px">
+          <article class="issue"><h3>Grounding must block publishing</h3><p>Jolt’s phantom product and Soro’s inconsistent facts show why retrieval is not enough. Validate named products, claims, numbers and links against approved site data.</p></article>
+          <article class="issue"><h3>Credits create anxiety</h3><p>SEOWILL, Koala and Autoblogging.ai complaints cluster around credits, multipliers or surprise charges. Prefer transparent post allowances with rollover and a visible per-job cost ledger.</p></article>
+          <article class="issue"><h3>Support is part of the product</h3><p>Named, fast support drives strong reviews for the Shopify suites. Slow replies and refund disputes dominate negative narratives around larger writing tools.</p></article>
+          <article class="issue"><h3>Review quality matters more than count</h3><p>StoreSEO review solicitation, BlogSEO’s paid-review allegation and Autoblogging’s affiliate-amplified ratings make organic, channel-native proof a strategic advantage.</p></article>
+        </div>
+      </section>
+
+      <section id="cost">
+        <div class="section-head"><div class="num">05</div><div><h2>Hybrid routing: roughly $6.02/month at one post a day</h2><p>DeepSeek V4.1 Flash handles research, brief, drafting and revision. A frontier model handles only evaluation and improvement guidance; JEV handles cheap structured decisions. Three FLUX.2 Klein images per post add about $1.35/month using the cost displayed in the supplied test run.</p></div></div>
+        <div class="cost">
+          <div class="calc">
+            <h3>Editable hybrid cost model</h3>
+            <div class="control"><label for="posts">Posts per day</label><input id="posts" aria-label="Posts per day" type="number" min="1" max="50" step="1" value="1"></div>
+            <div class="control"><label for="deepInput">DeepSeek input tokens / post</label><input id="deepInput" aria-label="DeepSeek input tokens per post" type="number" min="0" max="500000" step="1000" value="50000"></div>
+            <div class="control"><label for="deepOutput">DeepSeek output tokens / post</label><input id="deepOutput" aria-label="DeepSeek output tokens per post" type="number" min="0" max="100000" step="500" value="10000"></div>
+            <div class="control"><label for="evalInput">Frontier evaluator input / post</label><input id="evalInput" aria-label="Frontier evaluator input tokens per post" type="number" min="0" max="100000" step="1000" value="10000"></div>
+            <div class="control"><label for="evalOutput">Frontier evaluator output / post</label><input id="evalOutput" aria-label="Frontier evaluator output tokens per post" type="number" min="0" max="50000" step="500" value="1000"></div>
+            <div class="control"><label for="seoCost">DataForSEO cost / post</label><input id="seoCost" aria-label="DataForSEO cost per post" type="number" min="0" max="5" step="0.01" value="0.11"></div>
+            <div class="control"><label for="imageCount">AI images / post</label><input id="imageCount" aria-label="AI images per post" type="number" min="0" max="20" step="1" value="3"></div>
+            <div class="control"><label for="imageCost">Average cost / image</label><input id="imageCost" aria-label="Average cost per AI image" type="number" min="0" max="2" step="0.001" value="0.015"></div>
+            <div class="total"><div><small>Estimated monthly variable API cost, 30-day month</small></div><output id="monthlyTotal" aria-live="polite">$6.02</output></div>
+            <div class="formula">Planning rates: DeepSeek V4.1 Flash off-peak $0.15/M input + $0.60/M output; frontier evaluation $2/M input + $10/M output; JEV allowance $0.002/post; three FLUX.2 Klein 4B generations at the $0.015 cost displayed in the supplied runs. The catalog rate starts at $0.014/MP, so actual output dimensions can move the charge. Tavily is shown at $0 while the free credit allowance covers this workload. Verify provider rates before launch.</div>
+          </div>
+          <div class="cost-table" aria-label="Baseline hybrid cost breakdown">
+            <div class="cost-row header"><div>Component</div><div>Per post</div><div>Monthly</div></div>
+            <div class="cost-row"><div><b>DeepSeek V4.1 Flash</b><br><small>Research, brief, draft and revision through OpenRouter</small></div><div id="deepPost">$0.0135</div><div id="deepMonth">$0.41</div></div>
+            <div class="cost-row"><div><b>Frontier evaluation</b><br><small>GPT-6 Sol, Claude Sonnet 5 or Gemini 4 Argon</small></div><div id="evalPost">$0.0300</div><div id="evalMonth">$0.90</div></div>
+            <div class="cost-row"><div><b>JEV judgments</b><br><small>Typed micro-decisions and routing checks</small></div><div id="jevPost">$0.0020</div><div id="jevMonth">$0.06</div></div>
+            <div class="cost-row"><div><b>DataForSEO</b><br><small>Keyword, volume, competition and SERP decision data</small></div><div id="seoPost">$0.1100</div><div id="seoMonth">$3.30</div></div>
+            <div class="cost-row"><div><b>AI images</b><br><small>Featured thumbnail plus two in-post images; FLUX.2 Klein observed-run baseline</small></div><div id="imagePost">$0.0450</div><div id="imageMonth">$1.35</div></div>
+            <div class="cost-row"><div><b>Research + stock fallback</b><br><small>Tavily allowance plus Pexels where stock is the better fit</small></div><div>$0.0000</div><div>$0.00</div></div>
+            <div class="cost-row total-row"><div>Estimated variable total</div><div id="allPost">$0.2005</div><div id="allMonth">$6.02</div></div>
+          </div>
+        </div>
+        <div class="callout"><h3>DeepSeek writes. Frontier models judge.</h3><p>This split keeps expensive models out of the long drafting path while retaining independent quality control. OpenRouter makes the evaluator replaceable: choose GPT-6, Claude or Gemini by performance, customer preference or availability without changing the workflow.</p></div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>What the estimate assumes</h3><p>About 50k DeepSeek input tokens and 10k output tokens, one 10k/1k frontier evaluation pass, JEV micro-judgments, roughly $0.11 of DataForSEO, and three FLUX.2 Klein generations at the observed $0.015 each per post. Larger outputs, retries, image regenerations, extra revisions and peak pricing can move the total.</p></div>
+          <div class="panel"><h3>Why DataForSEO is worth adding</h3><p>Use it for decision data: search volume, competition, CPC, keyword difficulty, search intent, domain overlap and rank/traffic estimates. Keep Tavily for source discovery; cache both by keyword, location and language, then record actual cost per job.</p><a class="source-tag" href="https://dataforseo.com/apis/dataforseo-labs-api/competitor-research" target="_blank" rel="noopener">Labs pricing · official</a> <a class="source-tag" href="https://dataforseo.com/solutions/local-seo" target="_blank" rel="noopener">Keyword rates · official</a></div>
+        </div>
+      </section>
+
+      <section id="images">
+        <div class="section-head"><div class="num">06</div><div><h2>Muse is cheaper. Klein is available—and twice as fast.</h2><p>The supplied side-by-side OpenRouter playground runs used the same thumbnail and office-photo prompts. Both models produced usable images and rendered “SEO IN 2026” correctly. Muse Image cost less, but it is currently unavailable in Pakistan; FLUX.2 Klein 4B is therefore the practical production default.</p></div></div>
+        <div class="metrics">
+          <article class="metric good"><div class="value">$0.010</div><div class="label">Muse cost per test image</div><small>cheapest result, but unavailable in Pakistan</small></article>
+          <article class="metric good"><div class="value">$0.015</div><div class="label">Klein cost per test image</div><small>the catalog starts at $0.014 for the first MP</small></article>
+          <article class="metric"><div class="value">12.9s</div><div class="label">Muse average test time</div><small>12.7s thumbnail · 13.1s office photo</small></article>
+          <article class="metric warn"><div class="value">6.5s</div><div class="label">Klein average test time</div><small>7.8s thumbnail · 5.2s office photo</small></article>
+        </div>
+        <div class="matrix" role="table" aria-label="Muse Image and FLUX.2 Klein 4B test comparison" style="margin-top:18px">
+          <div class="mrow mhead" role="row"><div>Model / observed cost</div><div>Supplied test result</div><div>ContentFTE decision</div></div>
+          <div class="mrow" role="row"><div><b>Meta Muse Image</b><br><small>$0.010/image · 12.7–13.1s</small></div><div>Correct thumbnail title; photorealistic office image followed the requested three-person count</div><div class="gap">Best price, but not a production option while Pakistan availability is blocked</div></div>
+          <div class="mrow" role="row"><div><b>FLUX.2 Klein 4B</b><br><small>$0.015/image in both runs · 5.2–7.8s</small></div><div>Correct thumbnail title and a clean photorealistic result; the office prompt asked for three colleagues but rendered four</div><div class="win">Default now: available, usable, and about 2× faster in this small test</div></div>
+          <div class="mrow" role="row"><div><b>GPT-5 Image Mini</b><br><small>$2.50/M input · $8/M output</small></div><div>Low-cost multimodal generation with stronger instruction following</div><div>Keep as a near-baseline alternative for prompts Klein misses</div></div>
+          <div class="mrow" role="row"><div><b>Riverflow V2 Fast</b><br><small>$0.02 at 1K · $0.04 at 2K</small></div><div>Production rendering plus stronger text and optional custom-font support</div><div>Use only when a visual genuinely needs readable words</div></div>
+          <div class="mrow" role="row"><div><b>Seedream 4.5</b><br><small>$0.04/image, any listed size</small></div><div>Flat pricing with stronger aesthetics, detail and small-text rendering</div><div>Offer as a simple editor quality upgrade</div></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>What the two-prompt test established</h3><p><b>Thumbnail:</b> both models spelled the title correctly and produced a usable 16:9 graphic. <b>Photo:</b> both produced plausible office scenes; Muse adhered to the requested number of colleagues, while Klein added one person. This is a tiny prompt sample, not a general quality ranking.</p><p class="footnote">Observed times and costs come from the supplied playground captures, not a controlled latency benchmark. Provider load, size and routing can change them.</p></div>
+          <div class="panel"><h3>The actual trade-off is availability</h3><p>At three images per post and 30 posts per month, Muse would cost about <b>$0.90/month</b>; Klein costs about <b>$1.35/month</b> at the observed run price. The $0.45 monthly saving is irrelevant while Muse cannot serve the Pakistan region. Use Klein now and re-test Muse if regional access changes.</p><div class="stack"><span class="chip">Klein default</span><span class="chip">Muse re-test later</span><span class="chip">reprompt</span><span class="chip">regenerate</span><span class="chip">Pexels fallback</span></div></div>
+        </div>
+        <div class="callout"><h3>Final image route</h3><p><b>Production default:</b> FLUX.2 Klein 4B at a planning baseline of $0.015/image. <b>Future candidate:</b> Muse Image at $0.010/image once it is available in Pakistan. Keep model switching, reprompting and regeneration in the dashboard so a single imperfect image never becomes a publishing blocker.</p></div>
+      </section>
+
+      <section id="pricing">
+        <div class="section-head"><div class="num">07</div><div><h2>Pricing that sells the outcome, not model credits</h2><p>Use post allowances customers can understand, a 20% annual discount, and a simple $10 add-on for 50 extra posts. These are launch recommendations—not validated willingness-to-pay yet.</p></div></div>
+        <div class="pricing-grid">
+          <article class="tier"><div class="tier-name">Starter</div><div class="tier-price">$29 <small>/ month</small></div><div class="allowance">30 posts · 1 site · one approval channel</div><ul><li>WordPress plugin or custom-site SDK</li><li>DataForSEO keyword data</li><li>Internal links + stock or AI images</li><li>90+ gate with frontier evaluation</li></ul><div class="margin">Target gross margin ≈ 77%</div></article>
+          <article class="tier recommended"><div class="tier-name">Growth · recommended</div><div class="tier-price">$79 <small>/ month</small></div><div class="allowance">120 posts · 3 sites · multiple languages</div><ul><li>Everything in Starter</li><li>Brand-voice profiles</li><li>MCP access + evaluator choice</li><li>GEO / AI-visibility tracking</li></ul><div class="margin">Target gross margin ≈ 67%</div></article>
+          <article class="tier"><div class="tier-name">Scale</div><div class="tier-price">$149 <small>/ month</small></div><div class="allowance">300 posts · 10 sites · team workflows</div><ul><li>Everything in Growth</li><li>White-label reporting</li><li>API access and webhooks</li><li>Priority support</li></ul><div class="margin">Target gross margin ≈ 56%</div></article>
+        </div>
+        <p class="footnote">Margin targets use the hybrid variable-cost assumptions above and leave room for infrastructure, support and payment fees; validate them against observed usage before publishing a guarantee. Keep “one post = one allowance” instead of hidden model multipliers.</p>
+        <div class="usp-grid" aria-label="Recommended unique selling propositions">
+          <div class="usp"><b>Hybrid routing, disclosed</b><span>DeepSeek creates; GPT-6, Claude or Gemini evaluates.</span></div>
+          <div class="usp"><b>90+ before publish</b><span>Independent scoring, JEV checks and a visible revision trail.</span></div>
+          <div class="usp"><b>Chat-native control</b><span>Approve, reject or revise from WhatsApp, Telegram or Discord.</span></div>
+          <div class="usp"><b>Any-site delivery</b><span>WordPress plugin first; SDK, API, webhooks and MCP for custom stacks.</span></div>
+          <div class="usp"><b>Cost transparency</b><span>Per-post spend and provider route visible instead of hidden credits.</span></div>
+        </div>
+        <div class="callout"><h3>Primary USP</h3><p><b>“SEO content that cannot publish until it passes.”</b> Support it with the proof: DeepSeek’s low-cost production, frontier-model evaluation, JEV micro-judgments, source-grounded drafts, internal links, images, and an approval trail inside the customer’s chat app.</p></div>
+      </section>
+
+      <section id="architecture">
+        <div class="section-head"><div class="num">08</div><div><h2>Architecture for WordPress and custom sites</h2><p>Move orchestration to PostgreSQL, but keep the first launch surface narrow: one thin WordPress plugin, one stable webhook/API contract for custom sites, and one shared content-job state machine.</p></div></div>
+        <div class="routing" aria-label="Hybrid OpenRouter content workflow">
+          <div class="route-node"><b>1 · Produce</b><span>DeepSeek V4.1 Flash researches, briefs, drafts and revises.</span></div><div class="route-arrow" aria-hidden="true">→</div>
+          <div class="route-node"><b>2 · Judge</b><span>JEV handles structured micro-decisions; a frontier model performs the independent 90+ evaluation.</span></div><div class="route-arrow" aria-hidden="true">→</div>
+          <div class="route-node"><b>3 · Deliver</b><span>Human approval in chat, then WordPress plugin or custom-site SDK/API publishing.</span></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>WordPress delivery</h3><p>Ship a wordpress.org plugin whose job is connection, health checks, draft/publish, featured image, canonical URL, categories/tags and SEO metadata sync. Confirm actual writes for Yoast and Rank Math; add FAQ + Article JSON-LD; prevent duplicate remote IDs.</p><p><span class="pill">DRAFT DEFAULT</span> First-run sites should approve before publishing. Autopilot becomes an explicit site-level mode after a successful test post.</p></div>
+          <div class="panel"><h3>Custom-site delivery</h3><p>Build a versioned SDK over the same API contract used by the WordPress connector. Include title, slug, HTML/Markdown body, meta title, description, schema, image assets, citations, internal-link targets and idempotency key. Require an acknowledgement and store the returned remote ID.</p><p><span class="pill caution">MCP COMES AFTER THE API</span> Expose brief, draft, gate and publish tools only after create → update → rollback is stable.</p></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>PostgreSQL is the operational source of truth</h3><p>Use PostgreSQL for tenants, jobs, retries, locks, schedules, approvals, provider spend and publication history. Keep Google Sheets only as optional import/export. Assign idempotency keys to generation and publishing; persist every transition as an event.</p></div>
+          <div class="panel"><h3>DataForSEO stays behind a budget boundary</h3><p>Batch volume and difficulty lookups, cache by keyword + market + language, persist raw provider snapshots and expose normalized facts to agents. The model should not decide how many paid rows to fetch.</p><p><b>Guardrails:</b> workspace spend cap, max rows/task, TTL, provider cost ledger and Tavily/SerpAPI fallback.</p></div>
+        </div>
+        <div class="schema" style="margin-top:18px">
+          <div class="table-card"><code>workspaces / sites</code><p>Tenant, plan, locale, brand profile, site facts and connector references.</p></div>
+          <div class="table-card"><code>keywords / clusters</code><p>Intent, funnel stage, volume, difficulty, market, evidence and freshness.</p></div>
+          <div class="table-card"><code>content_jobs</code><p>State machine, schedule, attempts, lock, failure reason and spend ceiling.</p></div>
+          <div class="table-card"><code>sources / claims</code><p>URLs, excerpts, timestamps and article-level fact provenance.</p></div>
+          <div class="table-card"><code>briefs / articles</code><p>Versioned artifacts, prompt/model version, gate score and revision history.</p></div>
+          <div class="table-card"><code>publications / approvals</code><p>Target, remote ID, status, approver, channel, rollback and audit trail.</p></div>
+          <div class="table-card"><code>usage_events</code><p>Provider, endpoint, tokens, rows, cost, workspace and job.</p></div>
+          <div class="table-card"><code>site_facts</code><p>Approved offers, products, claims and forbidden assertions.</p></div>
+          <div class="table-card"><code>quality_runs</code><p>SEO fields, repetition, citations, link validity and publish blockers.</p></div>
+        </div>
+      </section>
+
+      <section id="plan">
+        <div class="section-head"><div class="num">09</div><div><h2>What to build, in order</h2><p>The goal is not feature parity with seven products. It is a credible WordPress/custom launch with complete SEO basics, a visibly safer automation model, and one clean path from keyword to measured result.</p></div></div>
+        <div class="priority-grid">
+          <div class="priority"><h3>P0 · Table stakes before launch</h3><ol>
+            <li><b>Keyword discovery UI</b><span class="why">GSC striking-distance keywords + competitor gaps feeding triage. Per-post Tavily research does not answer “what should I write next?”</span></li>
+            <li><b>Internal-link QA and backfill</b><span class="why">The posting agent already retrieves internal links. Add reciprocal-link backfill, broken-target checks, anchor diversity and a report showing exactly what changed.</span></li>
+            <li><b>Meta + schema validator</b><span class="why">Confirm Yoast/Rank Math writes; emit FAQ + Article JSON-LD; block duplicate title/H1, missing description and invalid canonical.</span></li>
+            <li><b>Calendar and job-status UI</b><span class="why">Expose queued → brief → draft → gated → scheduled → published, with drag/reschedule and per-post failure reason.</span></li>
+            <li><b>Thin WordPress plugin</b><span class="why">Connection, health, content push, metadata, images and rollback. A wordpress.org listing buys trust and discovery.</span></li>
+            <li><b>Four-language launch baseline</b><span class="why">Start with EN/ES/DE/FR if quality tests pass; competitors make multilingual support a standard buying criterion.</span></li>
+          </ol></div>
+          <div class="priority"><h3>P1 · Differentiators to copy</h3><ol>
+            <li><b>Brand profiles / “Brand DNA”</b><span class="why">Crawl once; store voice, audience, offers and approved facts for every brief.</span></li>
+            <li><b>GEO / answer-engine visibility</b><span class="why">llms.txt, FAQ schema and tracked brand citations in AI answers—after core SEO publishing works.</span></li>
+            <li><b>Programmatic SEO page types</b><span class="why">Abun’s comparison, glossary, calculator and statistics pages fit custom sites well.</span></li>
+            <li><b>Custom-site SDK + MCP server</b><span class="why">Ship the SDK first for predictable integration; expose brief → draft → gate → publish tools through MCP once the API is stable.</span></li>
+            <li><b>Flat post allowances + rollover</b><span class="why">Avoid the category’s credit-multiplier and surprise-billing trap.</span></li>
+          </ol></div>
+        </div>
+        <div class="grid2" style="margin-top:18px">
+          <div class="panel"><h3>P2 · Advantages to market harder</h3><p><b>Quality gate:</b> show the rubric, failed checks and revision history. <b>Messaging approvals:</b> demo approve/reject in WhatsApp, Telegram and Discord. <b>Research depth:</b> expose the brief and source ledger. <b>Economics:</b> show $0.05–0.20/post and 15–17/day as supplied operating targets, with real telemetry replacing estimates after launch.</p></div>
+          <div class="panel"><h3>Explicitly do not copy</h3><p><b>Backlink exchanges:</b> delay until there is a defensible compliance and quality story. <b>Confusing credit multipliers:</b> keep one post equal to one allowance if credits are used. <b>Review incentives:</b> collect organic, channel-native proof. <b>Silent autopublish:</b> never treat generation success as permission to publish.</p></div>
+        </div>
+        <div class="callout"><h3>The launch story</h3><p><b>“From keyword opportunity to approved WordPress draft—with evidence, automatic links, complete SEO fields, and a quality gate.”</b> That is narrower than “AI SEO platform,” easier to demonstrate, and directly addresses the category’s most credible complaints.</p></div>
+        <div class="open"><b>Open questions to resolve in implementation:</b> verify the current WordPress adapter’s Yoast/Rank Math writes; define what score 90 measures and which failures hard-block publishing; choose first multilingual markets; and replace supplied cost/throughput targets with observed telemetry.</div>
+      </section>
+
+      <section id="sources">
+        <div class="section-head"><div class="num">10</div><div><h2>Sources and confidence</h2><p>Live checks were performed on 03 Oct 2026. “Index” means the source was read through search-index text rather than re-verified in the live page. Conflicting review numbers and vendor claims remain labeled.</p></div></div>
+        <div class="sources">
+          <ol>
+            <li><a href="https://trysoro.com/pricing" target="_blank" rel="noopener">Soro pricing</a> — prior report: offer, features, models and integrations.</li>
+            <li><a href="https://apps.shopify.com/soro/reviews" target="_blank" rel="noopener">Soro Shopify reviews</a> — prior report: representative praise and complaints.</li>
+            <li><a href="https://www.seoant.com/pricing/" target="_blank" rel="noopener">SEOWILL pricing</a> — index: tiers, credits and features.</li>
+            <li><a href="https://apps.shopify.com/seo-master" target="_blank" rel="noopener">SEOWILL Shopify listing</a> — index: rating, review count and review themes.</li>
+            <li><a href="https://storeseo.com/#pricing" target="_blank" rel="noopener">StoreSEO pricing</a> — verified live: tiers and allowances.</li>
+            <li><a href="https://apps.shopify.com/storeseo" target="_blank" rel="noopener">StoreSEO Shopify listing</a> — index: ratings and review themes.</li>
+            <li><a href="https://startise.com/storeware-acquires-easyflow-shopify-app/" target="_blank" rel="noopener">Startise / Storeware</a> — index: company context and user claim.</li>
+            <li><a href="https://apps.shopify.com/joltai" target="_blank" rel="noopener">Jolt Shopify listing</a> — index: pricing, features, rating and reviews.</li>
+            <li><a href="https://koala.sh/pricing" target="_blank" rel="noopener">Koala pricing</a> — verified live: nine tiers, models, quotas and integrations.</li>
+            <li><a href="https://www.getapp.co.uk/software/2068852/koala-ai" target="_blank" rel="noopener">Koala on GetApp</a> — index: 4.5/70 review signal.</li>
+            <li><a href="https://autoblogging.ai/knowledge-base/" target="_blank" rel="noopener">Autoblogging.ai knowledge base</a> — index: pricing, credits and modes.</li>
+            <li><a href="https://ciroapp.com/id/autoblogging-ai-review/" target="_blank" rel="noopener">Autoblogging.ai critical review summary</a> — index: TrustScore and complaint themes.</li>
+            <li><a href="https://www.theseoagent.ai/blog/autoblogging-ai-alternatives" target="_blank" rel="noopener">The SEO Agent comparison</a> — index: no-quality-gate critique.</li>
+            <li><a href="https://blogseo.ai/pricing" target="_blank" rel="noopener">BlogSEO.ai pricing</a> — verified live: tiers, quotas and features.</li>
+            <li><a href="https://apps.shopify.com/blogseo-ai/reviews?page=2" target="_blank" rel="noopener">BlogSEO.ai Shopify reviews</a> — index: praise and paid-review allegation.</li>
+            <li><a href="https://abun.com" target="_blank" rel="noopener">Abun product and pricing</a> — verified live: tiers, pipeline and user claims.</li>
+            <li><a href="https://WWW.PRODUCTHUNT.COM/products/abun" target="_blank" rel="noopener">Abun on Product Hunt</a> — index: launch feedback.</li>
+            <li><a href="https://github.com/MrOwaisAbdullah/ContentFTE" target="_blank" rel="noopener">ContentFTE repository</a> — prior report reference for architecture and adapters.</li>
+            <li><a href="https://dataforseo.com/apis/dataforseo-labs-api/competitor-research" target="_blank" rel="noopener">DataForSEO Labs pricing</a> — official input to the cost model.</li>
+            <li><a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily pricing</a> — official credit rates and allowance.</li>
+            <li><a href="https://openrouter.ai/models?output_modalities=image" target="_blank" rel="noopener">OpenRouter image-output catalog</a> — user-supplied 03 Oct 2026 snapshot: 57 image models and the listed provider prices.</li>
+            <li><a href="https://arena.ai/leaderboard/text-to-image" target="_blank" rel="noopener">Arena text-to-image leaderboard</a> — comparative preference signal, not the default routing rule.</li>
+            <li><a href="https://arena.ai/leaderboard/code/webdev/content-creation-tools" target="_blank" rel="noopener">Arena content-creation tools leaderboard</a> — general capability proxy; not a prose-only benchmark.</li>
+          </ol>
+          <p class="footnote"><b>Not verified:</b> audited revenue, exact active customer counts, most team sizes and funding, claimed user totals, current Shopify installs, and disputed Koala/Autoblogging review aggregates. Revenue ranges are labeled estimates. BlogSEO’s 19-vs-31 language claim conflicts; this report uses 19 where needed. StoreSEO Growth-plan inclusions were not reliably parsed. Jolt Ultimate details were third-party sourced, while Pro was confirmed on Shopify.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function(){
+      var ids=['posts','deepInput','deepOutput','evalInput','evalOutput','seoCost','imageCount','imageCost'];
+      function n(id){return Math.max(0,Number(document.getElementById(id).value)||0)}
+      function money(v,d){return '$'+v.toFixed(d)}
+      function update(){
+        var monthlyPosts=n('posts')*30;
+        var deep=(n('deepInput')/1000000*.15)+(n('deepOutput')/1000000*.60);
+        var evaluator=(n('evalInput')/1000000*2)+(n('evalOutput')/1000000*10);
+        var jev=.002, seo=n('seoCost'), image=n('imageCount')*n('imageCost'), total=deep+evaluator+jev+seo+image;
+        document.getElementById('deepPost').textContent=money(deep,4); document.getElementById('deepMonth').textContent=money(deep*monthlyPosts,2);
+        document.getElementById('evalPost').textContent=money(evaluator,4); document.getElementById('evalMonth').textContent=money(evaluator*monthlyPosts,2);
+        document.getElementById('jevPost').textContent=money(jev,4); document.getElementById('jevMonth').textContent=money(jev*monthlyPosts,2);
+        document.getElementById('seoPost').textContent=money(seo,4); document.getElementById('seoMonth').textContent=money(seo*monthlyPosts,2);
+        document.getElementById('imagePost').textContent=money(image,4); document.getElementById('imageMonth').textContent=money(image*monthlyPosts,2);
+        document.getElementById('allPost').textContent=money(total,4); document.getElementById('allMonth').textContent=money(total*monthlyPosts,2);
+        document.getElementById('monthlyTotal').textContent=money(total*monthlyPosts,2);
+      }
+      ids.forEach(function(id){document.getElementById(id).addEventListener('input',update)}); update();
+    })();
+  </script>
+</body>
+</html>

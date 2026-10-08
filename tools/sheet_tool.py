@@ -182,6 +182,11 @@ def log_model_usage(
 # "which image model ran, and did it pass" is a single readable tab instead of
 # being interleaved with hundreds of LLM rows. Created on first write.
 IMAGE_LOG_WORKSHEET = "image_logs"
+# Spec 5.9: per image we store prompt, model, cost and generation ms, plus
+# the slot (featured vs inpost) so cost-per-post is answerable from the
+# sheet. New columns are APPENDED after Detail so rows written before this
+# change keep their column mapping; _ensure_image_log_headers extends the
+# header row on demand (same self-healing pattern as generated_posts).
 IMAGE_LOG_HEADERS = [
     "Timestamp",
     "Model",
@@ -191,7 +196,25 @@ IMAGE_LOG_HEADERS = [
     "Reference",
     "Latency (s)",
     "Detail",
+    "Cost (USD)",
+    "Slot",
+    "Latency (ms)",
+    "Prompt",
 ]
+
+
+def _ensure_image_log_headers(worksheet) -> None:
+    """Rewrite row 1 when the live sheet predates a column addition.
+    Header row only — data rows are untouched, and appending values beyond
+    the old column count stays aligned because new columns are appended."""
+    try:
+        current = worksheet.row_values(1)
+        if current == IMAGE_LOG_HEADERS:
+            return
+        worksheet.update(f"A1", [IMAGE_LOG_HEADERS], value_input_option="USER_ENTERED")
+        logger.info("Extended image_logs header row with new columns: %s", IMAGE_LOG_HEADERS)
+    except Exception as e:
+        logger.warning(f"image_logs header refresh failed (non-fatal): {e}")
 
 
 def log_image_usage(
@@ -202,14 +225,24 @@ def log_image_usage(
     latency: float,
     reference: str = "",
     detail: str = "",
+    cost_usd: Optional[float] = None,
+    slot: str = "",
+    prompt: str = "",
+    latency_ms: Optional[float] = None,
 ) -> bool:
     """Appends one row to the `image_logs` worksheet.
 
     One row per actual image call -- every Cloudflare generation attempt
     (Stage=`generate`, including the img2img revision attempts, which is what
-    `Reference=yes` marks), every Pexels fetch (Stage=`stock`), and one
-    summary row per `generate_image_tool` call (Stage=`result`) carrying the
-    VLM/Jev verdict so the loop's outcome is readable without joining rows.
+    `Reference=yes` marks), every Pexels fetch (Stage=`stock`), the
+    stock-vs-AI relevancy decision (Stage=`gate`), and one summary row per
+    `generate_image_tool` call (Stage=`result`) carrying the VLM/Jev verdict
+    so the loop's outcome is readable without joining rows.
+
+    `cost_usd` is the per-image cost (0.0 for stock; the model's measured
+    Neuron cost for generations), `slot` is featured/inpost, `prompt` the
+    actual generation prompt (truncated), `latency_ms` the precise
+    generation/QA latency (falls back to latency*1000).
 
     Best-effort and never raises: a sheet hiccup must not fail an image
     generation that already succeeded. Returns True only if the row landed."""
@@ -219,6 +252,10 @@ def log_image_usage(
         spreadsheet = get_spreadsheet()
         ensure_worksheet_exists(IMAGE_LOG_WORKSHEET, IMAGE_LOG_HEADERS)
         worksheet = resolve_worksheet(spreadsheet, IMAGE_LOG_WORKSHEET)
+        _ensure_image_log_headers(worksheet)
+        if latency_ms is None:
+            latency_ms = float(latency or 0.0) * 1000.0
+        cost_cell = "" if cost_usd is None else f"{float(cost_usd):.4f}"
         worksheet.append_row(
             [
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -229,6 +266,10 @@ def log_image_usage(
                 str(reference or ""),
                 f"{float(latency or 0.0):.1f}",
                 str(detail or "")[:500],
+                cost_cell,
+                str(slot or ""),
+                f"{float(latency_ms):.0f}",
+                str(prompt or "")[:1000],
             ],
             value_input_option="USER_ENTERED",
         )
@@ -482,6 +523,14 @@ def manage_sheet_data(
                 logger.info(f"Appending row to {worksheet_name}: {row_values}")
                 worksheet.append_row(row_values, value_input_option=value_input_option)
                 time.sleep(0.5)  # Small delay to ensure update is processed
+                # §5.16 Sheets→Postgres cutover, step 1: dual-write mirror.
+                # Best-effort -- a mirror failure must not break the Sheets
+                # write that triggered it (lib.store never raises).
+                try:
+                    from lib.store import mirror_sheet_append
+                    mirror_sheet_append(worksheet_name, list(row_values))
+                except Exception as _mirror_err:
+                    logger.warning(f"postgres mirror skipped ({worksheet_name}): {_mirror_err}")
                 logger.info(f"Successfully appended row to {worksheet_name}")
                 return {"status": "success", "message": f"Row appended to {worksheet_name}."}
 

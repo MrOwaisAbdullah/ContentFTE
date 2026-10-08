@@ -6,6 +6,7 @@
 [![Adapters: WordPress | Shopify | Wix](https://img.shields.io/badge/Adapters-WordPress%20%7C%20Shopify%20%7C%20Wix-green.svg)](https://github.com/MrOwaisAbdullah/ContentFTE)
 [![Gateways: Discord | Telegram | WhatsApp](https://img.shields.io/badge/Gateways-Discord%20%7C%20Telegram%20%7C%20WhatsApp-5865F2.svg)](https://github.com/MrOwaisAbdullah/ContentFTE)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-orange.svg)](./LICENSE)
+[![npm: content-fte](https://img.shields.io/npm/v/content-fte.svg?logo=npm&label=npm)](https://www.npmjs.com/package/content-fte)
 
 > **Autonomous multi-agent Digital FTE that researches, writes, and publishes 15–17 SEO-optimized articles daily. Directly pushes to Sanity CMS with extensible adapters for WordPress, Shopify, Wix, and Headless CMS platforms, integrated with Discord, Telegram, and WhatsApp gateways for real-time notifications and approvals.**
 
@@ -26,10 +27,50 @@ ContentFTE separates content generation from publishing targets via a pluggable 
 | Target Platform | Integration Method | Status | Capabilities |
 | :--- | :--- | :---: | :--- |
 | **Sanity CMS** | Sanity REST API / Client | ✅ Active | Rich Portable Text, Authors, Categories, Slugs, Assets |
-| **WordPress** | WP REST API (`/wp/v2/posts`) | 🔌 Pluggable | Formatted HTML, Featured Media, Yoast/RankMath SEO meta |
+| **WordPress** | WP REST API (`/wp/v2/posts`) | ✅ Active | Gutenberg-block body, featured + in-post images, categories/tags, Yoast / Rank Math / AIOSEO meta, Article + FAQPage JSON-LD, FAQ accordion; optional native **Elementor** layout |
 | **Shopify Blogs** | Shopify Admin REST / GraphQL | 🔌 Pluggable | Article publishing, Blog tags, Authors, SEO handle |
 | **Wix & Webflow** | Wix REST API & Webflow CMS | 🔌 Pluggable | Automated item creation, Collection binding |
-| **Custom Headless** | Webhook / JSON Payload | 🔌 Pluggable | Next.js, Nuxt, Astro, or custom backend endpoints |
+| **Custom Headless** | Webhook / JSON Payload | ✅ Active | Unified `/content` payload (SDK pull) + webhook push for Next.js, Nuxt, Astro, or custom backends |
+
+---
+
+## 🧰 SDK & Integration Layers
+
+Phase 1 adds an **API → SDK → MCP** stack on top of the engine so your own
+frontend, a script, or an AI agent can drive the pipeline:
+
+| Layer | What it is |
+| :--- | :--- |
+| **REST API** (`/sdk/v1/*`) | Canonical service ops — sites, briefs, articles, generate, gate/approve, publish, WordPress/Elementor build |
+| **MCP server** (`/mcp`) | `contentfte_*` tools (`list_sites`, `get_brief`, `generate_article`, `get_article_status`, `get_image`, `publish_article`, `site_health`, `elementor_*`) for Claude Code or any MCP client |
+| **npm package** | [`content-fte`](https://www.npmjs.com/package/content-fte) — typed TS/JS client + React renderer that turns the unified `/content` payload into a fully SEO'd page (GFM, heading anchors, FAQ accordion, Article + FAQPage JSON-LD) |
+| **Python client** | `sdk/python_client.py` for scripts and scheduled jobs |
+
+```bash
+npm install content-fte
+```
+
+```tsx
+import { ContentFTEClient } from "content-fte";
+import { ContentFTEArticle } from "content-fte/renderer";
+import "content-fte/contentfte-prose.css";
+
+const client = new ContentFTEClient(process.env.CONTENTFTE_URL!, process.env.CONTENTFTE_SITE_KEY!);
+const payload = await client.getContent(articleId);
+```
+
+Every publish is **gated**: an article must clear the quality gate and be
+approved before `publish_article` moves it to published. The WordPress push runs
+inside that same call (body, meta, schema, images, categories) and stays
+**fail-open** — an outage reports `wp.ok=false` rather than losing the article.
+
+See `docs/site-onboarding-flow.md` for the step-by-step **WordPress** and
+**custom React/Astro** onboarding + publishing flows, `sdk/quickstart.md` for
+frontend patterns, and `docs/phase1-feature-map.md` for the full surface.
+
+> **AI agents:** `skills/contentfte/SKILL.md` is a public skill that teaches an
+> agent to install the SDK and implement it correctly for the user's stack
+> (Next.js/React, Astro, Vue/Nuxt, Svelte, plain HTML, WordPress, or MCP).
 
 ---
 
@@ -413,4 +454,4 @@ python -c "import os; from dotenv import load_dotenv; load_dotenv(); [print(f'{k
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license — free for personal and non-commercial use with attribution to **Owais Abdullah**. See the [LICENSE](./LICENSE) file for details.

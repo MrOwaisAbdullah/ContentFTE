@@ -25,14 +25,23 @@ class SanityAdapter:
         self.project_id = project_id
         self.dataset = dataset
         self.token = token
-        # Use the base URL for the Actions API
-        self.base_url = f"https://{self.project_id}.api.sanity.io/v2021-03-25"
+        # Pinned HTTP API version (Sanity Content Lake versioning). The old
+        # v2021-03-25 pin predates current Sanity (Studio v6 era) and is on
+        # the deprecation track; keep it configurable so a single env var can
+        # re-pin without a code change. Sanity's docs recommend a static UTC
+        # date (e.g. 2026-07-28); the HTTP API form is `v` + that date.
+        api_version = os.environ.get("SANITY_API_VERSION", "v2026-07-28").strip() or "v2026-07-28"
+        if not api_version.startswith("v"):
+            api_version = f"v{api_version}"
+        self.api_version = api_version
+        self.base_url = f"https://{self.project_id}.api.sanity.io/{self.api_version}"
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
 
-    def _build_query_endpoint(self, query: str, params: Optional[Dict[str, Any]] = None) -> str:
+    def _build_query_endpoint(self, query: str, params: Optional[Dict[str, Any]] = None,
+                              perspective: Optional[str] = "raw") -> str:
         """
         Builds a /data/query endpoint URL for the given GROQ query.
 
@@ -41,12 +50,25 @@ class SanityAdapter:
         JSON-encoded URL parameters rather than interpolated into the query
         text. Sanity's HTTP query API supports this natively and it's the
         documented way to avoid GROQ injection from untrusted query values.
+
+        `perspective` mirrors Sanity's query perspective param. Default
+        "raw" (drafts + published, exactly as stored) because the pinned
+        apiVersion v2026-07-28 no longer exposes drafts to id lookups
+        without it — probe-confirmed: create a `drafts.*` doc, query it by
+        _id, result is null until `&perspective=raw` is added, while
+        mutate/delete still see it. Callers serving live-site data
+        (fetch_internal_links, list_posts, link-hygiene scans, link
+        validation) pass perspective="published" so in-flight drafts never
+        leak into related-link pools. Pass perspective=None to omit the
+        param entirely (API default).
         """
         encoded_query = urllib.parse.quote(query, safe='')
         endpoint = f"/data/query/{self.dataset}?query={encoded_query}"
         for key, value in (params or {}).items():
             encoded_value = urllib.parse.quote(json.dumps(value), safe='')
             endpoint += f"&${key}={encoded_value}"
+        if perspective:
+            endpoint += f"&perspective={urllib.parse.quote(str(perspective), safe='')}"
         return endpoint
 
     def fetch_internal_links(self, topic: str, max_results: int = 3, exclude_slug: str = None, max_retries: int = 2) -> List[Dict[str, str]]:
@@ -83,7 +105,7 @@ class SanityAdapter:
         fetch_limit = max_results * 3
         query += f' | order(_createdAt desc)[0...{fetch_limit}]{{title, "slug": slug.current, summary}}'
 
-        endpoint = self._build_query_endpoint(query, params)
+        endpoint = self._build_query_endpoint(query, params, perspective="published")
         attempt = 0
         results = []
 
@@ -124,7 +146,7 @@ class SanityAdapter:
                 broad_query += ' && slug.current != $excludeSlug'
                 broad_params["excludeSlug"] = exclude_slug
             broad_query += f' | order(_createdAt desc)[0...{fetch_limit}]{{title, "slug": slug.current, summary}}'
-            broad_endpoint = self._build_query_endpoint(broad_query, broad_params)
+            broad_endpoint = self._build_query_endpoint(broad_query, broad_params, perspective="published")
             attempt = 0
             while attempt < max_retries:
                 try:
@@ -175,6 +197,16 @@ class SanityAdapter:
                     print(f"Request  {json.dumps(data, indent=2, default=str)}")
                 response = requests.request(method, url, headers=self.headers, json=data, timeout=30)
                 print(f"Response Status: {response.status_code}")
+                # Surface Sanity's API-version deprecation notices: deprecated
+                # pins answer with X-Sanity-Warning / X-Sanity-Deprecated and a
+                # removed pin returns 410 -- log loudly before that happens.
+                warning = response.headers.get("X-Sanity-Warning")
+                deprecated = response.headers.get("X-Sanity-Deprecated")
+                if warning or deprecated:
+                    logger.warning(
+                        "Sanity API version notice for %s: deprecated=%s warning=%s",
+                        self.api_version, deprecated, warning,
+                    )
                 return response
             except requests.exceptions.RequestException as e:
                 attempt += 1
@@ -539,7 +571,10 @@ class SanityAdapter:
         instead of a cheaper reimplementation that would silently break any
         post that has contextual images."""
         try:
-            cleaned_content = '\n'.join([line.lstrip() for line in content.split('\n')]).strip() if content else ""
+            # NOTE: no per-line lstrip here anymore -- that erased relative
+            # indentation and flattened nested lists before the parser ever
+            # saw them. markdown_to_sanity_blocks does its own uniform-dedent.
+            cleaned_content = content.strip() if content else ""
             logger.debug(f"Original content first 100 chars: {content[:100] if content else 'empty'}")
             logger.debug(f"Cleaned content first 100 chars: {cleaned_content[:100] if cleaned_content else 'empty'}")
 
@@ -792,7 +827,7 @@ class SanityAdapter:
         predate any sheet-side tracking still work fully, not just
         partially."""
         query = '*[_type == "post"]{_id, title, "slug": slug.current, summary, _createdAt}'
-        query_url = self._build_query_endpoint(query)
+        query_url = self._build_query_endpoint(query, perspective="published")
         try:
             response = self._make_request("GET", query_url, data=None, max_retries=2)
             response.raise_for_status()
@@ -834,10 +869,49 @@ class SanityAdapter:
             if block_type == "image":
                 ref = (block.get("asset") or {}).get("_ref", "")
                 url = self._asset_ref_to_url(ref) if ref else None
+                if not url:
+                    # Un-uploaded image (asset.url form, pre-publish drafts)
+                    url = (block.get("asset") or {}).get("url") or ""
                 if url:
                     if lines:
                         lines.append("")
                     lines.append(f"![{block.get('alt', '')}]({url})")
+                prev_was_list_item = False
+                continue
+            if block_type == "code":
+                # Dedicated code object (matches the site's EditorialCodeBlock
+                # and /raw route) back to a fenced block.
+                if lines:
+                    lines.append("")
+                language = block.get("language") or ""
+                lines.append(f"```{language}")
+                lines.append(block.get("code") or "")
+                lines.append("```")
+                prev_was_list_item = False
+                continue
+            if block_type == "table":
+                # Table object -> GFM pipe table (row 0 = header).
+                if lines:
+                    lines.append("")
+                def _cell_text(cell):
+                    parts = []
+                    for child_block in cell.get("children") or []:
+                        if child_block.get("_type") == "block":
+                            for span in child_block.get("children", []):
+                                parts.append(span.get("text", ""))
+                        elif isinstance(child_block, dict):
+                            parts.append(child_block.get("text", ""))
+                    return "".join(parts).replace("|", "\\|").strip()
+                rows = []
+                for row in block.get("rows") or []:
+                    rows.append([_cell_text(c) for c in row.get("cells") or []])
+                if rows:
+                    width = max(len(r) for r in rows)
+                    rows = [r + [""] * (width - len(r)) for r in rows]
+                    lines.append("| " + " | ".join(rows[0]) + " |")
+                    lines.append("|" + "|".join([" --- "] * width) + "|")
+                    for data_row in rows[1:]:
+                        lines.append("| " + " | ".join(data_row) + " |")
                 prev_was_list_item = False
                 continue
             if block_type != "block":
@@ -860,6 +934,12 @@ class SanityAdapter:
                     text = f"*{text}*"
                 if "strong" in marks:
                     text = f"**{text}**"
+                if "strike-through" in marks:
+                    text = f"~~{text}~~"
+                if "underline" in marks:
+                    text = f"<u>{text}</u>"
+                if "highlight" in marks:
+                    text = f"=={text}=="
                 if link_href:
                     text = f"[{text}]({link_href})"
                 text_parts.append(text)
@@ -1079,12 +1159,20 @@ class SanityAdapter:
                             "error": f"Failed to handle image URL: {str(e)}"
                         }
             else:
-                # It's a local file path
+                # It's a local file path (or no image at all)
                 # Normalize the image path
                 normalized_image_path = os.path.normpath(local_image_path) if local_image_path else None
-                
-                # Check if file exists
-                if not os.path.exists(normalized_image_path):
+
+                if not normalized_image_path:
+                    # Spec 5.9 ultimate fallback: featured image generation
+                    # failed and stock must never substitute in the featured
+                    # slot. Publish the post without a mainImage (the caller
+                    # flags it in the sheet) instead of blocking the post.
+                    logger.warning("No featured image provided; publishing without a mainImage.")
+                    image_asset_id = None
+                    image_url = None
+                elif not os.path.exists(normalized_image_path):
+                    # Check if file exists
                     return {
                         "status": "error",
                         "post_id": None,
@@ -1092,20 +1180,20 @@ class SanityAdapter:
                         "image_url": None,
                         "error": f"Image file not found at path: {normalized_image_path}. Current working directory: {os.getcwd()}"
                     }
-                
-                # Use the normalized path
-                image_upload_result = self.upload_image(normalized_image_path)
-                if not image_upload_result.get("success"):
-                    return {
-                        "status": "error",
-                        "post_id": None,
-                        "image_id": None,
-                        "image_url": None,
-                        "error": f"Failed to upload image: {image_upload_result.get('error')}"
-                    }
+                else:
+                    # Use the normalized path
+                    image_upload_result = self.upload_image(normalized_image_path)
+                    if not image_upload_result.get("success"):
+                        return {
+                            "status": "error",
+                            "post_id": None,
+                            "image_id": None,
+                            "image_url": None,
+                            "error": f"Failed to upload image: {image_upload_result.get('error')}"
+                        }
 
-                image_asset_id = image_upload_result["asset_id"]
-                image_url = image_upload_result.get("url")
+                    image_asset_id = image_upload_result["asset_id"]
+                    image_url = image_upload_result.get("url")
 
             # 3-4. Prepare document content: Markdown -> Portable Text blocks,
             # with embedded images uploaded as real Sanity assets.
@@ -1156,15 +1244,21 @@ class SanityAdapter:
                 "summary": summary,
                 "slug": {"_type": "slug", "current": slug},
                 "author": {"_type": "reference", "_ref": author_id},
-                "mainImage": {
-                    "_type": "image",
-                    "asset": {"_type": "reference", "_ref": image_asset_id},
-                    "alt": alt_text or f"Image for {title}"
-                },
                 "categories": category_refs,
                 "content": content_blocks,
                 "faqs": formatted_faqs
             }
+            # mainImage only when an asset was actually uploaded. A
+            # `_ref: null` reference is invalid on publish, so the
+            # no-image case (spec 5.9 flag) simply omits the field.
+            if image_asset_id:
+                document["mainImage"] = {
+                    "_type": "image",
+                    "asset": {"_type": "reference", "_ref": image_asset_id},
+                    "alt": alt_text or f"Image for {title}"
+                }
+            else:
+                logger.warning(f"Document {doc_id} created without a mainImage (flagged no-image publish).")
 
             # 8. Create Document
             create_result = self.create_document(document)

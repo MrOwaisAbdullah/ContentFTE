@@ -200,6 +200,9 @@ def jev_classify_category(keyword_topic: str, existing_categories_json: str) -> 
         existing_categories_json: JSON string of ["SEO", "AI Agents", ...] existing category titles
     Returns:
         JSON string: {"action": "reuse"|"propose_new", "category": str, "confidence": float, "fallback": bool, "usage": {...}|None}
+        The choice list always includes a "(propose new: none of these fit)"
+        escape, so a site whose real categories don't match can be told "no
+        relevant match" instead of forcing a reuse of the only option.
         On fallback returns propose_new with first category or topic title.
     """
     try:
@@ -210,14 +213,19 @@ def jev_classify_category(keyword_topic: str, existing_categories_json: str) -> 
         existing = []
     if not existing:
         return json.dumps({"action": "propose_new", "category": keyword_topic.strip().title()[:60], "confidence": 0, "fallback": True})
+    none_label = "(propose new: none of these fit)"
     criteria = {c: f"Posts about {c}" for c in existing[:255]}
+    criteria[none_label] = ("No existing category fits this topic — a new "
+                            "category should be created")
     state = {"keyword_topic": keyword_topic}
-    questions = {"category": {"type": "choice", "instructions": "Which existing category best fits `keyword_topic`?", "criteria": criteria}}
+    questions = {"category": {"type": "choice", "instructions": "Which existing category best fits `keyword_topic`? Choose the propose-new option when none fit.", "criteria": criteria}}
     try:
         resp = call_jev_sync(state, questions)
         ans = resp.answers["category"]
         choice = str(getattr(ans, "choice", ans.get("choice", existing[0])) if isinstance(ans, dict) else getattr(ans, "choice", existing[0]))
         conf = float(getattr(ans, "confidence", ans.get("confidence", 0) or 0) if isinstance(ans, dict) else getattr(ans, "confidence", 0) or 0)
+        if choice.strip() == none_label:
+            return json.dumps({"action": "propose_new", "category": keyword_topic.strip().title()[:60], "confidence": conf, "fallback": False, "usage": resp.usage.model_dump()})
         action = "reuse" if conf >= 0.6 else "propose_new"
         return json.dumps({"action": action, "category": choice, "confidence": conf, "fallback": False, "usage": resp.usage.model_dump()})
     except JevError as e:

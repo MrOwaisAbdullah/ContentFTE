@@ -37,6 +37,13 @@ on:
       # them -- cheap and idempotent, so a daily cadence is fine even though
       # mine_feedback itself now also fires per-approval (see
       # discord_bot/bot.py::_log_review_feedback).
+    - cron: '0 4 1 * *'  # decay -- monthly, 1st at 9:00 AM PKT (spec 5.10-1).
+      # GSC decay scan: >30% click decay over 90 days -> auto refresh brief.
+      # No-op until the Phase 1 article store is populated (Sheets->Postgres).
+    - cron: '0 6 1 * *'  # serp_drift -- monthly, 1st at 11:00 AM PKT (spec 5.16
+      # "SERP snapshots & drift alerts"): brief-time top-10 vs fresh SERP;
+      # <40% baseline overlap -> audit row + keyword review flag. Skips
+      # cleanly when SEO_DATA_PROVIDER=off (nothing to fetch).
   workflow_dispatch:
     inputs:
       stage:
@@ -55,6 +62,8 @@ on:
           - search_performance_review
           - mine_feedback
           - log_coverage
+          - decay
+          - serp_drift
       edit_title:
         description: '(edit_post only) Title (or partial title) of the post to edit'
         required: false
@@ -112,6 +121,8 @@ jobs:
               '0 2 * * 0') echo "stage=freshness_sweep" >> "$GITHUB_OUTPUT" ;;
               '0 2 * * 3') echo "stage=search_performance_review" >> "$GITHUB_OUTPUT" ;;
               '0 11 * * *') echo "stage=log_coverage" >> "$GITHUB_OUTPUT" ;;
+              '0 4 1 * *') echo "stage=decay" >> "$GITHUB_OUTPUT" ;;
+              '0 6 1 * *') echo "stage=serp_drift" >> "$GITHUB_OUTPUT" ;;
               *)
                 echo "Unrecognized schedule: ${{ github.event.schedule }}" >&2
                 exit 1
@@ -171,6 +182,15 @@ jobs:
           SANITY_DEFAULT_AUTHOR_NAME: ${{ secrets.SANITY_DEFAULT_AUTHOR_NAME }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Only used by the decay/serp_drift stages (Phase 1 article/keyword
+          # store). Unset falls back to local sqlite, which has no articles
+          # in CI.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # SEO data provider for get_keyword_metrics + the serp_drift stage.
+          # Unset/empty = "off" (manual mode) — same default as locally, so
+          # this only changes behavior when the operator opts in via secrets.
+          SEO_DATA_PROVIDER: ${{ secrets.SEO_DATA_PROVIDER }}
+          OPENSEO_API_KEY: ${{ secrets.OPENSEO_API_KEY }}
           # Only meaningful for stage=edit_post; empty on every other trigger
           # (scheduled runs and workflow_dispatch runs for other stages).
           EDIT_TITLE: ${{ github.event.inputs.edit_title }}

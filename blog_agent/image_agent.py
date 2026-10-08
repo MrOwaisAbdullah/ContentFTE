@@ -10,7 +10,7 @@ import re
 import asyncio
 from typing import Dict, Any, Optional, List
 from agents import Agent, ModelSettings, function_tool
-from tools.tools import get_stock_image_tool, generate_image_tool
+from tools.tools import generate_image_tool, select_inpost_image_tool
 from tools.screenshot_tool import capture_screenshot_tool
 import requests
 from io import BytesIO
@@ -137,10 +137,10 @@ contextual_image_insertion_agent = Agent(
     1. **Analyze Content Structure**: Examine the blog content to identify major sections and natural breakpoints
     2. **Identify Image Opportunities**: Find positions where images would enhance understanding or engagement
     3. **Extract Key Concepts**: For each opportunity, extract 3-5 key concepts from surrounding content
-    4. **Generate Image Queries**: Create specific queries for stock image services based on key concepts
-    5. **Fetch Real Images**: Use `get_stock_image_tool` to find actual stock images (NOT example URLs)
-    6. **Evaluate Image Relevance**: Use `evaluate_image_quality` to assess if found images are relevant and of high quality
-    7. **Insert Images Strategically**: Place approved images at optimal positions in the content using PROPER MARKDOWN SYNTAX
+    4. **Frame the Section Topic**: Formulate a short topic phrase + one-sentence summary for the section (this drives the image decision)
+    5. **Select a Gated Image**: Call `select_inpost_image_tool(topic, section_summary, alt_text)` for each slot. It fetches a free Pexels candidate, a VLM looks at the actual pixels and Jev scores topic relevancy 0-100; >= 90 returns the stock image, below 90 it generates an on-brand AI image instead. You never bypass this gate and never call a raw stock fetch.
+    6. **Screenshots only when they genuinely apply**: run `capture_screenshot_tool` per the rules below, then `evaluate_image_quality` (>= 7.0) before inserting. Screenshot quality evaluation is NOT for the gated slot images -- `select_inpost_image_tool` already ran its own VLM relevancy gate.
+    7. **Insert Images Strategically**: Place approved images at optimal positions in the content using PROPER MARKDOWN SYNTAX; alt text = the section summary you passed to the gate (or the tool's returned alt_text)
     
     ## Content Analysis Guidelines:
     - Look for H2 headings as natural section breaks
@@ -178,26 +178,26 @@ contextual_image_insertion_agent = Agent(
       data -- an invented-but-plausible URL is worse than no screenshot, same rule as internal
       links elsewhere in this pipeline.
     - If no URL in `EXTERNAL_LINKS_MD` is a genuine match for what this section discusses, do
-      not force it -- fall back to the normal stock-photo process below.
+      not force it -- fall back to the normal gated selection process below.
     - `capture_screenshot_tool` can only see a logged-out, public view of a page -- do not use
       it for anything that clearly requires being logged in (a personal dashboard, an admin
-      panel). If it returns an `error`, treat that exactly like a failed stock-image fetch: log
-      it and fall back to `get_stock_image_tool` for that section instead of skipping the image
+      panel). If it returns an `error`, treat that exactly like a failed stock fetch: log
+      it and call `select_inpost_image_tool` for that section instead of skipping the image
       entirely.
     - Still run any screenshot through `evaluate_image_quality` like every other image before
       inserting it.
 
-    ## Image Fetching Process:
-    1. **Create Search Query**: Formulate a specific search term from the key concepts
-    2. **Call get_stock_image_tool**: Use the tool with your search query to find a real stock image
-    3. **Handle Results**: Extract the actual image URL and alt text from the tool response
-    4. **Retry Logic**: If the first attempt fails, try alternative search terms
+    ## Image Selection Process:
+    1. **Frame the Section Topic**: one short topic phrase plus a one-sentence summary
+    2. **Call select_inpost_image_tool**: pass topic, section_summary (doubles as alt text), and optionally explicit alt_text
+    3. **Read the `gate` block**: `decision=stock_accepted` means the free Pexels image passed the VLM relevancy gate (>= 90/100); `decision=ai_generated` means it was below threshold (or stock was unavailable) and an on-brand AI image was generated for this slot
+    4. **Handle errors**: an `error` result means both the stock gate AND generation failed -- skip the image for that section and record it in images_skipped; NEVER insert an unvetted or placeholder image
     5. **IMPORTANT**: NEVER use example URLs like "https://example.com/image-url.jpg"
 
     ## Image Evaluation Process:
-    1. **Call evaluate_image_quality**: Pass the image URL to assess relevance and quality
-    2. **Check Score**: Only insert images with a score of 7.0 or higher
-    3. **Review Feedback**: Consider the evaluation feedback for placement decisions
+    1. **Gated slot images**: no extra check needed -- `select_inpost_image_tool` already scored them with a VLM (threshold 90/100 on topic relevancy)
+    2. **Screenshots**: call `evaluate_image_quality`; only insert with a score of 7.0 or higher
+    3. **Review Feedback**: consider feedback when choosing between multiple screenshot candidates
     
     ## Insertion Guidelines:
     - Image count scales with content length:
@@ -262,12 +262,13 @@ contextual_image_insertion_agent = Agent(
     If you received just the content, return just the modified content.
     
     ## Critical Requirements:
-    - **IMPORTANT**: You MUST use `get_stock_image_tool` to find real images
+    - **IMPORTANT**: You MUST use `select_inpost_image_tool` to obtain every in-post image (it applies the mandatory stock-first VLM relevancy gate); do NOT call a raw stock fetch directly
     - **IMPORTANT**: Do NOT use placeholder/example URLs like "https://example.com/image-url.jpg"
-    - **IMPORTANT**: Only insert images with quality scores of 7.0 or higher
-    - **IMPORTANT**: Always extract the actual URL from the `get_stock_image_tool` response
+    - **IMPORTANT**: Screenshots must still score 7.0+ on `evaluate_image_quality` before insertion; gated slot images already passed their 90/100 relevancy gate inside `select_inpost_image_tool`
+    - **IMPORTANT**: Always extract the actual URL from the tool response (image_url field)
     - **IMPORTANT**: Use proper markdown image syntax with exclamation mark (!)
     - **IMPORTANT**: Place each image on its own line with appropriate spacing
+    - **CRITICAL**: If `select_inpost_image_tool` returns an error, skip that image entirely (record it in images_skipped) -- never substitute an unvetted image
     - **CRITICAL**: Preserve ALL existing content formatting, links, and structure
     - **CRITICAL**: Do NOT modify existing markdown elements, only ADD new images
     - **CRITICAL**: If you received data with === POST_DATA_START === markers, return it with the same markers
@@ -333,7 +334,7 @@ contextual_image_insertion_agent = Agent(
     Preserve all existing formatting, links, and structure in the content.
     """,
     tools=[
-        get_stock_image_tool,
+        select_inpost_image_tool,
         capture_screenshot_tool,
         image_quality_evaluation_agent.as_tool(tool_name="evaluate_image_quality", tool_description="Evaluates image quality and relevance for contextual placement")
     ],
@@ -377,7 +378,11 @@ image_selection_agent = Agent(
        - Analyze feedback to understand issues
        - Try a different scene concept rather than resubmitting the same one
        - Limit total attempts to 3
-    8. **Fallback**: If all generation attempts fail, use `get_stock_image_tool`
+    8. **Never substitute stock**: if ALL generation attempts fail, return an
+       empty `image_url` with `source: "None (flagged)"` and feedback naming
+       the failure. The featured slot is ALWAYS AI-generated (brand control) --
+       the pipeline publishes without a featured image and flags it rather
+       than falling back to a stock photo.
 
     ## Quality Standards:
     - Score >= 7.0 for approval
@@ -400,16 +405,17 @@ image_selection_agent = Agent(
     - DO NOT invent prices, specs, performance numbers, or claims
 
     ## Error Handling:
-    - If AI generation fails, report the specific error
-    - If stock image fallback is used, note this clearly
+    - If AI generation fails, report the specific error in `feedback`
+    - On total failure: return `image_url: ""`, `source: "None (flagged)"` --
+      this is an expected, handled outcome, not a reason to substitute stock
     - Always provide detailed feedback about why choices were made
     
     ## Output Format:
     Return a JSON object with:
     {
-      "image_url": "URL to the selected image",
+      "image_url": "URL to the generated image, or \"\" on total failure",
       "alt_text": "Descriptive alt text",
-      "source": "AI Generated" or "Stock Photo",
+      "source": "AI Generated" (or "None (flagged)" on total failure),
       "evaluation_score": numerical score,
       "feedback": "Quality assessment feedback including any errors encountered"
     }
@@ -427,7 +433,6 @@ image_selection_agent = Agent(
     """,
     tools=[
         generate_image_tool,
-        get_stock_image_tool,
         image_quality_evaluation_agent.as_tool(tool_name="image_quality_evaluation_agent", tool_description="Evaluates image quality and relevance for blog posts")
     ],
     # Was pinned to "cohere" -- broken now that Cohere's been removed from

@@ -11,6 +11,7 @@ import time
 from lib.sanity_adapter import SanityAdapter
 from lib import image_vision
 from lib import image_format
+from lib import image_provenance
 from tools.sheet_tool import log_image_usage
 from dotenv import load_dotenv
 import tempfile
@@ -469,9 +470,10 @@ def lookup_image_source(image_id: Any) -> Optional[str]:
     return None
 
 
-@function_tool
-def get_stock_image_tool(keyword: str):
-    """Fetches a stock image with alt text from Pexels."""
+def _fetch_stock_image(keyword: str, slot: str = "") -> Dict[str, Any]:
+    """Fetches a stock image with alt text from Pexels (plain fn for internal
+    callers such as _select_inpost_image). `slot` labels the image_logs row
+    (featured/inpost) for cost-per-post accounting (stock cost is always 0)."""
     started = time.time()
     try:
         url = f"https://api.pexels.com/v1/search?query={keyword}&per_page=1"
@@ -487,12 +489,28 @@ def get_stock_image_tool(keyword: str):
         record_image_source(image_url, STOCK_IMAGE_SOURCE_LABEL)
         # Logged alongside the AI attempts so image_logs answers "what image
         # source did this run actually end up with" for fallback runs too.
-        log_image_usage(STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "success", time.time() - started, detail="pexels")
+        log_image_usage(
+            STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "success",
+            time.time() - started, detail="pexels", cost_usd=0.0, slot=slot,
+        )
         return {"image_url": image_url, "alt_text": f"{keyword} stock image", "source": "Pexels", "evaluation_score": 8.5, "feedback": "High quality stock photo from Pexels"}
     except Exception as e:
         logger.error(f"Failed to fetch stock image from Pexels: {e}")
-        log_image_usage(STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "error", time.time() - started, detail=str(e)[:500])
+        log_image_usage(
+            STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "error",
+            time.time() - started, detail=str(e)[:500], cost_usd=0.0, slot=slot,
+        )
         return {"error": f"Failed to fetch stock image from Pexels: {str(e)}"}
+
+
+@function_tool
+def get_stock_image_tool(keyword: str):
+    """Fetches a stock image with alt text from Pexels.
+
+    Direct stock fetch -- NO relevancy gate. Only used through
+    select_inpost_image_tool for in-post images (which gates the candidate
+    with a VLM+Jev relevancy score first). Featured images never use stock."""
+    return _fetch_stock_image(keyword)
 
 # Default model: flux-2-klein-4b, overridable via CLOUDFLARE_IMAGE_MODEL so
 # swapping is an env change and not a code change.
@@ -534,6 +552,44 @@ IMAGE_ROUTER = (os.environ.get("IMAGE_ROUTER") or "1").strip().lower() not in (
 # neuron spend bounded (3 x ~110 n ~= 330 n of the 10,000/day pool).
 IMAGE_MAX_REVISIONS = int(os.environ.get("IMAGE_MAX_REVISIONS") or "3")
 
+# Image-provider quota circuit breaker: once a provider reports a
+# quota/rate-limit (e.g. Cloudflare's daily neuron pool exhausted -- seen
+# live 2026-10-08), EVERY image generation call short-circuits for the
+# cooldown window instead of burning the revision loop on guaranteed
+# failures. Cooldown is env-tunable; stock (Pexels) is unaffected.
+IMAGE_QUOTA_COOLDOWN_S = int(os.environ.get("IMAGE_QUOTA_COOLDOWN_S") or "3600")
+_IMAGE_QUOTA_UNTIL = 0.0
+_QUOTA_MARKERS = ("quota", "rate limit", "ratelimit", "too many requests",
+                  "429", "daily limit", "exceeded your", "exhausted",
+                  "out of capacity", "insufficient credit", "limit reached")
+
+
+def image_quota_active() -> bool:
+    """True while the quota circuit breaker is engaged (fails open)."""
+    try:
+        return time.time() < _IMAGE_QUOTA_UNTIL
+    except Exception:
+        return False
+
+
+def _mark_image_quota(detail: str) -> bool:
+    """Arm the breaker when an API error smells like quota/rate-limiting.
+    Returns True (and arms) only for quota-shaped errors; anything else
+    leaves the loop to handle the failure normally."""
+    global _IMAGE_QUOTA_UNTIL
+    low = (detail or "").lower()
+    if not any(marker in low for marker in _QUOTA_MARKERS):
+        return False
+    try:
+        _IMAGE_QUOTA_UNTIL = time.time() + max(60, IMAGE_QUOTA_COOLDOWN_S)
+    except Exception:
+        pass
+    logger.warning(
+        f"Image provider quota/rate-limit detected; skipping image "
+        f"generation for {IMAGE_QUOTA_COOLDOWN_S}s: {detail[:200]}"
+    )
+    return True
+
 # Jev gate: VLM assessment passes only if BOTH the blog-topic match AND the
 # house-style match clear these floors. Below either floor, regenerate with
 # the previous image attached as reference plus the VLM's stated mismatches.
@@ -550,6 +606,27 @@ STOCK_IMAGE_SOURCE_LABEL = "Pexels (stock photo)"
 
 def _cloudflare_source_label(model: Optional[str] = None) -> str:
     return f"Cloudflare Workers AI ({model or CLOUDFLARE_IMAGE_MODEL})"
+
+
+# Per-image cost in USD for the image_logs "Cost (USD)" column (spec 5.9).
+# Cloudflare Workers AI bills in Neurons at $0.011 / 1,000; measured
+# 2026-10-04 per 1280x720 image: klein-4b ~110n, klein-9b ~1364n,
+# flux-2-dev ~2640n. Pexels stock is free (0.0). IMAGE_COST_DEFAULT_USD
+# keeps the log honest for any new/renamed model id we have not measured.
+IMAGE_COST_USD: Dict[str, float] = {
+    "@cf/black-forest-labs/flux-2-klein-4b": 0.0012,
+    "@cf/black-forest-labs/flux-2-klein-9b": 0.0150,
+    "@cf/black-forest-labs/flux-2-dev": 0.0290,
+}
+IMAGE_COST_DEFAULT_USD = float(os.environ.get("IMAGE_COST_DEFAULT_USD") or "0.0012")
+
+
+def _image_cost_usd(model: Optional[str]) -> float:
+    """Measured USD cost of one generated image, or the env-tunable default
+    for unmeasured model ids."""
+    if not model:
+        return IMAGE_COST_DEFAULT_USD
+    return IMAGE_COST_USD.get(model, IMAGE_COST_DEFAULT_USD)
 
 
 def _image_plan(attempt: int) -> tuple:
@@ -596,22 +673,29 @@ def _retryable_generation_error(detail: str) -> bool:
 
 def _generate_image_cloudflare(
     prompt: str, keyword: str, reference_b64: Optional[str] = None,
-    model: Optional[str] = None,
+    model: Optional[str] = None, slot: str = "featured",
 ) -> Optional[Dict[str, Any]]:
     """Primary AI image generator via Cloudflare Workers AI (10,000 free
-    Neurons/day, no credit card required). If this fails or the credentials
-    aren't set, the caller falls back to get_stock_image_tool (Pexels) rather
-    than this function retrying internally.
+    Neurons/day, no credit card required). Returns None on failure -- the
+    caller decides what (if anything) substitutes; this function never
+    fetches stock itself.
 
     `reference_b64` is an optional base64 PNG/JPEG of the previous attempt.
     FLUX.2 [klein] unifies generation and editing in one model, so passing it
     lets the model revise toward the prompt instead of starting blind. If the
     model rejects the reference, we retry once without it rather than failing
-    the whole post."""
+    the whole post.
+
+    On success the bytes on disk are tagged with IPTC
+    `trainedAlgorithmicMedia` provenance (lib/image_provenance, zero cost)
+    and the result dict carries `cost_usd` for the per-image audit row."""
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN")
     if not account_id or not api_token:
         logger.info("CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN not set; skipping Cloudflare Workers AI image generation.")
+        return None
+    if image_quota_active():
+        logger.info("Image quota circuit breaker active; skipping Cloudflare Workers AI call.")
         return None
     model = model or CLOUDFLARE_IMAGE_MODEL
 
@@ -652,18 +736,27 @@ def _generate_image_cloudflare(
 
     def _log_attempt(status: str, started: float, detail: str = "", with_ref: bool = False) -> None:
         # One row per API attempt in image_logs, so "which image generation
-        # model ran, how long it took, and how many times the
+        # model ran, how long it took, how much it cost, and how many times the
         # generate -> validate -> regenerate loop actually called it" is
         # answerable from the sheet alone. Reference=yes marks the img2img
-        # revision attempts.
+        # revision attempts; slot/prompt feed the per-image cost audit
+        # (spec 5.9: prompt, model, cost, generation ms per image).
+        latency_s = time.time() - started
         log_image_usage(
             model,
             "generate",
             keyword,
             status,
-            time.time() - started,
+            latency_s,
             reference="yes" if with_ref else "no",
             detail=detail,
+            # Rejections happen before rendering (free); only successful
+            # generations consume Neurons, so error rows must not inflate
+            # the per-image cost audit.
+            cost_usd=_image_cost_usd(model) if status == "success" else 0.0,
+            slot=slot,
+            prompt=prompt,
+            latency_ms=round(latency_s * 1000, 1),
         )
 
     for fields in attempts:
@@ -698,9 +791,14 @@ def _generate_image_cloudflare(
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     tmp.write(image_bytes)
                     local_path = tmp.name
+                # Spec 5.9 / playbook 12: IPTC Digital Source Type
+                # = trainedAlgorithmicMedia on every AI image. Best-effort --
+                # a tagging failure must not discard a generated image.
+                iptc_ok = image_provenance.tag_trained_algorithmic_media(local_path)
                 logger.info(
                     f"Successfully generated image via Cloudflare Workers AI ({model}, "
-                    f"reference={'yes' if with_ref else 'no'}): {local_path}"
+                    f"reference={'yes' if with_ref else 'no'}): {local_path} "
+                    f"(iptc_trained_algorithmic_media={'ok' if iptc_ok else 'failed'})"
                 )
                 source_label = _cloudflare_source_label(model)
                 record_image_source(local_path, source_label)
@@ -710,6 +808,8 @@ def _generate_image_cloudflare(
                     "alt_text": f"{keyword} illustration",
                     "source": source_label,
                     "model": model,
+                    "cost_usd": _image_cost_usd(model),
+                    "iptc_trained_algorithmic_media": iptc_ok,
                     "evaluation_score": 8.5,
                     "feedback": f"Generated via Cloudflare Workers AI {model} (primary AI image generator, genuinely free tier)",
                 }
@@ -717,6 +817,11 @@ def _generate_image_cloudflare(
             last_error = detail
             logger.error(f"Cloudflare Workers AI image generation failed: {detail}")
             _log_attempt("error", attempt_started, detail=detail[:500], with_ref=with_ref)
+            # Quota/rate-limit errors arm the circuit breaker: stop BOTH the
+            # retry loop and the router ladder immediately (every further
+            # call would fail the same way and only burn latency/log rows).
+            if _mark_image_quota(detail):
+                return None
             # Workers AI's moderation flag (code 3030) fires intermittently on
             # the very same prompt -- live evidence: the identical request
             # succeeded seconds earlier and failed later. One blind retry is
@@ -925,8 +1030,9 @@ def _rank_image_verdict(verdict: Dict[str, Any]) -> float:
 
 
 @function_tool
-def generate_image_tool(keyword: str, title: str = None, summary: str = None, custom_prompt: str = None):
-    """Generates the blog post's thumbnail image using Cloudflare Workers AI
+def generate_image_tool(keyword: str, title: str = None, summary: str = None,
+                        custom_prompt: str = None, slot: str = "featured"):
+    """Generates a blog image using Cloudflare Workers AI
     (genuinely free, no credit card, no per-key credential fragility).
 
     The image is ALWAYS built from owaisabdullah.dev's house cinematic
@@ -939,6 +1045,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
       scene you want for THIS post (e.g. "two gears meshing, one cracked and
       one new, showing legacy code being replaced"). It is appended as a
       scene concept; it never replaces the house style.
+    - slot: "featured" (default, hero thumbnail) or "inpost" (body image) --
+      only labels the image_logs cost/audit row.
 
     Each attempt is checked by a VLM (which actually looks at the pixels)
     plus Jev, which decides whether the image matches the article topic AND
@@ -957,8 +1065,21 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     Returns a dict with image_url/alt_text/source plus a `qa` block
     {passed, matches_blog, matches_style, attempts, model, router, issues}.
     A non-passing `qa.passed` is NOT an error -- an image is returned if any
-    attempt succeeded. On total failure, returns an error dict; the calling
-    agent (image_selection_agent) then falls back to get_stock_image_tool."""
+    attempt succeeded. On total failure, returns an error dict: featured
+    images do NOT fall back to stock (brand control) -- the caller publishes
+    without a featured image and flags it; in-post images go through
+    select_inpost_image_tool's stock-first gate instead."""
+    return _generate_image(keyword, title, summary, custom_prompt, slot)
+
+
+def _generate_image(keyword: str, title: Optional[str] = None,
+                    summary: Optional[str] = None,
+                    custom_prompt: Optional[str] = None,
+                    slot: str = "featured") -> Dict[str, Any]:
+    """Plain-function body of generate_image_tool for internal callers
+    (e.g. _select_inpost_image, which must not call the decorated tool).
+    See the tool docstring for the contract; `slot` labels the audit rows
+    (featured/inpost) and is returned in the result dict."""
     best: Optional[Dict[str, Any]] = None
     best_verdict: Dict[str, Any] = {}
     best_rank = -1.0
@@ -972,10 +1093,26 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     # Freepik was removed as a provider here (persistent 401 -- an invalid/
     # expired key that was never rotated -- and a one-time trial credit
     # rather than an ongoing free tier to begin with). Cloudflare Workers AI
-    # is the sole AI generator now; if it's not configured or fails, the
-    # caller falls back to get_stock_image_tool (Pexels).
+    # is the sole AI generator now; on failure the caller decides the
+    # substitute (featured: publish flagged-without-image; in-post: the
+    # stock-first gate already ran, so it also reports failure).
     loop_started = time.time()
     for attempt in range(1, IMAGE_MAX_REVISIONS + 1):
+        if image_quota_active():
+            log_image_usage(
+                CLOUDFLARE_IMAGE_MODEL,
+                "result",
+                title or keyword,
+                "skipped",
+                time.time() - loop_started,
+                detail=f"attempts=0/{IMAGE_MAX_REVISIONS} quota circuit breaker active "
+                       f"(provider rate/quota limit)",
+                cost_usd=0.0,
+                slot=slot,
+            )
+            return {"error": "Image provider quota exhausted - skipping generation "
+                             "(circuit breaker; retry after cooldown)",
+                    "quota": True, "slot": slot}
         model, text_mode = _image_plan(attempt)
         router_plan.append(f"a{attempt}={model.rsplit('/', 1)[-1]}/{text_mode}")
         base_prompt = _build_house_prompt(
@@ -998,7 +1135,8 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
         prompt = base_prompt + revision_suffix
 
         result = _generate_image_cloudflare(
-            prompt, title or keyword, reference_b64=reference_b64, model=model
+            prompt, title or keyword, reference_b64=reference_b64,
+            model=model, slot=slot,
         )
         if not result:
             # This router step produced nothing (rate limit, Cloudflare's
@@ -1070,8 +1208,10 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
             "failed",
             time.time() - loop_started,
             detail=f"attempts=0/{IMAGE_MAX_REVISIONS} router={','.join(router_plan)} all generation attempts failed",
+            cost_usd=0.0,
+            slot=slot,
         )
-        return {"error": "All image generation services failed"}
+        return {"error": "All image generation services failed", "slot": slot}
 
     best_model = best.get("model") or CLOUDFLARE_IMAGE_MODEL
     # A non-passing QA is not an error: an image was produced and further
@@ -1094,9 +1234,12 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
     best["qa"] = qa
     if title:
         best["alt_text"] = title
+    best["slot"] = slot
     # One summary row per call: the VLM/Jev verdict for the winning attempt,
     # so image_logs answers "did it pass, and after how many tries" without
-    # having to join the per-attempt rows above it.
+    # having to join the per-attempt rows above it. Cost = the winning
+    # attempt's measured generation cost (the per-attempt rows above carry
+    # each attempt's own cost).
     log_image_usage(
         best_model,
         "result",
@@ -1108,8 +1251,177 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None, cu
             f"blog={qa['matches_blog']} style={qa['matches_style']} "
             f"issues={'; '.join(str(i) for i in (qa['issues'] or [])[:3])}"
         ),
+        cost_usd=best.get("cost_usd", 0.0),
+        slot=slot,
     )
     return best
+
+
+def _download_image_to_temp(url: str) -> Optional[str]:
+    """Download a remote image (e.g. Pexels) to a temp file so the VLM can
+    inspect the actual pixels. Returns None on any failure."""
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        ext = os.path.splitext(url.split("?", 1)[0])[-1] or ".jpg"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(response.content)
+            return tmp.name
+    except Exception as e:
+        logger.warning(f"Image download failed for VLM gate: {e}")
+        return None
+
+
+def _select_inpost_image(
+    topic: str,
+    section_summary: str = "",
+    alt_text: str = "",
+    fetch_stock=None,
+    score=None,
+    generate=None,
+) -> Dict[str, Any]:
+    """Stock-first in-post image selection (spec 5.9).
+
+    Pexels candidate -> download -> VLM + Jev topic-relevancy on a 0-100
+    scale: >= 90 (IMAGE_STOCK_RELEVANCY_THRESHOLD) keeps the free stock
+    image; below 90, or stock unavailable/undownloadable, it generates with
+    the house AI model instead. If both fail it returns an error dict --
+    the caller then skips the image entirely (spec 5.9's ultimate fallback,
+    "publish without an image + flag"); it never substitutes an unvetted
+    image.
+
+    Alt text = section_summary (spec 5.9). `fetch_stock`/`score`/`generate`
+    hooks exist for tests; production callers use the defaults
+    (_fetch_stock_image, image_vision.score_topic_relevancy, _generate_image).
+    """
+    fetch_stock = fetch_stock or _fetch_stock_image
+    score_fn = score or image_vision.score_topic_relevancy
+    generate_fn = generate or _generate_image
+    threshold = int(image_vision.IMAGE_STOCK_RELEVANCY_THRESHOLD * 100)
+    chosen_alt = (alt_text or "").strip() or (section_summary or "").strip()
+    gate_started = time.time()
+    gate: Dict[str, Any] = {"threshold": threshold, "decision": None}
+
+    def _log_gate(status: str, detail: str, latency_ms=None) -> None:
+        log_image_usage(
+            STOCK_IMAGE_SOURCE_LABEL, "gate", topic, status,
+            time.time() - gate_started, detail=detail, cost_usd=0.0,
+            slot="inpost", latency_ms=latency_ms,
+        )
+
+    stock: Optional[Dict[str, Any]] = None
+    if (topic or "").strip():
+        try:
+            stock = fetch_stock(topic, "inpost")
+        except Exception as e:
+            logger.warning(f"fetch_stock raised for {topic!r}: {e}")
+            stock = {"error": str(e)}
+
+    if stock and stock.get("image_url"):
+        stock_url = str(stock["image_url"])
+        local = stock_url if not stock_url.startswith("http") else _download_image_to_temp(stock_url)
+        if local:
+            verdict = score_fn(local, topic, section_summary) or {}
+            score_val = verdict.get("score")
+            passed = bool(verdict.get("passed"))
+            gate.update(
+                stock_candidate=stock_url,
+                stock_score=score_val,
+                stock_passed=passed,
+                stock_fallback=bool(verdict.get("fallback")),
+                latency_ms=verdict.get("latency_ms"),
+            )
+            issues = "; ".join(str(i) for i in (verdict.get("issues") or [])[:3])
+            _log_gate(
+                "stock_accepted" if passed else "stock_below_threshold",
+                f"score={score_val}/100 threshold={threshold} "
+                f"fallback={verdict.get('fallback')} issues={issues}",
+                latency_ms=verdict.get("latency_ms"),
+            )
+            if passed:
+                if local != stock_url:
+                    try:
+                        os.remove(local)
+                    except OSError:
+                        pass
+                out = dict(stock)
+                out.update(
+                    alt_text=chosen_alt or stock.get("alt_text"),
+                    # Keep the historical 0-10 evaluation_score consumers
+                    # happy while the gate truth lives in relevancy_score.
+                    relevancy_score=score_val if isinstance(score_val, (int, float)) else threshold,
+                    evaluation_score=round((score_val if isinstance(score_val, (int, float)) else threshold) / 10.0, 1),
+                    feedback=f"VLM topic-relevancy {score_val}/100 >= {threshold}: free stock accepted",
+                    slot="inpost",
+                    gate=gate,
+                )
+                gate["decision"] = "stock_accepted"
+                return out
+            # Below threshold: the local copy was only for the VLM check.
+            if local != stock_url:
+                try:
+                    os.remove(local)
+                except OSError:
+                    pass
+        else:
+            gate.update(stock_candidate=stock_url, stock_passed=False, stock_download_failed=True)
+            _log_gate("stock_undownloadable", "could not download candidate for VLM check")
+    else:
+        gate.update(stock_candidate=None, stock_passed=False,
+                    stock_error=(stock or {}).get("error", "no candidate") if isinstance(stock, dict) else "no candidate")
+        _log_gate("stock_unavailable", str(gate.get("stock_error") or "no candidate")[:200])
+
+    # Stock rejected/unavailable -> AI generation with the house prompt.
+    try:
+        ai = generate_fn(
+            keyword=topic, title=topic, summary=section_summary,
+            custom_prompt=None, slot="inpost",
+        )
+    except Exception as e:
+        logger.warning(f"_select_inpost_image generation raised: {e}")
+        ai = {"error": str(e)}
+    if ai and ai.get("image_url"):
+        out = dict(ai)
+        if chosen_alt:
+            out["alt_text"] = chosen_alt
+        gate["decision"] = "ai_generated"
+        out["slot"] = "inpost"
+        out["gate"] = gate
+        return out
+
+    gate["decision"] = "failed"
+    return {
+        "error": "No in-post image available: stock failed the relevancy "
+                 "gate (or was unavailable) and AI generation also failed. "
+                 "Skip the image for this section and flag it.",
+        "slot": "inpost",
+        "gate": gate,
+    }
+
+
+@function_tool
+def select_inpost_image_tool(topic: str, section_summary: str = "",
+                             alt_text: str = ""):
+    """Stock-first VLM-gated image for an in-post (body) slot (spec 5.9).
+
+    Pass the SECTION topic, the section's one-sentence summary (also used
+    as alt text unless you pass alt_text explicitly), and optionally an
+    explicit alt text.
+
+    How it decides (you cannot bypass this gate):
+    1. Fetches the best Pexels stock candidate for the topic (free).
+    2. Downloads it and a VLM looks at the actual pixels; Jev scores topic
+       relevancy 0-100 (style/stock-ness are ignored -- relevancy only).
+    3. Score >= 90 returns the stock image (evaluation_score = score/10,
+       relevancy_score = score, source=Pexels).
+    4. Score < 90, or stock unavailable/undownloadable, generates an
+       AI image instead with the house style prompt (slot=inpost).
+    5. If BOTH fail, returns an error dict -- report it and continue
+       WITHOUT an image for that section; never insert an unvetted image.
+
+    Returns image_url/alt_text/source (+ gate block with the score and
+    decision) like the other image tools."""
+    return _select_inpost_image(topic, section_summary, alt_text)
 
 @function_tool
 def post_to_sanity_tool(
@@ -1260,9 +1572,14 @@ def post_to_sanity_tool(
             # been reduced to a path. The shape heuristic below only exists
             # as a fallback for images the registry never saw (older runs,
             # or an image that arrived by some other route).
-            image_source = lookup_image_source(image_path)
+            image_source = lookup_image_source(image_path) if image_path else None
             if not image_source:
-                if image_path and image_path.startswith('http'):
+                if not image_path:
+                    # Spec 5.9 ultimate fallback: featured generation failed
+                    # and stock must never substitute for the featured slot.
+                    # Publish anyway, flagged, so the sheet records it.
+                    image_source = "None (no featured image - flagged)"
+                elif image_path.startswith('http'):
                     image_source = "Pexel" if 'pexels' in image_path.lower() else "Downloaded"
                 else:
                     image_source = "Local"
