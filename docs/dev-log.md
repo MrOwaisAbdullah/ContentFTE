@@ -11,6 +11,66 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-08 — Engine vs. baseline comparison run + per-post time/token logging
+**Branch:** `contentfte-phase1-engine-wp-sdk`
+**Tests:** 219/219 pytest
+
+### Goal
+Controlled old-vs-new quality comparison: last 25 published sheet posts
+(`ContentSpark/generated_posts`, `Published=Yes`) vs 3 fresh engine posts
+(Haiku 5.5 vs DeepSeek V4.1 Flash, Astro vs React/Next.js, Better Auth vs
+Auth.js) — judged on facts/tone/style/length/images + structure/SEO — and
+add **local wall time** + **token usage** per post to the comparison.
+
+### What changed
+- `scripts/compare_results.py` — end-to-end comparison tool: identical
+  parser both sides (words/FAQ/links/images/readability/AI-isms/SEO+structure
+  checklists), live published-page checks (title/meta/JSON-LD/OG/H1/img+alt),
+  **Gemini judge** (identical rubric, temp 0, model fallback chain, SHA1-keyed
+  cache), weighted verdict → `docs/engine-vs-baseline-report.md`, plus a new
+  **Ops: local time & tokens** section — new per-post wall/tokens from
+  `phaseD_results.json`, old LLM-time/call-count bucketed from
+  `model_usage_log` into `Created At` windows (old tokens: never logged).
+- `scripts/generate_compare_articles.py` — Phase D driver: submit → generate
+  (word-count guard, ≤3 attempts) → AI images (featured `_generate_image`,
+  inpost `_select_inpost_image` stock-first) → approve → publish/refresh,
+  `--regen` mode, writes `phaseD_results.json` (words, gen/wall/img/total
+  seconds, tokens, gate/WP state).
+- `scripts/recover_compare_images.py` — re-attached run-1 AI images after the
+  driver's local-path staging bug (`urlopen` on `c:\…`) + Cloudflare daily
+  neuron-quota exhaustion in run 2: mtime clustering (>40s gaps → 6 clusters)
+  → VLM-ranked winners (`image_vision.validate_thumbnail`, engine's own
+  blog+style+passed rank) → stage `meta.images` → `refresh_article`.
+- **Engine usage capture**: `blog_agent/generation.py` gained
+  `LAST_USAGE` (aggregated from `RunResult.raw_responses[].usage` — agents
+  0.19 exposes no top-level `.usage`) reset per call; `service.generate_content`
+  measures `wall_s` around the generate fn and persists
+  `meta.generation.{wall_s,usage:{requests,input_tokens,output_tokens,total_tokens}}`.
+  No signature change; `custom_runner` untouched (off-limits).
+
+### Verification
+- `python -m pytest tests/ -q --basetemp=D:/opencode-npm-temp/.test-tmp-phase1/pytest-feat4`
+  → **219/219** (note: basetemp parent dir must exist or `tmp_path` errors).
+- Full compare run: **weighted verdict new 74.6 vs old 70.0** (new: tone
+  93.3, structure 86, images 100, style 66.7, seo 80; old: facts 79.2 vs
+  66.7, length 68.8 vs 46.7 — 910.8 vs 522 words).
+- Ops numbers: new avg **20.2s gen wall / 14,128 tokens / 76.0s total** per
+  post vs old **2,042.7s LLM latency + 24.9 calls** per post.
+- 3 posts live on LocalWP `speedline` (WP REST ok=True), each with AI
+  featured + inpost images and alt text (verified via page `<img>` grep).
+- Judge artifact noted in methodology: judge knowledge cutoff predates the
+  newest model releases → f=1 on the new Haiku article *and* the old
+  DeepSeek-V4.1 article (hits both sides).
+
+### Open / next
+- `cost_ledger` persists $0.00 — per-call pricing not wired (new TASKS A1
+  open item; tokens are captured but unpriced).
+- Cloudflare daily image quota (10k neurons) is easy to burn in QA loops —
+  consider quota-aware backoff before run day.
+- Merge to `master` re-ask; cutover (TASKS 44/47) still deferred per user.
+
+---
+
 ## 2026-10-08 — npm package renamed to `content-fte` (0.3.0)
 **Branch:** `contentfte-phase1-engine-wp-sdk`
 **Tests:** 219/219 pytest + SDK typecheck/build/smoke 20/20

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -278,6 +279,7 @@ async def generate_content(article_id: int, *, generate_fn=None,
             research_snapshot=research, volume=volume, difficulty=difficulty)
 
         fn = generate_fn if generate_fn is not None else _default_generate
+        gen_started = time.time()
         try:
             output = await fn(brief)
         except Exception as exc:  # runner/provider failure — fail-open
@@ -285,6 +287,13 @@ async def generate_content(article_id: int, *, generate_fn=None,
                 f"generation failed: {exc}",
                 "check LLM keys (OPENROUTER_API_KEY / GEMINI_API_KEY / ...) "
                 "and retry generate_content")
+        gen_wall_s = round(time.time() - gen_started, 1)
+        gen_usage: dict = {}
+        try:
+            from blog_agent import generation as agent_generation
+            gen_usage = dict(getattr(agent_generation, "LAST_USAGE", None) or {})
+        except Exception:
+            gen_usage = {}
 
         parsed = generation.parse_generation_output(output)
         if parsed is None:
@@ -331,6 +340,8 @@ async def generate_content(article_id: int, *, generate_fn=None,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "quality_score": quality,
             "regenerated": regenerate,
+            "wall_s": gen_wall_s,
+            "usage": gen_usage or None,
             "claims_notes": claims_notes,
             "warnings": warnings if isinstance(warnings, list) else [str(warnings)],
             "errors": errors if isinstance(errors, list) else [str(errors)],
