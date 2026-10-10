@@ -1,7 +1,7 @@
 import logging
 import re
 from agents import Agent, ModelSettings, handoff, trace
-from tools.tools import post_to_sanity_tool, fetch_internal_links_tool, get_existing_categories_tool # Ensure correct import paths
+from tools.tools import post_to_sanity_tool, fetch_internal_links_tool, get_existing_categories_tool, generate_image_tool # Ensure correct import paths
 from tools.sheet_tool import manage_sheet_data_tool # Ensure correct import path
 from blog_agent.image_agent import image_selection_agent, contextual_image_insertion_agent  # Import the new image agent tools
 from blog_agent.hooks import MyAgentHooks
@@ -11,6 +11,7 @@ import asyncio
 import copy
 from blog_agent.custom_runner import FallbackAgentRunner
 from lib.run_result_utils import run_looks_failed
+from lib.geo import extract_tldr
 # Jev general helpers — category taxonomy Choice + tool-call gate (general SEO pipeline)
 from lib.jev_tools import jev_classify_category_tool, jev_gate_tool_call_tool
 
@@ -101,7 +102,10 @@ preparation_agent = Agent(
           "feedback": "Quality assessment feedback"
         }
         ```
-      - **CRITICAL FALLBACK**: if `get_blog_image_tool` errors, returns no usable `image_url`, or reports any kind of failure, do NOT abort the publish and do NOT substitute a stock photo (featured images are always AI-generated for brand control -- stock never fills the featured slot). Instead set `IMAGE_URL` to an empty string and `ALT_TEXT` to an empty string, and note "featured image failed" in your reasoning. The pipeline then publishes the post without a featured image and the sheet's Image Source records the flag.
+      - **CRITICAL FALLBACK (ordered, confirmed live 2026-10-08)**: if `get_blog_image_tool` errors, returns no usable `image_url`, or reports any kind of failure, do NOT abort the publish and do NOT substitute a stock photo (featured images are always AI-generated for brand control -- stock never fills the featured slot). Instead work DOWN this ladder and stop at the first success:
+        1. Call `generate_image_tool(keyword=KEYWORD_TOPIC, title=TITLE, summary=SUMMARY, slot="featured")` DIRECTLY. This is the same generator the nested agent would have used -- the house cinematic prompt is deterministic and generation + QA are Cloudflare + VLM --- NO LLM call, so it cannot 503 the way the nested Image Selection Agent did. Extract `image_url` + `alt_text` from its JSON response.
+        2. Only if that also fails (quota breaker, provider outage): set `IMAGE_URL` and `ALT_TEXT` to empty strings and note "featured image failed" in your reasoning. The pipeline then publishes the post without a featured image and the sheet's Image Source records the flag.
+      - Never go straight to step 2 on the first failure -- a single transient provider error must not drop the featured slot.
       - Extract the `image_url` and `alt_text` values from this JSON response for use in later steps.
 
     5. **Derive Fields**
@@ -152,16 +156,17 @@ preparation_agent = Agent(
     - `manage_sheet_data_tool`
     - `fetch_internal_links_tool`
     - `get_existing_categories_tool` (call before deciding CATEGORIES -- see step 5)
-    - `get_blog_image_tool` (the only image tool -- always AI-generated; no stock fallback for the featured slot)
+    - `get_blog_image_tool` (primary featured-image path -- an AI image, never stock)
+    - `generate_image_tool` (LLM-free direct retry for step 4's fallback ladder -- deterministic house prompt + Cloudflare + VLM/Jev QA; use it when `get_blog_image_tool` fails)
 
     ## Critical Requirements
     - **IMPORTANT**: You MUST extract the `image_url` from the JSON response of `get_blog_image_tool`. If it returns no usable image, leave `IMAGE_URL` empty (do not substitute stock) -- the post publishes flagged without a featured image.
     - **IMPORTANT**: Do NOT use example URLs like `https://example.com/ai-smart-glasses.jpg`.
     - **IMPORTANT**: The `IMAGE_URL` field in your output MUST contain the actual path returned by the tool.
     """,
-    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, jev_classify_category_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
+    tools=[manage_sheet_data_tool, fetch_internal_links_tool, get_existing_categories_tool, jev_classify_category_tool, generate_image_tool, image_selection_agent.as_tool(tool_name="get_blog_image_tool", tool_description="Selects or generates a relevant image for blog posts")],
     hooks=MyAgentHooks(),
-    model=custom_runner.get_model_by_name("gemini-flash-latest"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.5),
 )
 
@@ -189,6 +194,11 @@ posting_agent = Agent(
     EXTERNAL_LINKS_MD: [value]
     FAQS: [value]
     SOURCE_KEYWORD_TOPIC: [value]
+    TLDR: [the 40-60 word TL;DR answer, or empty]
+    SEO_TITLE: [value]
+    SEO_DESCRIPTION: [value]
+    FOCUS_KEYWORD: [value]
+    SECONDARY_KEYWORDS: [semicolon/comma separated, or empty]
     === POST_DATA_END ===
     
     ## CRITICAL STEPS:
@@ -197,18 +207,24 @@ posting_agent = Agent(
     2b. **Jev gate before risky publish (F2, 70-500ms):** Call `jev_gate_tool_call` with `tool_name="post_to_sanity_tool"`, `tool_args_json` = JSON string of `{title, slug, summary length, categories}` and `user_request="publish approved blog post to Sanity"`. Returns `{action: allow|refuse|ask_human, confidence, supported}`. If `action==refuse` and `confidence>=0.85`, do NOT call `post_to_sanity_tool` — return error JSON instead. If `ask_human` with high confidence, log warning but still publish (human already approved via Discord ✅). On `fallback==true` (JevError/timeout), proceed to publish as before — never block on Jev outage. Log `action/confidence/usage` for cost accounting.
      3. Validate SUMMARY and IMMEDIATELY call `post_to_sanity_tool` with these values (only after Jev gate above allows it):
          - Before posting: ensure `SUMMARY` is SEO-friendly and between 50 and 160 characters and includes the primary keyword. If the extracted `SUMMARY` does not meet these constraints, generate or trim a concise meta description that fits (50–160 chars) and accurately summarizes the page.
-         - title: the extracted TITLE
-         - summary: the validated or generated SUMMARY
-         - content: the extracted CONTENT_WITH_LINKS (preserve all markdown formatting for proper rendering)
-         - categories: the extracted CATEGORIES (as a JSON list)
-         - image_path: the extracted IMAGE_URL
-         - slug: the extracted SLUG
-         - alt_text: the extracted ALT_TEXT
-         - faqs: the extracted FAQS (as a JSON list)
-    4. After successful posting, update the Google Sheet:
-       - Use `manage_sheet_data_tool` with action="find_row_by_key", worksheet_name="generated_posts", key_column="Title", key_value=SOURCE_KEYWORD_TOPIC to get the row_index.
-       - Use `manage_sheet_data_tool` with action="get_range", worksheet_name="generated_posts", cell_range="1:1" to get the header row, and find the 1-based index of the "Published" column within it.
-       - Use `manage_sheet_data_tool` with action="update_cell", worksheet_name="generated_posts", row_index=[row_index from find_row_by_key], col_index=[Published column index], data="Yes".
+          - title: the extracted TITLE
+          - summary: the validated or generated SUMMARY
+          - content: the extracted CONTENT_WITH_LINKS (preserve all markdown formatting for proper rendering)
+          - categories: the extracted CATEGORIES (as a JSON list)
+          - image_path: the extracted IMAGE_URL
+          - slug: the extracted SLUG
+          - alt_text: the extracted ALT_TEXT
+          - faqs: the extracted FAQS (as a JSON list)
+          - focus_keyphrase: the extracted FOCUS_KEYWORD (the primary keyword this post targets -- the Yoast/RankMath focus keyword)
+          - seo_title: the extracted SEO_TITLE (<=60 chars)
+          - seo_description: the extracted SEO_DESCRIPTION (<=160 chars)
+          - tldr: the extracted TLDR (the 40-60 word direct answer, stored as its own Sanity field)
+          - secondary_keywords: the extracted SECONDARY_KEYWORDS, split into a JSON list of strings. Pass [] when the post has none -- never invent some.
+      4. After successful posting, update the Google Sheet:
+        - Use `manage_sheet_data_tool` with action="find_row_by_key", worksheet_name="generated_posts", key_column="Title", key_value=SOURCE_KEYWORD_TOPIC to get the row_index.
+        - Use `manage_sheet_data_tool` with action="get_range", worksheet_name="generated_posts", cell_range="1:1" to get the header row, and find the 1-based index of the "Published" column within it.
+        - Use `manage_sheet_data_tool` with action="update_cell", worksheet_name="generated_posts", row_index=[row_index from find_row_by_key], col_index=[Published column index], data="Yes".
+        - If the `post_to_sanity_tool` result reports `needs_image: true`, the post reached Sanity but CANNOT be published (mainImage/alt are required fields). Still update the sheet, but state clearly in your final answer that the post is **pending an image in Sanity Studio** -- do NOT report it as published.
        - Do NOT use action="update_cells" or pass a sheet-qualified range like "'generated_posts'!Published" as cell_range -- that is not valid A1 notation and will fail. Use action="update_cell" with row_index/col_index as described above.
        - If this sheet update fails after retries, that is NOT a reason to report the overall task as failed -- the blog post was already published to Sanity, which is the outcome that matters. Note the sheet-update failure as a warning in your final answer, but do not use the word "error" to describe it, and clearly state that the Sanity publish itself succeeded.
     5. Record in published_posts worksheet:
@@ -232,7 +248,7 @@ posting_agent = Agent(
     """,
     tools=[post_to_sanity_tool, manage_sheet_data_tool, jev_gate_tool_call_tool],
     hooks=MyAgentHooks(),
-    model=custom_runner.get_model_by_name("gemini-flash-latest"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
 )
 
 
@@ -534,6 +550,25 @@ async def run_posting_workflow(max_retries: int = 2) -> Dict[str, Any]:
                     post_fields["CONTENT_WITH_LINKS"], post_fields.get("TITLE", "")
                 )
 
+            # Derive the SEO/AEO fields deterministically here rather than
+            # asking the LLM to copy them -- same reasoning as the marker
+            # parsing above. The Sanity post schema (sdk/sanity/postType.ts)
+            # stores these as first-class fields; without them a Sanity site
+            # has no focus keyword, no SEO title/description and no
+            # machine-readable TL;DR, which every Yoast/RankMath-style site
+            # expects and answer engines read.
+            post_fields["TLDR"] = extract_tldr(
+                post_fields.get("CONTENT_WITH_LINKS", ""))
+            post_fields["SEO_TITLE"] = post_fields.get("TITLE", "")
+            post_fields["SEO_DESCRIPTION"] = post_fields.get("SUMMARY", "")
+            post_fields["FOCUS_KEYWORD"] = post_fields.get("KEYWORD_TOPIC", "")
+            # Secondary keywords ride on the generated_posts row (the brief
+            # row is deleted the moment it graduates), so the publish step can
+            # still store them on the Sanity document. Empty means the
+            # operator supplied none -- never invent them here.
+            post_fields["SECONDARY_KEYWORDS"] = post_fields.get(
+                "SECONDARY_KEYWORDS", "")
+
             # Rebuild the marker block deterministically instead of trusting
             # either agent's raw text -- guarantees the Posting Agent always
             # receives a well-formed block regardless of which model ran it.
@@ -599,6 +634,7 @@ async def run_posting_workflow(max_retries: int = 2) -> Dict[str, Any]:
                 # provider, resolved deterministically inside
                 # post_to_sanity_tool rather than by parsing agent prose.
                 "image_source": sanity_output.get("image_source"),
+                "needs_image": sanity_output.get("needs_image", False),
                 "post_url": sanity_output.get("post_url"),
                 "post_id": sanity_output.get("post_id"),
             }

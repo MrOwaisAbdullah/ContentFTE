@@ -87,7 +87,7 @@ content_evaluation_agent = Agent(
         - Score: High (0.9–1.0) if intent-aligned, comprehensive, conversational, all claims verified; Medium (0.6–0.8) if partial alignment or some unverified claims; Low (<0.6) otherwise.
         - **SEO (20%)**:
         - Verify word count (1500–2500 words).
-        - Check primary/secondary keyword usage (2–3 uses each, natural).
+        - Check primary and (when the row supplied them) secondary keyword usage: each keyword 2-3 uses, with each secondary keyword owning at least one H2/H3 heading. Empty `Secondary Keywords` means there are no secondary targets -- do NOT flag their absence. The pipeline's `lib/seo_keywords` gate already counts this deterministically; your job is to judge whether the placements read naturally or forced.
         - Confirm FAQs (5–7 questions in JSON, direct answers <50 words for AI Overviews).
         - Verify 2–3 internal links (e.g., "Similar to [our guide on AI agents](https://owaisabdullah.dev/blog/{{real-slug-from-fetch_internal_links_tool}})" -- the URL must be one `fetch_internal_links_tool` actually returned this run, never a guessed/invented slug) and 2–3 external links (e.g., "Per [Coffee Review](https://coffeereview.com)") are naturally integrated, contextually relevant, and enhance E-E-A-T. Flag ANY internal link that doesn't match a `fetch_internal_links_tool` result or uses a bare relative path instead of the full `https://owaisabdullah.dev/blog/...` URL -- that's a hallucinated/dead link, not a minor style issue. For external links, flag any URL that did not appear in Tavily excerpts or fails a HEAD check (hallucinated domain/404) — deterministic `link_validator` will also strip these pre-save, but the evaluator should still surface them as specific feedback so the generator learns to keep anchor text and drop the link.
         - Evaluate Title and Summary against the Title & Meta Description Guidance above (curiosity/hook, clear value proposition, intent match, accuracy, no AI-tell openers in Summary).
@@ -221,7 +221,8 @@ content_generator_agent = Agent(
     - Use `manage_sheet_data_tool` (action="find_row_by_key", worksheet_name="content_briefs", key_column="Generated", key_value="No") to find rows that are not yet generated.
     - Select the first matching row; if none exist, return:  
         { "status": "error", "message": "No ungenerated briefs found in content_briefs.", "errors": [], "warnings": [] }
-    - Extract the following fields from the found row: Keyword/Topic, Brief Content, FAQs, External Source Links, and Content Summary.
+    - Extract the following fields from the found row: Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, and Secondary Keywords.
+    - `Secondary Keywords` is OPTIONAL: when the cell is empty there are no secondary targets and you write with the primary keyword alone. When it has values, they are hard requirements -- the pipeline's keyword gate rejects the draft if any of them is used fewer than 2 times.
     - Validate that essential fields (Keyword/Topic, Brief Content, and FAQs) are present and not empty; if any essential field is missing or empty, return an error.
     - Validate Brief Content structure (should include H1, introduction, 4–6 H2 headings) and FAQs format (5–7 question-answer pairs in JSON); if invalid, return:  
         { "status": "error", "message": "Invalid brief: missing H1, sections, or FAQs.", "errors": [], "warnings": [] }
@@ -268,7 +269,11 @@ content_generator_agent = Agent(
         - Keep paragraphs very short - 2-3 sentences each maximum for better readability. Each paragraph should focus on a single idea or concept.  
         - Include 1–2 questions per section sourced via `tavily_search_tool` (query: "[Keyword/Topic] questions", max_results=5) or `tavily_extract_tool` from External Source Links:  
             - Example: "Why do some coffee makers brew faster?" (Direct answer: <50 words, e.g., "Fast-brew coffee makers use high-pressure systems."; followed by detailed explanation).  
-        - Integrate secondary keywords naturally (2–3 uses each, e.g., "compact coffee maker").  
+        - **Keyword placement — each keyword has a slot, not just a count.** The pipeline's keyword gate (`lib/seo_keywords.check_keywords`) counts occurrences per slot, so aim the keywords where they count:
+            - PRIMARY keyword: the H1/title (exactly once), the TL;DR (once), the first sentence of the introduction H2, and 2-3 more natural uses in the body. Never stuff the title.
+            - EACH secondary keyword (only those listed in the row's `Secondary Keywords` cell, verbatim): ONE H2 or H3 heading of its own, 2-3 natural body sentences, and at most one image alt text or internal-link anchor. Never put a secondary keyword in the H1/title, and never reword it (use the exact phrase as given).
+            - Keep any single keyword under ~0.8% of the body words — above that it reads as keyword stuffing and is reported, not rewarded.
+            - If the `Secondary Keywords` cell is EMPTY: there are no secondary targets. Do not invent any.
     - Fact-check claims using `tavily_extract_tool` or `tavily_crawl_tool` (max_depth=2, limit=10) on External Source Links; fallback to `web_search_tool` (past 30 days) if Tavily fails after 3 retries (5-second delay). Note unverified claims (e.g., "Claim about brewing speed unverified").  
 
     3.5. **Offer catalog mentions (5.5 - hard limits):**
@@ -686,7 +691,7 @@ repurpose_angle_agent = Agent(
     """,
     tools=[],
     hooks=MyAgentHooks(),
-    model=custom_runner.get_model_by_name("gemini-3.5-flash-lite"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.6),
 )
 
@@ -757,7 +762,7 @@ feedback_pattern_agent = Agent(
     """,
     tools=[],
     hooks=MyAgentHooks(),
-    model=custom_runner.get_model_by_name("gemini-3.5-flash-lite"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.3),
 )
 
@@ -839,19 +844,20 @@ brief_agent = Agent(
         decision=write -> proceed.
 
      3. Create content brief with these sections to be saved in the Brief Content column:
-     - H1 title with primary keyword (curiosity-driven and hooky but not clickbait; must set an accurate, deliverable expectation that the brief enables the writer to fulfil)
-         - 100-150 word intro with keyword, addressing user intent
-         - 4-6 H2 headings with 50-100 word descriptions
-         - Short summary/meta description (50-160 characters, SEO-friendly) to be used as the page meta description
-         - Each section should include 1-2 conversational questions
-          - Suggest natural link placements throughout (format as [Link Text](URL) for later integration)
-          - Follow writing guidelines: no colons in headings, short paragraphs, natural tone
-          - Add an "Entities" bullet: 5-8 entities (brands, people, standards, places) to name naturally
-          - Discourse appendix (5.15): run 2-3 `tavily_search_tool` calls with
-            time_range="month" (e.g. site:reddit.com "Keyword", "Keyword" forum,
-            "Keyword" "how do I") and collect 5-8 real user questions/angles -
-            paraphrased, no usernames, no invented quotes. Save as a
-            "## Discourse Appendix" section at the end of the Brief Content.
+      - H1 title with primary keyword (curiosity-driven and hooky but not clickbait; must set an accurate, deliverable expectation that the brief enables the writer to fulfil)
+          - 100-150 word intro with keyword, addressing user intent
+          - 4-6 H2 headings with 50-100 word descriptions
+          - Short summary/meta description (50-160 characters, SEO-friendly) to be used as the page meta description
+          - Each section should include 1-2 conversational questions
+           - Suggest natural link placements throughout (format as [Link Text](URL) for later integration)
+           - Follow writing guidelines: no colons in headings, short paragraphs, natural tone
+           - Add an "Entities" bullet: 5-8 entities (brands, people, standards, places) to name naturally
+           - Keyword targets (ONLY what the sheet supplied): if `get_next_brief_task_tool` returned a non-empty `secondary_keywords`, add a "## Secondary Keywords" section listing each keyword VERBATIM (comma/semicolon separated as given, never rewritten or expanded) with the slot it should occupy: one H2/H3 heading plus 2-3 natural body sentences. The primary keyword already owns the H1, the intro H2 and the TL;DR -- never give a secondary keyword the H1. If `secondary_keywords` is empty, do NOT invent targets, and do NOT add this section at all; the writer then works with the primary keyword alone.
+           - Discourse appendix (5.15): run 2-3 `tavily_search_tool` calls with
+             time_range="month" (e.g. site:reddit.com "Keyword", "Keyword" forum,
+             "Keyword" "how do I") and collect 5-8 real user questions/angles -
+             paraphrased, no usernames, no invented quotes. Save as a
+             "## Discourse Appendix" section at the end of the Brief Content.
           - Fan-out queries (pack brief-research): add a "## Fan-out Queries"
             section listing 5-10 observed queries this cluster should also
             cover - pull from the research row's related queries, the PAA
@@ -887,13 +893,14 @@ brief_agent = Agent(
 
      5b. **Jev brief completeness gate (C1, 70-500ms):** Call `jev_score_brief_quality` with `brief_content` and `faqs_json` BEFORE saving. Returns `{score, ready, usage}` where `ready = score>=1.5` means H1 + 4-6 H2 + 5-7 FAQs + links + summary all present. If `ready==false`, improve the brief (add missing H2, fix FAQ count, ensure 50-160 char summary with keyword) then re-check; on `fallback==true` proceed as before. Never block saving on JevError — log and continue.
      
-     6. Save to `content_briefs` worksheet using `manage_sheet_data_tool` with action="append_row" to save the following in order:
-       - Keyword/Topic (from the research_data row)
-       - Brief Content (Markdown with H1, introduction, H2 headings, link suggestions)
-       - FAQs (JSON string)
-       - External Source Links (comma-separated URLs with titles)
-    - Content Summary (retained from research_data row) — must be a 50–160 character SEO-friendly meta description
-       - Generated ("No")
+      6. Save to `content_briefs` worksheet using `manage_sheet_tool` with action="append_row" to save the following in order (column order must match exactly):
+        - Keyword/Topic (from the research_data row)
+        - Brief Content (Markdown with H1, introduction, H2 headings, link suggestions)
+        - FAQs (JSON string)
+        - External Source Links (comma-separated URLs with titles)
+        - Content Summary (retained from research_data row) — must be a 50–160 character SEO-friendly meta description
+        - Generated ("No")
+        - Secondary Keywords (the operator's keywords, VERBATIM from `secondary_keywords`; empty when the sheet supplied none — do not invent them here, the generator would treat them as a hard target)
     
      7. Update the original row in `research_data` by setting Generated to "Yes"
         (skip if the task came from the ledger with no matching research row)

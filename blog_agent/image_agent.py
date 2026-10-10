@@ -102,7 +102,7 @@ image_quality_evaluation_agent = Agent(
     # exists at all. Gemini 2.5 Flash is multimodal (vision-capable), already
     # free on this project's tier, and already configured elsewhere in this
     # codebase, so it's a zero-new-cost, zero-new-dependency replacement.
-    model=custom_runner.get_model_by_name("gemini-flash-latest"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.3),  # Lower temperature for more consistent evaluations
     hooks=MyAgentHooks(),
 )
@@ -338,7 +338,7 @@ contextual_image_insertion_agent = Agent(
         capture_screenshot_tool,
         image_quality_evaluation_agent.as_tool(tool_name="evaluate_image_quality", tool_description="Evaluates image quality and relevance for contextual placement")
     ],
-    model=custom_runner.get_model_by_name("gemini-flash-latest"),
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.7),
     hooks=MyAgentHooks(),
 )
@@ -439,7 +439,19 @@ image_selection_agent = Agent(
     # LLM_MODELS entirely (see custom_runner.py), which would have raised
     # ValueError at the first call. Switched to the same default used
     # elsewhere in this file rather than leaving it on a removed provider.
-    model=custom_runner.get_model_by_name("gemini-flash-latest"),
+    # image_selection_agent is never run through
+    # custom_runner.run_with_fallback -- it is invoked as a *nested* agent
+    # via preparation_agent's `image_selection_agent.as_tool(...)`, and the
+    # SDK runs a nested agent on its own pinned model. Confirmed live on
+    # 2026-10-08: pinned to gemini-flash-latest (87.95% measured error rate,
+    # 20 RPD) it 503'd on "model experiencing high demand" with no fallback
+    # and the whole featured slot was dropped. gemini-3.1-flash-lite is the
+    # fleet's most reliable model (9.34% error, 500 RPD) and the same model
+    # every top-level agent gets first, so nested runs inherit the same odds.
+    # (It replaced gemini-3.5-flash-lite here, which Google retired in the
+    # 2026-10 deprecation notice; gemini-3.1-flash-lite measured identically
+    # well and is the surviving 500-RPD lite entry.)
+    model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),
     model_settings=ModelSettings(temperature=0.7),
     hooks=MyAgentHooks(),
 )

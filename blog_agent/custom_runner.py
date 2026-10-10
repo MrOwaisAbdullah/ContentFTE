@@ -33,6 +33,57 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# OpenRouter FREE tier -- THE list to edit when the free catalogue changes.
+#
+# Deliberately NOT the `openrouter/free` auto-router: it resolves to "whatever
+# free model is currently available", which made the fallback chain
+# non-deterministic (the same run could land on a 2.6B model one day and a 550B
+# the next) and left quota unaccountable.
+#
+# TO ADD OR REMOVE A FREE MODEL, EDIT THIS TUPLE ONLY. Everything downstream --
+# the LLM_MODELS entries, the shared-quota group, the per-model RPM/RPD tables
+# and the availability check -- is derived from it, so no other line needs to
+# change and the quota bookkeeping can never drift out of sync.
+#
+# Quota: OpenRouter's free tier is ONE SHARED allowance across every `:free`
+# model (50 requests/day, 20 RPM, account-level), NOT a per-model allowance.
+# Enforced as a sum in is_model_available -- see SHARED_QUOTA_GROUPS.
+#
+# Verify before adding: GET https://openrouter.ai/api/v1/models and confirm the
+# id exists and pricing.prompt/completion are both "0".
+OPENROUTER_FREE_MODELS = (
+    "inclusionai/ling-3.1-flash",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "thinkingmachines/inkling:free",
+)
+OPENROUTER_FREE_SHARED_RPD = 50
+OPENROUTER_FREE_RPM = 20
+_OPENROUTER_FREE_GROUP = "openrouter-free"
+
+
+def _openrouter_free_entries() -> List[Dict[str, str]]:
+    """Fleet entries for OPENROUTER_FREE_MODELS. The model id doubles as the
+    internal name, which is what the usage sheet logs and what quota tracking
+    keys on."""
+    return [
+        {"name": model_id, "model": model_id, "provider": "openrouter"}
+        for model_id in OPENROUTER_FREE_MODELS
+    ]
+
+
+def _openrouter_free_shared_quota() -> Dict[str, Dict[str, Any]]:
+    """Shared-quota groups derived from OPENROUTER_FREE_MODELS: group name ->
+    {members, limit}. One group holds every free model, so the allowance is
+    counted once across all of them."""
+    return {
+        _OPENROUTER_FREE_GROUP: {
+            "members": [e["name"] for e in _openrouter_free_entries()],
+            "rpd": OPENROUTER_FREE_SHARED_RPD,
+        }
+    }
+
+
 # Custom runner that extends AgentRunner and adds fallback logic
 class FallbackAgentRunner(AgentRunner):
     def __init__(self):
@@ -52,22 +103,57 @@ class FallbackAgentRunner(AgentRunner):
             # so sorted() is stable and this declaration order IS the order
             # run_with_fallback tries (agent.model is overwritten each time).
             # Measured over 851 logged runs (2026-08-23 .. 2026-10-04):
-            #   gemini-3.5-flash-lite  9.34% error  (500 RPD / 15 RPM)
+            #   gemini-3.1-flash-lite   9.34% error  (500 RPD / 15 RPM)
             #   gemini-flash-latest   87.95% error  ( 20 RPD /  5 RPM)
-            #   gemini-3.5-flash      71.26% error  ( 20 RPD /  5 RPM)
             #   gemini-3.6-flash      63.98% error  ( 20 RPD /  5 RPM)
-            # So the 500-RPD lite models lead the chain, and every model
-            # gets an independent quota bucket below.
-            {"name": "gemini-3.5-flash-lite", "model": "gemini-3.5-flash-lite", "provider": "gemini"},
+            #   gemini-3.5-flash-lite  9.34% error  <-- DEPRECATED (retired
+            #     2026-10, routed to 3.6): removed from LLM_MODELS below.
+            #     gemini-3.1-flash-lite measured identically well and is the
+            #     remaining 500-RPD lite entry, so it now leads the chain.
+            #
+            # Free-tier limits below are per MODEL, not per key, and reset at
+            # midnight Pacific (Google's rate-limits docs). Values confirmed
+            # against the AI Studio rate-limit view on 2026-10-10; a live
+            # generateContent probe was run for every entry added that day.
+            #
+            # Tier order is deliberate: QUALITY first, quota second.
+            #   Tier 1  gemini-3.1-flash-lite  500 RPD  -- the workhorse
+            #   Tier 2  gemini-3.x / 2.5 flash  20 RPD each -- full-quality
+            #   Tier 3  gemma-4 (26B/31B)    14.4K RPD  -- small-task tier:
+            #           30 RPM / 16K TPM / 14,400 RPD per model, so classifier
+            #           and routing calls survive long after every flash model
+            #           is quota-exhausted. Never put these above a flash
+            #           model for generation -- 26B/31B is a quality drop for
+            #           prose but a quota win for one-label decisions.
+            #   Tier 4  openrouter-free           50 RPD
+            # --- Tier 1: Gemini lite, high daily quota. ---
+            # Google's deprecation notice (2026-10): gemini-3.5-flash and
+            # gemini-3.5-flash-lite are retired and requests route to the 3.6
+            # generation. NO deprecated model may stay in this fleet -- a dead
+            # entry burns a fallback slot (and its retry latency) on a model
+            # that can no longer be called by name. Only exact model names are
+            # listed here, never `-latest`-style aliases that silently repoint.
             {"name": "gemini-3.1-flash-lite", "model": "gemini-3.1-flash-lite", "provider": "gemini"},
-            # Additional Gemini Flash models with their own separate daily
-            # quotas (20 RPD / 5 RPM each) -- adding them buys more total
-            # headroom than reusing a single bucket.
+            # --- Tier 2: full flash models, 20 RPD / 5 RPM each. Their own
+            # independent buckets, so the chain can exhaust one before moving
+            # to the next instead of sharing a single quota.
+            # (gemini-3.5-flash removed 2026-10: deprecated, routed to 3.6.)
             {"name": "gemini-3.8-flash", "model": "gemini-3.8-flash", "provider": "gemini"},
             {"name": "gemini-3.7-flash", "model": "gemini-3.7-flash", "provider": "gemini"},
             {"name": "gemini-3.6-flash", "model": "gemini-3.6-flash", "provider": "gemini"},
-            {"name": "gemini-3.5-flash", "model": "gemini-3.5-flash", "provider": "gemini"},
+            {"name": "gemini-2.5-flash", "model": "gemini-2.5-flash", "provider": "gemini"},
+            # "Gemini 3 Flash" in the AI Studio rate-limit table maps to this
+            # preview id. Added after 2.5 because a preview is a moving target.
+            {"name": "gemini-3-flash-preview", "model": "gemini-3-flash-preview", "provider": "gemini"},
             {"name": "gemini-flash-latest", "model": "gemini-flash-latest", "provider": "gemini"},
+            # --- Tier 3: Gemma 4 small models -- 30 RPM / 16K TPM / 14,400 RPD
+            # each (Google's published Gemma rate-limit row). That RPD is ~30x
+            # any flash model, which is exactly what one-label utility calls
+            # (classification, scoring, routing) need. NOTE: gemini-2.5-flash-lite
+            # is deliberately NOT here -- it now 404s with "no longer available
+            # to new users", verified live 2026-10-10.
+            {"name": "gemma-4-26b-a4b-it", "model": "gemma-4-26b-a4b-it", "provider": "gemini"},
+            {"name": "gemma-4-31b-it", "model": "gemma-4-31b-it", "provider": "gemini"},
             # DeepSeek V4 Flash via OpenRouter (paid, pay-per-token). Used as
             # the preferred evaluation model for cross-provider bias: when a
             # Gemini model writes content, DeepSeek evaluates it, and vice
@@ -75,9 +161,10 @@ class FallbackAgentRunner(AgentRunner):
             # quota is exhausted. Cost: ~$0.07/M input tokens -- negligible
             # for the few evaluation calls per content piece.
             {"name": "deepseek-v4-flash", "model": "deepseek/deepseek-v4-flash-0731", "provider": "openrouter-paid"},
-            # OpenRouter free tier auto-router: resolves to whatever free
-            # model is currently available. 50 RPD without purchased credits.
-            {"name": "openrouter-free", "model": "openrouter/free", "provider": "openrouter"},
+            # OpenRouter FREE tier, built from OPENROUTER_FREE_MODELS (top of
+            # file) -- edit that tuple to add or remove a free model; the
+            # quota tables below follow it automatically.
+            *_openrouter_free_entries(),
         ]
 
         # Paid, last-resort-only models. DeepSeek V4 Flash has been promoted
@@ -88,35 +175,53 @@ class FallbackAgentRunner(AgentRunner):
         # Quota tracking is keyed by MODEL NAME, not provider. Each Gemini
         # model has its own independent daily quota (confirmed from Google
         # AI Studio dashboard). DeepSeek is pay-per-token (no real daily
-        # cap -- the number is a sanity ceiling). openrouter-free is 50/day
+        # cap -- the number is a sanity ceiling). EXCEPTION: OpenRouter's free models
+        # share ONE allowance -- see SHARED_QUOTA_GROUPS.
         # without purchased credits.
         self.model_usage = {m["name"]: 0 for m in self.LLM_MODELS}
 
-        # Per-model daily request limits (RPD) from Google AI Studio dashboard.
+        # Per-model daily request limits (RPD) from the AI Studio rate-limit
+        # view (2026-10-10). Flash = 20/day, lite = 500/day, Gemma 4 = 14,400/day.
         self.model_limits = {
-            "gemini-3.5-flash-lite": 500,
             "gemini-3.1-flash-lite": 500,
             "gemini-3.8-flash": 20,
             "gemini-3.7-flash": 20,
             "gemini-3.6-flash": 20,
-            "gemini-3.5-flash": 20,
+            "gemini-2.5-flash": 20,
+            "gemini-3-flash-preview": 20,
             "gemini-flash-latest": 20,
+            "gemma-4-26b-a4b-it": 14400,
+            "gemma-4-31b-it": 14400,
             "deepseek-v4-flash": 1000,
-            "openrouter-free": 50,
+            # OpenRouter free rows are DERIVED from OPENROUTER_FREE_MODELS. The
+            # per-model value is only a display default; the real cap is the shared
+            # group limit enforced in is_model_available.
+            **{e["name"]: OPENROUTER_FREE_SHARED_RPD
+               for e in _openrouter_free_entries()},
         }
 
-        # Per-model requests-per-minute (RPM) limits.
+        # Per-model requests-per-minute (RPM) limits. Flash = 5, lite = 15,
+        # Gemma = 30 (TPM 16K -- small payloads only).
         self.model_rpm_limits = {
-            "gemini-3.5-flash-lite": 15,
             "gemini-3.1-flash-lite": 15,
             "gemini-3.8-flash": 5,
             "gemini-3.7-flash": 5,
             "gemini-3.6-flash": 5,
-            "gemini-3.5-flash": 5,
+            "gemini-2.5-flash": 5,
+            "gemini-3-flash-preview": 5,
             "gemini-flash-latest": 5,
+            "gemma-4-26b-a4b-it": 30,
+            "gemma-4-31b-it": 30,
             "deepseek-v4-flash": 60,
-            "openrouter-free": 20,
+            # Per model: OpenRouter free RPM is per model; only the DAILY limit is shared.
+            **{e["name"]: OPENROUTER_FREE_RPM
+               for e in _openrouter_free_entries()},
         }
+
+        # Models whose quota is ONE shared pool rather than a per-model allowance.
+        # Derived from OPENROUTER_FREE_MODELS, so a free model added there is
+        # automatically inside the group -- no second list to keep in sync.
+        self.SHARED_QUOTA_GROUPS = _openrouter_free_shared_quota()
 
         self.last_reset = datetime.now()
 
@@ -202,10 +307,24 @@ class FallbackAgentRunner(AgentRunner):
         available_models = [m["name"] for m in self.LLM_MODELS + self.LAST_RESORT_MODELS]
         raise ValueError(f"Model name '{model_name}' not found in LLM_MODELS. Available models: {available_models}")
 
+    def _shared_group_of(self, model_name: str):
+        """Name of the shared-quota group this model belongs to, or None.
+
+        OpenRouter counts ALL `:free` traffic against one account-level daily
+        allowance, so exhausting it on one model exhausts it for the others.
+        Without this the fleet would grant each free model its own full
+        allowance and quietly blow the real cap on the third."""
+        for group, spec in self.SHARED_QUOTA_GROUPS.items():
+            if model_name in spec["members"]:
+                return group
+        return None
+
     async def is_model_available(self, model_name):
         """Check if this specific model has quota remaining (both RPM and
         RPD) and is not temporarily unavailable. Keyed by model name, not
-        provider -- see the comment on model_limits for why."""
+        provider -- see the comment on model_limits for why. Models in a
+        shared-quota group are checked against the group's SUM, not their own
+        counter."""
         # Reset usage daily
         if (datetime.now() - self.last_reset).days >= 1:
             print(f"Resetting daily usage counters for all models")
@@ -221,9 +340,20 @@ class FallbackAgentRunner(AgentRunner):
                 self.provider_unavailable_until[model_name] = None
 
         now = datetime.now()
-        current_usage = self.model_usage.get(model_name, 0)
-        rpd_limit = self.model_limits.get(model_name, 0)
         rpm_limit = self.model_rpm_limits.get(model_name, 60)
+
+        # Shared-quota group (OpenRouter free): spend is counted across every
+        # member, so one exhausted member means the whole group is out.
+        group = self._shared_group_of(model_name)
+        if group:
+            spec = self.SHARED_QUOTA_GROUPS[group]
+            current_usage = sum(self.model_usage.get(m, 0) for m in spec["members"])
+            rpd_limit = spec["rpd"]
+            scope = f"shared-{group}-RPD"
+        else:
+            current_usage = self.model_usage.get(model_name, 0)
+            rpd_limit = self.model_limits.get(model_name, 0)
+            scope = "RPD"
 
         # Clean stale timestamps from the RPM sliding window (>60s old)
         cutoff = now - timedelta(seconds=60)
@@ -237,7 +367,7 @@ class FallbackAgentRunner(AgentRunner):
         rpm_ok = current_rpm < rpm_limit
         available = rpd_ok and rpm_ok
 
-        print(f"Model {model_name}: {current_usage}/{rpd_limit} RPD, {current_rpm}/{rpm_limit} RPM, available: {available}")
+        print(f"Model {model_name}: {current_usage}/{rpd_limit} {scope}, {current_rpm}/{rpm_limit} RPM, available: {available}")
         return available
 
     async def increment_usage(self, model_name):

@@ -20,11 +20,24 @@ KINDS = ("llm", "image", "data")
 # id(s) the run reported; unknown models fall back to the *_DEFAULT env
 # values (or these mid-tier estimates) and the detail records which price
 # source was used, so the ledger is honest about being an estimate.
+# Retired models keep their prices ON PURPOSE: historical `cost_ledger`
+# rows recorded those model ids, and re-pricing old runs would silently
+# rewrite past costs. (gemini-3.5-flash / -lite: Google's 2026-10
+# deprecation notice; the engine no longer calls them -- see
+# blog_agent/custom_runner.py LLM_MODELS.)
 LLM_PRICES_USD_PER_MTOK: list[tuple[str, float, float]] = [
-    ("gemini-3.5-flash-lite", 0.10, 0.40),
+    ("gemini-3.1-flash-lite", 0.10, 0.40),
+    ("gemini-3.5-flash-lite", 0.10, 0.40),  # retired (2026-10) — price kept for history
     ("gemini-3.6-flash", 0.30, 2.50),
-    ("gemini-3.5-flash", 0.30, 2.50),
+    ("gemini-3.5-flash", 0.30, 2.50),       # retired (2026-10) — price kept for history
+    ("gemini-3-flash-preview", 0.30, 2.50),
+    ("gemini-2.5-flash", 0.30, 2.50),
     ("gemini-flash", 0.30, 2.50),
+    # Gemma 4 on the Gemini API free tier costs nothing (Google's free-tier
+    # Gemma row). A paid/vertex Gemma deployment would differ -- if that ever
+    # ships, add a distinct prefix here rather than editing this one, so old
+    # free-tier cost rows keep pricing correctly.
+    ("gemma-4", 0.0, 0.0),
     ("deepseek-v4", 0.27, 1.10),
     ("deepseek-chat", 0.27, 1.10),
     ("gpt-5-mini", 0.25, 2.00),
