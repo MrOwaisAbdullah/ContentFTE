@@ -11,6 +11,103 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-10 — Live-run defects (image/SEO/keywords) + model fleet migration
+**Branch:** `master`
+**Tests:** 366/366 pytest + 1 skip (site repo absent), sdk `tsc --noEmit` clean
+
+### Goal
+Four things surfaced from a live post run on 2026-10-08 plus a model
+deprecation notice:
+1. A featured-image failure published a post Studio **could not publish**
+   (mainImage + alt are required) while Discord and the sheet both said
+   "Published".
+2. The generator and eval prompts both instruct secondary keywords
+   ("2–3 uses each") but **nothing ever supplied them** — the model invented
+   or skipped the rule. `lib/models.ContentBrief.keywords` described exactly
+   the data we now have a column for and went unread.
+3. A Sanity post had no SEO title/description/focus keyword/TL;DR fields —
+   WordPress gets them as Yoast/Rank Math meta.
+4. `gemini-3.5-flash` retired; the fallback chain still listed it.
+
+### What changed
+- **`lib/seo_keywords.py`** (new, pure): `parse_keywords` (split/dedupe/cap 3,
+  every drop reported), `keyword_placement` (title/H2-H3/body slot counts),
+  `check_keywords` → gate with `{pass, checked, counts, missing, guidance}`.
+  Fails **open** when no targets supplied. Density warning is length-aware
+  (`max(0.8%, 8/body_words)`) so a 130-word compact page isn't flagged for one
+  natural mention while a 2500-word post still is.
+- **Sheet (4 columns):** `Topic/YT Transcript · Primary Keyword · Secondary
+  Keywords · Status`, resolved by header name via `_column_index` /
+  `KEYWORD_SHEET_COLUMNS`. The previous `update_cell(i, 2, …)` was hardcoded to
+  column 2 — with Status at column 4 it would have overwritten the primary
+  keyword on every claim (same bug existed in `release_keyword_claim`).
+- **Carry-through:** sheet → `research_data(+2 cols)` → ledger
+  `research_snapshot` → `content_briefs(+1 col)` → **`generated_posts(+1 col,
+  new — the brief row is deleted the moment it graduates, so publish had no
+  other sheet source)** → Sanity `secondaryKeywords[]`. No keyword is ever
+  invented; absent stays absent.
+- **Hard gate on both surfaces:** `sdk/service._content_checks` →
+  `keyword_usage` check + hard block after the revise loop;
+  `scripts/run_stage._enforce_keyword_gate` runs *before* the
+  `generated_posts` write. Secondaries are gated, the primary is not (gating
+  the ledger topic rejected 14 legitimate drafts in the first cut).
+- **Model fleet:** removed both retired 3.5 entries; added
+  `gemini-3.6/3.7/3.8-flash`, `gemini-2.5-flash`, `gemini-3-flash-preview`,
+  `gemma-4-26b-a4b-it`, `gemma-4-31b-it` — **each probed live** against
+  `:generateContent` before adding. `gemini-2.5-flash-lite` rejected:
+  404 "no longer available to new users". Retired ids keep their cost-ledger
+  prices (historical rows must keep pricing correctly). OpenRouter free tier is
+  an explicit `OPENROUTER_FREE_MODELS` tuple replacing the `openrouter/free`
+  auto-router, with a **shared** 50 RPD enforced as a sum (correction from
+  review: OpenRouter's free allowance is account-level, not per-model — three
+  entries each billed 50/day would allow 150 calls and be rate-limited on the
+  third).
+- **Image failure:** nested image agents moved off `gemini-flash-latest`
+  (87.95% measured error) to the 500-RPD lite — nested `as_tool()` runs never
+  see `run_with_fallback`, so the pin is the only fallback they get. Prep agent
+  now retries `generate_image_tool` **directly** (deterministic house prompt +
+  Cloudflare, so no LLM call can 503) before giving up, and promotes an
+  AI in-post image into the featured slot. `post_to_sanity_tool` reports
+  `needs_image`/`doc_state`; `run_post` sends a ⚠️ instead of 🌐 Published.
+- **Sanity:** `seoTitle`/`seoDescription`/`focusKeyword`/`tldr`/`secondaryKeywords`
+  as optional-with-warning fields (never `required()` — that is the
+  publish-blocker pattern). `sdk/sanity/` ships the whole studio (schema, env,
+  config, `lib/seo.ts` with the one `seoTitle ?? title` /
+  `seoDescription ?? summary` rule, webhook route). Documented in the new
+  `skills/contentfte/references/sanity.md`, linked from SKILL.md step 0, the
+  SDK table, pitfalls and the reference table.
+
+### Verification
+- 366/366 pytest (49 new across `test_keyword_gate`, `test_keyword_flow`,
+  `test_seo_fields`, `test_model_fleet`, `test_post_image_failure` — the last
+  two also assert no retired model and no live credential is in the shipped
+  files).
+- Live probes for every new model, and a deliberate-error injection to prove
+  the sanity package's typecheck is not a false green.
+- Keyword flow round-tripped end to end: parse → brief block → per-slot counts →
+  pass on a draft that uses all three targets, blocked with an exact
+  per-keyword report on one that drops one.
+- Site repo (Owais-Abdullah) `tsc --noEmit` exits 0 with its schema edits.
+
+### Bugs the tests caught mid-build
+- `_column_index` computed `primary_pos` and never returned it.
+- `research_snapshot_keywords` only handled dicts — the ledger hands over a
+  JSON string, so keywords were silently dropped at exactly the point the
+  operator supplied them.
+- `mirror_keyword`/`mirror_article` were missing the new kwargs, so the
+  dual-write mirror failed (non-fatally) and would have dropped the targets.
+- Density cap over-flagged short drafts; replaced with the length-aware cap.
+
+### Open
+- The live site's `app/api/revalidate/route.ts` still has an inline IndexNow
+  key and a default secret — treat as compromised and rotate; the packaged
+  route reads env only.
+- LLM gemini-flash-latest pins elsewhere (blog_agents 447/513/552/669/909,
+  research_agent 119/223/271/517) still sit on the 87.95%-error model; not
+  touched here because it changes per-agent behaviour, not just a retired id.
+
+---
+
 ## 2026-10-08 — Auto-derived taxonomy (categories + tags) for WP posts
 **Branch:** `contentfte-phase1-engine-wp-sdk`
 **Tests:** 276/276 pytest (28 new)
