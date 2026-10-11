@@ -584,14 +584,21 @@ async def _run_with_sheets_retry(fn, *, max_retries: int = 4, base_delay: float 
 
 async def add_keyword(content: str) -> None:
     """Appends a new row to ContentSpark_Keywords with Status=available, so
-    the Triage Agent picks it up on the next research run. Matches the
-    columns get_keyword_tool (tools/sheet_tool.py) expects: Keyword, Status.
-    Retries on Sheets API rate limits (see _run_with_sheets_retry) instead
-    of silently losing the topic candidate -- this is the one call in the
-    topic-approval path where a failure means real, unrecoverable data
-    loss (the candidate is gone, not just an optional check skipped)."""
+    the Triage Agent picks it up on the next research run. The sheet has four
+    columns -- Keyword, Primary Keyword, Secondary Keywords, Status -- so the
+    new row writes all four (keyword columns left empty; the operator fills
+    them, the engine never invents keywords). table_range="A1" pins the append
+    to the A-anchored table: values.append otherwise starts at the DETECTED
+    table's first column, which can shift a row sideways when the middle
+    columns are empty (burnash/gspread#828). Retries on Sheets API rate limits
+    (see _run_with_sheets_retry) instead of silently losing the topic
+    candidate -- this is the one call in the topic-approval path where a
+    failure means real, unrecoverable data loss (the candidate is gone, not
+    just an optional check skipped)."""
     await _run_with_sheets_retry(
-        lambda: _get_keywords_worksheet().append_row([content, "available"]),
+        lambda: _get_keywords_worksheet().append_row(
+            [content, "", "", "available"], table_range="A1"
+        ),
         what=f"add_keyword({content[:60]!r})",
     )
 
