@@ -84,7 +84,20 @@ GITHUB_REPO = (
     .removesuffix(".git")
     .strip("/")
 )
-APPROVAL_CHANNEL_ID = int(os.environ["DISCORD_APPROVAL_CHANNEL_ID"])
+# One bot token = one gateway process (Discord closes duplicate sessions on
+# the same token), but that process may serve several approval channels --
+# e.g. one channel per tenant server after the shared bot is invited there.
+# Comma-separated DISCORD_APPROVAL_CHANNEL_IDS wins; the legacy single
+# DISCORD_APPROVAL_CHANNEL_ID still works.
+_APPROVAL_RAW = (
+    os.environ.get("DISCORD_APPROVAL_CHANNEL_IDS", "").strip()
+    or os.environ.get("DISCORD_APPROVAL_CHANNEL_ID", "").strip()
+)
+APPROVAL_CHANNEL_IDS = [int(p.strip()) for p in _APPROVAL_RAW.split(",") if p.strip().isdigit()]
+if not APPROVAL_CHANNEL_IDS:
+    raise RuntimeError(
+        "Set DISCORD_APPROVAL_CHANNEL_IDS (comma-separated) or DISCORD_APPROVAL_CHANNEL_ID")
+APPROVAL_CHANNEL_ID = APPROVAL_CHANNEL_IDS[0]
 # Optional: powers the conversational /status follow-up chat. If unset, /status
 # still works (it's pure sheet reads, no LLM needed) but @mentioning the bot
 # just explains that chat isn't configured instead of silently doing nothing.
@@ -104,7 +117,7 @@ SHEET_SCOPE = [
 # reused deliberately rather than a second credential, per
 # docs/service_setup.md's Search Console setup section.
 SEARCH_CONSOLE_SCOPE = ["https://www.googleapis.com/auth/webmasters.readonly"]
-SEARCH_CONSOLE_SITE_URL = "https://owaisabdullah.dev/"
+SEARCH_CONSOLE_SITE_URL = os.environ.get("SEARCH_CONSOLE_SITE_URL", "https://owaisabdullah.dev/")
 SPREADSHEET_NAME = "ContentSpark"
 WORKSHEET_NAME = "generated_posts"
 # Title, Generated Content, FAQs, Quality Score, Summary, Approve/Disapprove, Published
@@ -1490,7 +1503,7 @@ async def on_ready():
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if bot.user is not None and payload.user_id == bot.user.id:
         return
-    if payload.channel_id != APPROVAL_CHANNEL_ID:
+    if payload.channel_id not in APPROVAL_CHANNEL_IDS:
         return
     emoji = str(payload.emoji)
     if emoji not in ("✅", "❌"):

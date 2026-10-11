@@ -1,6 +1,8 @@
 # Spec — Site #2 (WordPress): direct Postgres, separate free-tier keys, operator console
 
-Status: **agreed direction, not yet started** (2026-10-12).
+Status: **in progress** (2026-10-12) — §4b tenancy switch (`TENANCY_MODE`, `lib/site_env.py`,
+shared-mode slug guard, `scripts/provision_tenant.py`, Discord channel-list) landed;
+Phases 1–5 not started.
 Supersedes the "second Google instance + sheet provisioning" approach discussed
 earlier the same day: the user decision is **direct Postgres** — site #2 has no
 Google Sheets at all.
@@ -13,6 +15,7 @@ Google Sheets at all.
 | D2 | **Postgres direct for site #2 — no Sheets.** This work completes the Sheets→Postgres cutover (TASKS "cutover step 2 flip" + "Postgres migration complete; Sheets retired"). Site #1 flips only after a clean live drift report (`scripts/verify_cutover.py`); until then site #1 stays on dual-write. |
 | D3 | The frontend is an **internal operator console** (approve/view/edit/run) — allowed now per TASKS Phase 2 rule ("minimal internal run console"). NOT allowed: customer dashboard, auth/product accounts, billing, white-label. |
 | D4 | Frontend consumes the existing **`/sdk/v1` REST surface** (`sdk/server.py`) via the existing plain-fetch client (`sdk/contentfte.ts`). No new protocol. |
+| D5 | **Two tenant provisioning modes, one switch `TENANCY_MODE`** (`isolated` \| `shared`, default `isolated`): site #2 today = `isolated` (own DB + own provider envs); future tenants may be `shared` (new `Site` row in the **platform DB**, provider envs shared with the primary instance — the SaaS shape, which runs `shared`). `scripts/provision_tenant.py` provisions either. |
 
 ## 1. Why Sheets are not needed for site #2
 
@@ -90,7 +93,7 @@ approved" — review `lib/db.py` before any ALTER; current schema suffices for v
 
    | Group | Keys |
    | :-- | :-- |
-   | Engine | `API_KEY`, `DEFAULT_SITE_SLUG`, `DATABASE_URL`, `SHEETS_ENABLED=0`, `STORE_READ_SOURCE=postgres`, `SDK_CORS_ORIGINS` |
+   | Engine | `API_KEY`, `TENANCY_MODE=isolated`, `DEFAULT_SITE_SLUG`, `DATABASE_URL`, `SHEETS_ENABLED=0`, `STORE_READ_SOURCE=postgres`, `SDK_CORS_ORIGINS` |
    | WordPress | `WP_BASE_URL`, `WP_USERNAME`, `WP_APP_PASSWORD` |
    | Models | `GEMINI_API_KEY` (new account), `OPENROUTER_API_KEY` (new account), model envs per TASKS model-fleet rules |
    | Images | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (new Workers account) |
@@ -102,6 +105,49 @@ approved" — review `lib/db.py` before any ALTER; current schema suffices for v
 4. **Run**: second checkout/copy of this repo on the same machine (or its own VPS/Dokploy
    service), `uvicorn`/`run_stage` with the instance-2 env. Follow
    `docs/site-onboarding-flow.md` §1 (WordPress flow) + §5 (minimal e2e).
+
+## 4b. Deployment modes — the `TENANCY_MODE` switch (isolated vs shared)
+
+We must support **both** tenant shapes and pick per instance with one env var
+(implements D5). `lib/site_env.py` owns the mode (`tenancy_mode()` /
+`is_shared_mode()`, read at call time).
+
+| | `TENANCY_MODE=isolated` (default) | `TENANCY_MODE=shared` |
+| :-- | :-- | :-- |
+| Shape | Self-contained instance: own DB, own provider envs, own process | New tenant **in the platform DB**; provider envs shared with the primary instance (SaaS will run this) |
+| `DATABASE_URL` | Own Neon project (or local sqlite) | The shared platform DB |
+| Site row | `DEFAULT_SITE_SLUG` = own slug | **Explicit `site_slug` required** — `get_or_create_site` refuses the silent default fallback (`lib/store.py`), so a misconfigured process can never write into another tenant's data |
+| Branding | Own `SITE_BASE_URL` / prompts via Phase 1 envs | Same envs, overridden per tenant (`SITE_BASE_URL`, `SITE_PREFIX`, `AUTHOR_PROFILE_API_URL`) |
+| Provisioning | `scripts/provision_tenant.py --mode isolated` → prints the checklist (§4) | `scripts/provision_tenant.py --mode shared --slug … --site-type wordpress --site-url …` → creates the `Site` + Brand DNA row in the current DB, prints the env overrides the tenant process needs |
+| Google Sheets | None (`SHEETS_ENABLED=0`) | None (`SHEETS_ENABLED=0`) |
+| Discord | Own bot token **or** console-only approvals | See Discord below — shared bot, per-tenant servers |
+
+### Discord per tenant (same bot account, different servers; SaaS: user's own server)
+
+Facts that drive the design (Discord API + discord.py docs, verified 2026-10-12):
+
+- **One bot token = one gateway process.** A second process with the same token
+  is disconnected (identify/session conflict; sharding only starts at 2,500
+  guilds). So "same bot account across tenants" means **one bot process routing
+  many guilds**, not one bot process per tenant.
+- **Webhooks are per-channel and independent of the bot** — draft
+  notifications (`DISCORD_WEBHOOK_URL`) are already tenant-safe: each instance/
+  tenant just gets its own webhook URL. No code change.
+- A bot may freely join many guilds (invite per server); events carry
+  `channel_id`/`guild_id`, so routing is a filter, not a fork.
+
+| Concern | Isolated (site #2 today) | Shared bot (many tenant servers) | SaaS future (user's own server) |
+| :-- | :-- | :-- | :-- |
+| Bot process | Own `DISCORD_BOT_TOKEN` per instance (own bot app invited to the tenant's server), or no bot (console approvals only) | **One** bot process; `DISCORD_APPROVAL_CHANNEL_IDS` = comma-separated channel list (one per tenant server). Reaction handler filters `payload.channel_id in APPROVAL_CHANNEL_IDS` | Same shared bot; user invites the platform bot to **their** server during onboarding |
+| Tenant routing | Process env is the tenant | v1: channel list only (single tenant-store per process). v2 (SaaS): `guild_id → Site.settings.discord_guild_id` lookup, approve via `POST /sdk/v1/articles/{id}/approve` | `guild_id` → tenant `Site` row → that tenant's DB slice |
+| Webhooks | Own `DISCORD_WEBHOOK_URL` | Own URL per tenant | Per-tenant webhook created at onboarding |
+| Approvals write | Sheet cell / REST | REST per resolved tenant | REST per resolved tenant |
+
+Env contract (both modes): `DISCORD_BOT_TOKEN`, `DISCORD_APPROVAL_CHANNEL_IDS`
+(comma list; legacy `DISCORD_APPROVAL_CHANNEL_ID` still honored — first entry),
+`DISCORD_WEBHOOK_URL` (per tenant), optional `DISCORD_GUILD_ID` (reserved for
+the SaaS guild→tenant lookup).
+
 
 ## 5. Phase 4 — Operator console (frontend)
 
@@ -147,6 +193,7 @@ Open questions (answer before/during the marked phase):
 3. Keep Discord approval for site #1, or retire it once the console ships? (3c)
 4. Site #2 hosting: same machine second process, or its own VPS/Dokploy? (Phase 3)
 5. `lib/db.py` schema sign-off before any cutover ALTERs (TASKS open question; none planned for v1).
+6. Shared-bot v2 (guild→tenant lookup for SaaS) is deferred to the SaaS phase — v1 ships channel-list routing only. Confirm timing.
 
 ## References
 

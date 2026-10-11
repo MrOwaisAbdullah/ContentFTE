@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from lib.db import Article, KeywordLedger, Site, get_session, init_db
 from lib.ledger import briefable_rows, upsert_keyword
+from lib.site_env import is_shared_mode
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,16 @@ def map_generated_post_row(row: List[Any], headers: Optional[List[str]] = None) 
 # Upserts
 # ---------------------------------------------------------------------------
 def get_or_create_site(session: Session, slug: str = "") -> Site:
-    slug = (slug or DEFAULT_SITE_SLUG).strip()
+    slug = (slug or "").strip()
+    if not slug:
+        # TENANCY_MODE=shared means this process serves a platform DB with
+        # several tenants (SaaS shape). A silent fallback to DEFAULT_SITE_SLUG
+        # would attribute the row to the wrong tenant, so fail fast instead.
+        if is_shared_mode():
+            raise ValueError(
+                "TENANCY_MODE=shared requires an explicit site_slug; "
+                "refusing to fall back to the default tenant")
+        slug = DEFAULT_SITE_SLUG
     site = session.execute(select(Site).where(Site.slug == slug)).scalar_one_or_none()
     if site is None:
         site = Site(slug=slug, name=slug.replace("-", " ").title())
