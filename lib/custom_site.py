@@ -32,9 +32,13 @@ def build_delivery_payload(
     faqs: Optional[List[Dict[str, Any]]] = None,
     date_published: Optional[str] = None,
     date_modified: Optional[str] = None,
+    focus_keyword: str = "",
+    tldr: str = "",
 ) -> Dict[str, Any]:
     """Rendered, site-agnostic payload for a custom site (Astro/Next/React)."""
-    return {
+    from lib.geo import extract_tldr
+
+    payload = {
         "title": title,
         "slug": slug or title,
         "url": url,
@@ -50,7 +54,20 @@ def build_delivery_payload(
             "article": article_schema(title, url or slug, date_published, date_modified),
             "faq": build_faq_schema(faqs) if faqs else None,
         },
+        # SEO + AEO fields as first-class values. Before this, a custom site
+        # got the meta description only as `excerpt` and had to parse the
+        # TL;DR blockquote out of the markdown itself to render meta tags or
+        # hand answer engines a quotable sentence. Mirrors what the Sanity
+        # schema stores (sdk/sanity/postType.ts) and what WordPress already
+        # received as Yoast/Rank Math fields.
+        "seo": {
+            "title": title,
+            "description": meta_description,
+            "focus_keyword": focus_keyword,
+            "tldr": tldr or extract_tldr(markdown),
+        },
     }
+    return payload
 
 
 def deliver(

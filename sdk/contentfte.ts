@@ -68,6 +68,20 @@ export interface WpPostResult {
   meta: Record<string, unknown>;
 }
 
+/** SEO + AEO fields, first-class so sites don't have to parse them out of
+ * the markdown (mirrors the Sanity post schema's seoTitle/seoDescription/
+ * focusKeyword/tldr fields and the Yoast/Rank Math meta on WordPress). */
+export interface SeoFields {
+  /** SEO title for search/social (<=60 chars). Falls back to `title`. */
+  title: string;
+  /** Meta description (<=160 chars). Same value as `excerpt`. */
+  description: string;
+  /** The primary keyword this post targets (empty when unknown). */
+  focus_keyword: string;
+  /** The 40-60 word TL;DR answer, or "" when the post has none. */
+  tldr: string;
+}
+
 /** The unified delivery payload returned by `getContent`. */
 export interface DeliveryPayload {
   id: number;
@@ -83,6 +97,7 @@ export interface DeliveryPayload {
     article?: Record<string, unknown>;
     faq?: Record<string, unknown> | null;
   };
+  seo?: SeoFields;
   status?: string;
   scores?: Record<string, number>;
   cost_usd?: number;

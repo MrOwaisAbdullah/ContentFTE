@@ -1025,7 +1025,10 @@ class SanityAdapter:
             return {"success": False, "error": str(e)}
 
     def post_blog(self, title: str, summary: str, content: str, categories: List[str],
-                  local_image_path: str, slug: str, alt_text: str, faqs: List[Dict[str, str]]) -> Dict[str, Any]:
+                  local_image_path: str, slug: str, alt_text: str, faqs: List[Dict[str, str]],
+                  focus_keyphrase: str = "", seo_title: str = "",
+                  seo_description: str = "", tldr: str = "",
+                  secondary_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Posts a blog post to Sanity CMS, correctly mapping fields to the 'post' schema, including FAQs.
         Uses the markdown_to_sanity_blocks parser for content.
@@ -1248,6 +1251,24 @@ class SanityAdapter:
                 "content": content_blocks,
                 "faqs": formatted_faqs
             }
+            # SEO/AEO fields (schema: sdk/sanity/postType.ts). Every one is
+            # optional so a caller that predates them can still publish --
+            # but the engine writes them: without them a Sanity site has no
+            # focus keyword, no separate SEO title/description, and no
+            # machine-readable TL;DR, which is what a Yoast/RankMath-style
+            # site expects. `summary` stays the generic meta description and
+            # is also mirrored to `seoDescription` when a shorter, trimmed
+            # one was computed.
+            if focus_keyphrase:
+                document["focusKeyword"] = focus_keyphrase
+            if secondary_keywords:
+                document["secondaryKeywords"] = list(secondary_keywords)
+            if seo_title:
+                document["seoTitle"] = seo_title
+            if seo_description:
+                document["seoDescription"] = seo_description
+            if tldr:
+                document["tldr"] = tldr
             # mainImage only when an asset was actually uploaded. A
             # `_ref: null` reference is invalid on publish, so the
             # no-image case (spec 5.9 flag) simply omits the field.

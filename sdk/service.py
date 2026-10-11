@@ -269,6 +269,7 @@ def _content_checks(*, content: str, title: str, summary: str,
     compact buyer-intent pages floor at their template's 400-500, flagship
     informational at 900) with `GEN_MIN_WORDS` as an operator override."""
     from lib.brief_templates import word_floor_for
+    from lib.seo_keywords import check_keywords, parse_keywords
 
     words = len((content or "").split())
     min_words = word_floor_for(
@@ -298,6 +299,24 @@ def _content_checks(*, content: str, title: str, summary: str,
     if brief.get("sources"):
         checks["external_links"] = {"pass": len(external) >= 1,
                                     "value": len(external), "need": 1}
+    # Operator-supplied SECONDARY keyword targets -- hard-gated. The primary
+    # keyword is NOT gated here: it is the ledger topic and the prompts
+    # already enforce it (H1, TL;DR, intro), so counting it would reject
+    # drafts that legitimately use it once. Only the secondary targets are
+    # new data with no other enforcement point.
+    # Fail-open when the operator supplied none -- that is how the 2026-10-08
+    # featured-image incident deadlocked a post, and it must not repeat here.
+    kw = check_keywords(content, primary="", secondary=parse_keywords(
+        str(brief.get("secondary_keywords") or ""))[0])
+    if kw["checked"]:
+        checks["keyword_usage"] = {
+            "pass": kw["pass"],
+            "value": [c["total"] for c in kw["counts"]],
+            "need": [c["min_uses"] for c in kw["counts"]],
+            "counts": kw["counts"],
+            "missing": kw["missing"],
+            "guidance": kw["guidance"],
+        }
     return checks
 
 
@@ -643,8 +662,17 @@ async def generate_content(article_id: int, *, generate_fn=None,
                 break
             # One bounded revision: feed the failing checks back verbatim.
             revisions += 1
-            feedback = [f"{name}: {json.dumps(val)}"
-                        for name, val in checks.items() if not val.get("pass")]
+            feedback = []
+            for name, val in checks.items():
+                if val.get("pass"):
+                    continue
+                # keyword_usage carries human-readable guidance; other checks
+                # are {pass, value, need} and read fine as JSON.
+                guide = val.get("guidance")
+                if guide:
+                    feedback.append(f"{name}: " + " ".join(guide))
+                else:
+                    feedback.append(f"{name}: {json.dumps(val)}")
             brief = dict(brief)
             brief["revision_feedback"] = feedback
 
@@ -652,6 +680,19 @@ async def generate_content(article_id: int, *, generate_fn=None,
         if parsed is None:
             return _err("agent returned no usable content",
                         "retry generate_content")
+
+        # HARD GATE on operator-supplied keywords: the revise loop already ran,
+        # so a draft that still misses a supplied keyword is not published.
+        # Reporting why is the point -- the operator sees the exact keyword,
+        # its per-slot counts and where it was expected.
+        kw_check = checks.get("keyword_usage") or {}
+        if kw_check and not kw_check.get("pass"):
+            why = " ".join(kw_check.get("guidance") or [])
+            return _err(
+                f"keyword gate failed after {revisions} revision(s): {why}",
+                "add the missing keyword(s) to a heading and the body, then "
+                "regenerate")
+
         previous_title = art.title
         quality = generation.parse_score(generation.get_field(parsed, "Quality Score"))
         warnings = generation.get_field(parsed, "warnings") or []
@@ -759,6 +800,7 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
                 faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
                 date_published=_iso(art.created_at),
                 date_modified=_iso(art.published_at or art.created_at),
+                focus_keyword=_focus_keyphrase(meta, brief),
             )
             if not payload.get("html") and art.content_html:
                 payload["html"] = art.content_html

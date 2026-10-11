@@ -1423,6 +1423,34 @@ def select_inpost_image_tool(topic: str, section_summary: str = "",
     decision) like the other image tools."""
     return _select_inpost_image(topic, section_summary, alt_text)
 
+_INPOST_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+
+
+def _promote_inpost_ai_image(content: str) -> "tuple[Optional[str], Optional[str]]":
+    """Find an AI-generated in-post image to reuse as the featured image.
+
+    Used when the featured-image path failed but the Contextual Image
+    Insertion Agent still produced an AI image in the body. AI images are
+    always LOCAL paths (Cloudflare generation writes a temp file), while
+    stock images are always http URLs, so this can never promote a stock
+    photo into the featured slot -- the spec §5.9 brand-control rule
+    ("featured is always AI") holds by construction.
+
+    Returns (image_path, alt_text) or (None, None).
+    """
+    if not content or not isinstance(content, str):
+        return None, None
+    for match in _INPOST_IMAGE_RE.finditer(content):
+        url = (match.group(2) or "").strip()
+        if not url or url.lower().startswith(("http://", "https://", "//")):
+            continue  # remote == stock, never promoted into the featured slot
+        if os.path.exists(url):
+            alt = (match.group(1) or "").strip()
+            return url, alt or None
+        logger.warning(f"In-post AI image path no longer exists, skipping: {url}")
+    return None, None
+
+
 @function_tool
 def post_to_sanity_tool(
     title: str,
@@ -1432,7 +1460,12 @@ def post_to_sanity_tool(
     image_path: str,
     slug: Optional[str] = None,
     alt_text: Optional[str] = None,
-    faqs: Optional[List[Any]] = None
+    faqs: Optional[List[Any]] = None,
+    focus_keyphrase: Optional[str] = None,
+    seo_title: Optional[str] = None,
+    seo_description: Optional[str] = None,
+    tldr: Optional[str] = None,
+    secondary_keywords: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Posts a blog to Sanity CMS using the updated SanityAdapter.
@@ -1446,6 +1479,17 @@ def post_to_sanity_tool(
         slug (Optional[str]): Unique slug for the blog post URL.
         alt_text (Optional[str]): Alt text for the featured image.
         faqs (Optional[List[FAQItem]]): List of FAQs as structured objects with question and answer.
+        focus_keyphrase (Optional[str]): Primary target keyword (the Yoast/RankMath
+            "focus keyword" equivalent). The engine derives it from the ledger
+            keyword; omitted writes no focusKeyword.
+        seo_title (Optional[str]): SEO title <=60 chars for search/social.
+        seo_description (Optional[str]): Meta description <=160 chars.
+        tldr (Optional[str]): The post's 40-60 word TL;DR answer, stored as a
+            first-class field so answer engines/site meta don't have to parse it
+            out of the content blocks.
+        secondary_keywords (Optional[List[str]]): The operator's 2-3 secondary
+            keywords, stored as their own Sanity field. Omit (or pass empty)
+            when the keyword sheet supplied none.
 
     Returns:
         Dict[str, Any]: Result containing status, post_id, image info, or errors.
@@ -1503,10 +1547,28 @@ def post_to_sanity_tool(
                 normalized_image_path = os.path.normpath(image_path)
             else:
                 normalized_image_path = None
-            
+                # No featured image was supplied -- the featured path failed
+                # upstream. Sanity Studio blocks publishing when `mainImage`
+                # is required, so an imageless post can never actually go
+                # live. Before accepting that, promote an AI in-post image
+                # (if the contextual agent generated one) into the featured
+                # slot. Stock is never eligible (local-path check above).
+                promoted_path, promoted_alt = _promote_inpost_ai_image(content)
+                if promoted_path:
+                    normalized_image_path = promoted_path
+                    if not alt_text:
+                        alt_text = promoted_alt
+                    logger.warning(
+                        f"Featured image missing; promoted AI in-post image to "
+                        f"the featured slot: {promoted_path}")
+                else:
+                    logger.warning(
+                        "No local AI in-post image available to promote; "
+                        "publishing without a featured image (flagged).")
+
             local_image_path = normalized_image_path
             temp_file = None
-            
+
             # Check if the file exists at the normalized path
             if local_image_path and not os.path.exists(local_image_path):
                 logger.error(f"Image file not found at path: {local_image_path}")
@@ -1552,7 +1614,12 @@ def post_to_sanity_tool(
             local_image_path=local_image_path,
             slug=slug,
             alt_text=alt_text,
-            faqs=faqs_list
+            faqs=faqs_list,
+            focus_keyphrase=focus_keyphrase or "",
+            seo_title=seo_title or "",
+            seo_description=seo_description or "",
+            tldr=tldr or "",
+            secondary_keywords=secondary_keywords or [],
         )
 
         # --- Cleanup ---
@@ -1592,6 +1659,22 @@ def post_to_sanity_tool(
                 "image_url": result.get("image_url"),
                 "image_source": image_source,
                 "image_alt_text": alt_text or f"{title} image",
+                # Sanity stores drafts and published documents as separate
+                # entities (draft `_id` = `drafts.<id>`, published = plain
+                # `<id>`; verified against Sanity's Mutation API reference +
+                # docs). This pipeline only ever *creates* the document --
+                # nothing in it runs a publish mutation, and Sanity Studio is
+                # where the draft becomes published. So the post is in Studio
+                # as a Draft, and `post_url` below is a CONSTRUCTED URL, not
+                # a verified live one.
+                #
+                # `needs_image` is what actually blocks publishing: the site's
+                # post schema marks mainImage + alt required, so a document
+                # without them cannot leave Draft no matter who tries. That
+                # was confirmed live on 2026-10-08 -- the Discord/sheet claimed
+                # "Published" while Studio showed an unpublishable Draft.
+                "doc_state": "draft",
+                "needs_image": not bool(result.get("image_id")),
                 "notes": "Post created successfully in Sanity CMS."
             }
         else:

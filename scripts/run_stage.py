@@ -916,10 +916,11 @@ def _looks_like_unexecuted_tool_call(output: str) -> bool:
     )
 
 
-_GENERATED_POSTS_FIELDS = ["Title", "Generated Content", "FAQs", "Quality Score", "Summary", "Approve/Disapprove", "Published", "Repurpose Bundle", "Video Script Seed"]
+_GENERATED_POSTS_FIELDS = ["Title", "Generated Content", "FAQs", "Quality Score", "Summary", "Approve/Disapprove", "Published", "Repurpose Bundle", "Video Script Seed", "Secondary Keywords"]
 
 
-def _content_row_values(content: dict, title: str) -> dict:
+def _content_row_values(content: dict, title: str,
+                        secondary_keywords: str = "") -> dict:
     faqs = _get_field(content, "FAQs", [])
     faqs_str = faqs if isinstance(faqs, str) else json.dumps(faqs)
 
@@ -939,6 +940,10 @@ def _content_row_values(content: dict, title: str) -> dict:
         "Published": str(_get_field(content, "Published", "No")),
         "Repurpose Bundle": _jsonish("Repurpose Bundle"),
         "Video Script Seed": _jsonish("Video Script Seed"),
+        # The operator's keyword targets, carried forward: content_briefs is
+        # deleted the moment the brief graduates, so without this column the
+        # publish step has no sheet source for them.
+        "Secondary Keywords": secondary_keywords,
     }
 
 
@@ -976,6 +981,44 @@ def _clean_hallucinated_links(content: dict) -> dict:
         print(f"[content] stripped hallucinated external link {bad.get('raw')} -> status {bad.get('status')}")
     print(f"[content] link guard: {len(v['invalid_internal'])} internal + {len(v['invalid_external'])} external stripped (kept anchor text)")
     return out
+
+
+def _enforce_keyword_gate(content: dict, source_brief: dict) -> None:
+    """Hard gate on the operator-supplied keyword targets (keyword sheet).
+
+    The content stage previously had NO deterministic quality gate: the only
+    keyword rule lived in the eval agent's prose score, which never blocks a
+    save. A draft that ignored a supplied keyword therefore shipped silently.
+
+    This runs against the draft before anything is persisted. It fails OPEN
+    when the brief carried no targets (legacy rows, rows the operator never
+    targeted) -- an absent column must never become a blocker, which is
+    exactly how the 2026-10-08 featured-image incident deadlocked a post.
+
+    On failure it raises with the per-keyword report: which keyword, how many
+    uses, and in which slots, so the operator knows what to fix."""
+    from lib.seo_keywords import check_keywords, parse_keywords
+
+    brief = source_brief.get("data") or {}
+    secondary = str(_get_field(brief, "Secondary Keywords")).strip()
+    keywords, warnings = parse_keywords(secondary)
+    for warning in warnings:
+        print(f"[content] keyword sheet: {warning}")
+    if not keywords:
+        return
+
+    body = str(_get_field(content, "Generated Content"))
+    report = check_keywords(body, primary="", secondary=keywords)
+    print(f"[content] keyword gate: {[(c['keyword'][:28], c['total'], c['min_uses']) for c in report['counts']]}")
+    if report["pass"]:
+        return
+
+    detail = " | ".join(report["guidance"]) or "no detail"
+    raise RuntimeError(
+        f"keyword gate failed -- the draft does not use the operator's "
+        f"keywords. {detail} Re-run the content stage once the keywords are "
+        f"integrated into a heading and the body."
+    )
 
 
 def _ensure_content_persisted(content: dict) -> dict:
@@ -1028,11 +1071,17 @@ def _ensure_content_persisted(content: dict) -> dict:
         _stamp_created_at("generated_posts", "Title", title)
         return correct_values
 
-    row_values = _content_row_values(content, title)
-    # Self-heal the two trailing headers (tactics pack) before the positional
-    # append - no-op when they already exist, never shifts existing columns.
+    # Self-heal the trailing headers (tactics pack + keyword targets) before
+    # the positional append - no-op when they already exist, never shifts
+    # existing columns.
     _ensure_column_header("generated_posts", "Repurpose Bundle")
     _ensure_column_header("generated_posts", "Video Script Seed")
+    _ensure_column_header("generated_posts", "Secondary Keywords")
+    row_values = _content_row_values(
+        content, title,
+        secondary_keywords=str(_get_field(source_brief.get("data") or {},
+                                         "Secondary Keywords")).strip(),
+    )
     append_result = manage_sheet_data(
         worksheet_name="generated_posts",
         action="append_row",
@@ -1171,6 +1220,14 @@ async def run_content() -> None:
             raise RuntimeError(f"Content stage failed: {output}")
         print("[content] Agent returned raw Markdown instead of the JSON envelope; salvaged it instead of discarding a completed post.")
 
+    # HARD GATE (keyword targets). This stage had no deterministic quality
+    # gate at all until now -- the only keyword rule lives in the eval agent's
+    # opinion. Operator-supplied keywords are checked here BEFORE anything is
+    # persisted, so a draft that misses a target never reaches
+    # generated_posts. The row stays ungenerated and ungraduated, which makes
+    # a re-run clean.
+    _enforce_keyword_gate(parsed, source_brief)
+
     persisted_row = _ensure_content_persisted(parsed)
     _persist_claims_audit(parsed, str(persisted_row.get("Title", "")).strip(), source_keyword)
     if source_row_index is not None:
@@ -1200,7 +1257,19 @@ async def run_post() -> None:
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
         if webhook_url:
             title = result.get("title") or "Untitled"
-            content = f"🌐 Published **{title}**\n{result['post_url']}"
+            if result.get("needs_image"):
+                # A Sanity post without mainImage/alt cannot leave Draft --
+                # the schema marks both required, so calling this "Published"
+                # would be a lie that hides the post that needs fixing.
+                content = (
+                    f"⚠️ **{title}** was created in Sanity **without a featured "
+                    f"image** -- Studio blocks publishing it (mainImage + alt "
+                    f"are required).\n{result['post_url']}\n"
+                    f"Add an image in Studio (or rerun the post stage once the "
+                    f"featured-image provider recovers) to publish."
+                )
+            else:
+                content = f"🌐 Published **{title}**\n{result['post_url']}"
             try:
                 _post_discord_message(webhook_url, content)
             except Exception as e:

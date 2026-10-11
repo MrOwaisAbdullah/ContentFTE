@@ -25,6 +25,42 @@ def tldr_block(answer: str) -> str:
     return f"> **TL;DR** — {build_tldr(answer)}"
 
 
+# Matches the engine's `tldr_block` output (`> **TL;DR** — …`) and the
+# looser variants a model emits (`> **TL;DR:** …`, `> TL;DR - …`). The dash
+# is listed FIRST in the class so it stays a literal -- `[:-–—]` would be a
+# range from ":" to "–" and quietly match the whole line. Only the preamble
+# is searched -- see extract_tldr.
+_TLDR_RE = re.compile(
+    r"^\s*>\s*(?:\*\*)?\s*TL\s*;?\s*DR(?:\*\*)?\s*[-:–—]+\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def extract_tldr(markdown: str) -> str:
+    """Pull the TL;DR sentence out of rendered markdown (inverse of
+    `tldr_block`). Returns "" when the post carries no TL;DR block.
+
+    Only the document preamble counts: the engine always emits the TL;DR as
+    the opening blockquote, before the first H2. A `> TL;DR:` line that
+    appears after a heading is body prose, not the TL;DR field.
+
+    Needed because the TL;DR is currently only inline content: answer
+    engines and site meta tags have to parse a blockquote out of Portable
+    Text/blocks to see it. Callers use this to store it as a first-class
+    field (Sanity `tldr`, delivery payload `seo.tldr`) instead."""
+    if not markdown:
+        return ""
+    # Stop at the first H2 -- everything after it is body content.
+    first_h2 = re.search(r"^##\s", markdown, flags=re.M)
+    preamble = markdown[:first_h2.start()] if first_h2 else markdown
+    match = _TLDR_RE.search(preamble[:800])
+    if not match:
+        return ""
+    # strip a trailing `**` from the `> **TL;DR:** …**` variant
+    text = match.group(1).strip().strip("*").strip()
+    return re.sub(r"\s+", " ", text)
+
+
 def slugify_taxonomy(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
     return slug or "uncategorized"
