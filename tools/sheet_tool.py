@@ -7,7 +7,7 @@ from typing import List, TypedDict, Optional, Union, Any, Dict, Literal
 import logging
 import time
 
-from lib.site_env import SITE_PREFIX
+from lib.site_env import SITE_PREFIX, sheets_enabled
 from agents import function_tool
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file if present
@@ -49,6 +49,16 @@ def get_gspread_client() -> gspread.Client:
     global _gspread_client
     if _gspread_client is not None:
         return _gspread_client
+
+    # SHEETS_ENABLED=0 (spec §3b): a Postgres-only instance has no
+    # Google creds and no Sheets -- fail loudly here, the single choke
+    # point every sheet call funnels through, rather than deep inside
+    # google-auth. The SDK/service path is unaffected (Postgres-native).
+    if not sheets_enabled():
+        raise RuntimeError(
+            "Google Sheets are disabled for this instance "
+            "(SHEETS_ENABLED=0); the pipeline runs on Postgres via the "
+            "SDK/service layer (docs/spec-site2-postgres-frontend.md §3b).")
 
     credentials_info = os.environ.get(CREDENTIALS_ENV_VAR)
     if not credentials_info:
@@ -341,9 +351,29 @@ def _column_index(header: list) -> dict:
     }
 
 
+def _sheets_disabled_error() -> Optional[Dict[str, str]]:
+    """The payload get_keyword_tool returns when Sheets are off
+    (SHEETS_ENABLED=0): the queue lives in the keyword_ledger and is
+    served by the SDK brief endpoint, so point the caller there
+    instead of surfacing an auth error from the disabled client."""
+    if sheets_enabled():
+        return None
+    return {
+        "error": (
+            "Google Sheets are disabled for this instance "
+            "(SHEETS_ENABLED=0); claim the next keyword via the "
+            "SDK brief endpoint (contentfte_get_brief / "
+            "GET /sdk/v1/sites/{slug}/brief)."
+        )
+    }
+
+
 @function_tool
 def get_keyword_tool():
     """Fetches an available keyword from ContentSpark_Keywords and marks it as used."""
+    _disabled = _sheets_disabled_error()
+    if _disabled:
+        return _disabled
     try:
         # Idempotent re-claim: if this process already claimed a row, hand it
         # back instead of scanning again. This is what makes a fallback re-run

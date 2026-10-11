@@ -21,6 +21,20 @@ def is_shared_mode() -> bool:
     return tenancy_mode() == "shared"
 
 
+def sheets_enabled() -> bool:
+    """Google Sheets on/off for THIS instance (spec §3b, default on).
+
+    Site #1 keeps Sheets as its operator queue (dual-write mirror to
+    Postgres). An isolated Postgres-only instance sets SHEETS_ENABLED=0:
+    every sheet choke point (tools/sheet_tool.get_gspread_client) then
+    fails loudly with a clear message instead of a cryptic missing-
+    credentials error, and the SDK/service path -- which is already
+    Postgres-native -- is the pipeline. Call-time read so tests and
+    long-lived processes can flip it."""
+    return (os.environ.get("SHEETS_ENABLED", "1").strip().lower()
+            not in ("0", "false", "no", "off"))
+
+
 # --- Site identity (Phase 1: de-hardcoded from 9 files; defaults = site #1) --
 SITE_BASE_URL = (os.environ.get("SITE_BASE_URL") or _DEFAULT_BASE).rstrip("/")
 SITE_HOST = SITE_BASE_URL.split("//", 1)[-1].split("/", 1)[0]

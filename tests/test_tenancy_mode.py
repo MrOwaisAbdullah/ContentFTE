@@ -94,6 +94,53 @@ def test_approval_channel_ids_single_and_comma(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# SHEETS_ENABLED gate (spec §3b): a Postgres-only instance fails loudly
+# at the single gspread choke point instead of deep in google-auth.
+# ---------------------------------------------------------------------------
+def test_sheets_enabled_default_on(monkeypatch):
+    monkeypatch.delenv("SHEETS_ENABLED", raising=False)
+    assert site_env.sheets_enabled() is True
+
+
+def test_sheets_disabled_values(monkeypatch):
+    for value in ("0", "false", "no", "off"):
+        monkeypatch.setenv("SHEETS_ENABLED", value)
+        assert site_env.sheets_enabled() is False
+
+
+def test_gspread_client_disabled_fails_loudly(monkeypatch):
+    monkeypatch.setenv("SHEETS_ENABLED", "0")
+    from tools import sheet_tool
+    sheet_tool._reset_gspread_cache()
+    try:
+        with pytest.raises(RuntimeError, match="SHEETS_ENABLED=0"):
+            sheet_tool.get_gspread_client()
+    finally:
+        monkeypatch.delenv("SHEETS_ENABLED", raising=False)
+        sheet_tool._reset_gspread_cache()
+
+
+def test_keyword_tool_disabled_points_to_sdk(monkeypatch):
+    monkeypatch.setenv("SHEETS_ENABLED", "0")
+    from tools import sheet_tool
+    payload = sheet_tool._sheets_disabled_error()
+    assert payload is not None
+    assert "SHEETS_ENABLED=0" in payload["error"]
+    assert "brief" in payload["error"]
+    monkeypatch.delenv("SHEETS_ENABLED", raising=False)
+    assert sheet_tool._sheets_disabled_error() is None
+
+
+def test_manage_sheet_data_disabled_returns_error(monkeypatch):
+    monkeypatch.setenv("SHEETS_ENABLED", "0")
+    from tools import sheet_tool
+    result = sheet_tool.manage_sheet_data(
+        "research_data", "append_row", row_values=["a", "b"])
+    assert result["status"] == "error"
+    assert "SHEETS_ENABLED=0" in result["message"]
+
+
+# ---------------------------------------------------------------------------
 # store: default fallback vs shared-mode refusal
 # ---------------------------------------------------------------------------
 def test_isolated_mode_falls_back_to_default_tenant(temp_db, monkeypatch):

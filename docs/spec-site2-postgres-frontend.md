@@ -2,7 +2,11 @@
 
 Status: **in progress** (2026-10-12) — §4b tenancy switch (`TENANCY_MODE`, `lib/site_env.py`,
 shared-mode slug guard, `scripts/provision_tenant.py`, Discord channel-list) landed;
-Phases 1–5 not started.
+**Phase 1** (site identity env-ified, 12 files) landed; **Phase 2 slice 2a** (the
+`SHEETS_ENABLED=0` gate: `lib/site_env.sheets_enabled()`, loud failure at
+`tools/sheet_tool.get_gspread_client`, keyword-tool pointer to the SDK brief
+endpoint) landed. Phase 2 rest = read rewiring off `STORE_READ_SOURCE` + site-#1
+flip (gated on live `verify_cutover.py` drift report); Phases 3–5 not started.
 Supersedes the "second Google instance + sheet provisioning" approach discussed
 earlier the same day: the user decision is **direct Postgres** — site #2 has no
 Google Sheets at all.
