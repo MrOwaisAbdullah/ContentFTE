@@ -15,6 +15,7 @@ reason no new REQUIRED field is added to this schema.
 from __future__ import annotations
 
 import os
+import re
 
 
 def _read(rel: str) -> str:
@@ -149,14 +150,27 @@ def test_sanity_package_ships_complete_studio():
 
 def test_sanity_package_has_no_hardcoded_credentials():
     """A real site's webhook shipped with an inline IndexNow key and a
-    hardcoded default secret; the packaged version must not repeat that."""
+    hardcoded default secret; the packaged version must not repeat that.
+
+    Checked by SHAPE, not by literal: no hex key of the length the real one
+    has, no hardcoded fallback on the secret, and no project id baked into
+    env.ts. (No live credential is written here either -- a literal needle in
+    the repo half-confirms the thing it is guarding against.)"""
     for rel in ("env.ts", "webhooks/revalidate.ts"):
         src = _read(os.path.join("sdk", "sanity", rel))
-        for marker in ("4ecdaee7", "owais-revalidate", "y2wkvags"):
-            assert marker not in src, f"{rel} still carries a live credential"
-    # and the secret must have no fallback value
+        # a 32-char hex string is an IndexNow key shape
+        assert not re.search(r"\b[0-9a-fA-F]{32}\b", src), (
+            f"{rel} carries what looks like a hardcoded IndexNow key")
+        # no literal secret string assigned as a fallback
+        assert not re.search(r"SECRET\s*(\|\||\?\?)\s*[\"']", src), (
+            f"{rel} hardcodes a secret fallback")
+
+    env = _read(os.path.join("sdk", "sanity", "env.ts"))
+    assert "process.env.NEXT_PUBLIC_SANITY_PROJECT_ID" in env
+
     reval = _read(os.path.join("sdk", "sanity", "webhooks", "revalidate.ts"))
-    assert 'process.env.SANITY_REVALIDATE_SECRET' in reval
+    assert "process.env.SANITY_REVALIDATE_SECRET" in reval
+    assert "process.env.INDEXNOW_KEY" in reval
 
 
 def test_seo_fallback_rule_is_a_single_shared_function():
