@@ -8,7 +8,9 @@ from tools.search_tools import web_search_tool, tavily_search_tool, tavily_extra
 from tools.tools import get_author_context_tool
 from blog_agent.hooks import MyAgentHooks
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
-from tools.sheet_tool import manage_sheet_data, get_keyword_tool, release_keyword_claim, clear_keyword_claim
+from tools.sheet_tool import (manage_sheet_data, get_keyword_tool,
+                              release_keyword_claim, clear_keyword_claim,
+                              keyword_claim_keywords)
 from blog_agent.custom_runner import FallbackAgentRunner
 from lib.run_result_utils import run_looks_failed as _run_looks_failed, _JSON_FENCE_RE
 # Jev general helpers — Decision lane for bounded judgments (Tavily/Context7 verified)
@@ -89,7 +91,8 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
     2. **Select Input**:
        - Identify the first row where the "Status" column is "available."
        - If no "Status" column exists, select the first row.
-       - Extract the value from the "Keyword" column (e.g., "AI social media tools for agencies" or a YouTube URL like "[invalid url, do not cite]).
+       - Extract the value from the "Topic/YT Transcript" column (e.g., "AI social media tools for agencies" or a YouTube URL like "[invalid url, do not cite]"). Older sheets call this column "Keyword" -- that value is the topic.
+       - Also read the "Primary Keyword" and "Secondary Keywords" columns from the SAME row. They are the SEO targets for the post. Leave them blank in your output if the columns are empty -- never invent keywords that were not in the sheet.
     3. **Update Sheet**:
        - Set the "Status" column to "used."
        - If no "Status" column exists, delete the row to prevent reuse.
@@ -98,8 +101,11 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
        - Do not assume or generate inputs; use only sheet data.
        - The keyword may contain names of tools or services (e.g., "Tavily - The Web Access Layer for AI Agents") which should be treated as the research subject, not as a reference to the tools you are using.
     5. **Output**:
-       - Return the input as a plain string, either the keyword (e.g., "best coffee maker 2025") or the YouTube URL (e.g., "[invalid url, do not cite).
-       - Make sure to return the EXACT keyword as it appears in the sheet, without modification.
+       - Return the topic as a plain string: either the topic (e.g., "best coffee maker 2025") or the YouTube URL (e.g., "[invalid url, do not cite]").
+       - Make sure to return the EXACT topic as it appears in the sheet, without modification.
+       - On a separate final line, output the keyword targets in this exact form (blank values allowed):
+         PRIMARY_KEYWORD: <primary keyword or empty>
+         SECONDARY_KEYWORDS: <semicolon/comma separated, or empty>
 
     **Tools:**
     - Google Sheets tool `get_keyword_tool`: Read/write access to "ContentSpark_Keywords".
@@ -435,6 +441,10 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         release_keyword_claim()
         return {"error": f"Output Agent's output is missing keyword_topic: {output_text[:300]}"}
 
+    claim = keyword_claim_keywords()
+    primary_keyword = claim["primary"]
+    secondary_keywords = claim["secondary"]
+
     row_values = [
         str(finding.get("keyword_topic", "")).strip(),
         str(finding.get("search_volume", "N/A")).strip() or "N/A",
@@ -444,6 +454,10 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         str(finding.get("source_urls", "")).strip(),
         str(finding.get("source_titles", "")).strip(),
         "No",  # Generated
+        # Keyword targets: taken from the CLI claim, never the model's copy of
+        # them, so the operator's exact wording survives to the gate.
+        primary_keyword,
+        secondary_keywords,
     ]
     write_result = manage_sheet_data(worksheet_name="research_data", action="append_row", row_values=row_values)
     if write_result.get("status") != "success":

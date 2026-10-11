@@ -168,6 +168,33 @@ _DEFAULT_INTENT = "informational"
 _DEFAULT_FLOOR = 900
 
 
+def secondary_keywords_block(secondary_keywords) -> str:
+    """The keyword-target block every brief carries.
+
+    Mirrors the operator's secondary keywords into the brief as required
+    sections. An empty cell yields NO block at all -- the writer then works
+    with the primary keyword alone rather than inventing targets. Rendered
+    from the raw sheet value so the phrases reach the writer verbatim.
+    """
+    from lib.seo_keywords import MAX_SECONDARY, parse_keywords
+
+    keywords, _warnings = parse_keywords(secondary_keywords or "")
+    if not keywords:
+        return ""
+    lines = [
+        "Secondary Keywords (operator-supplied, use each VERBATIM):",
+    ]
+    for keyword in keywords:
+        lines.append(
+            f"- {keyword} — give it one H2/H3 heading of its own plus 2-3 "
+            "natural body sentences; it must never appear in the H1/title.")
+    lines.append(
+        "These are hard requirements: the pipeline's keyword gate rejects a "
+        f"draft that uses any of them fewer than 2 times (max {MAX_SECONDARY} "
+        "targets per post). Do not reword, merge, or add to them.")
+    return "\n".join(lines)
+
+
 def template_for(intent: str) -> dict:
     """Template dict for an intent; unknown/empty intents fall back to
     informational so a bad ledger value can never break the brief."""

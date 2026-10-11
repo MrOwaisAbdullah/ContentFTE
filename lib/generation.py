@@ -13,8 +13,32 @@ import json
 import re
 from datetime import datetime, timezone
 
-from lib.brief_templates import template_for, template_text, word_floor_for
+from lib.brief_templates import (secondary_keywords_block, template_for,
+                                 template_text, word_floor_for)
 from lib.run_result_utils import loads_lenient
+
+
+def research_snapshot_keywords(research_snapshot) -> str:
+    """Secondary keywords from a ledger research_snapshot.
+
+    The snapshot reaches this layer as a JSON string (the ledger row is
+    serialized), a dict (in-process callers), or a list. All three must work
+    -- parsing only dicts silently drops the keywords exactly where the
+    operator supplied them."""
+    if isinstance(research_snapshot, str):
+        if not research_snapshot.strip():
+            return ""
+        parsed = loads_lenient(research_snapshot)
+        research_snapshot = parsed if isinstance(parsed, dict) else {}
+    elif isinstance(research_snapshot, list):
+        research_snapshot = {}
+    elif not isinstance(research_snapshot, dict):
+        research_snapshot = {}
+
+    val = research_snapshot.get("secondary_keywords")
+    if isinstance(val, list):
+        return "; ".join(str(v) for v in val if str(v).strip())
+    return str(val or "").strip()
 
 # Same turn budget as the content stage in scripts/run_stage.py.
 MAX_TURNS = 30
@@ -127,6 +151,14 @@ def build_brief_payload(*, keyword: str, intent: str = "",
         parts.append("Research:\n" + "\n".join(research))
     # Deterministic structure contract for the intent (§5.16).
     parts.append(template_text(intent))
+    # Operator-supplied secondary keywords. Absent -> no block at all, so a
+    # legacy sheet row (or one with no targets) never gets invented keywords.
+    keyword_block = secondary_keywords_block(
+        meta.get("secondary_keywords")
+        or research_snapshot_keywords(research_snapshot)
+    )
+    if keyword_block:
+        parts.append(keyword_block)
     brief_markdown = "\n\n".join(p for p in parts if p)
 
     sources = meta.get("sources") or meta.get("external_source_links") or meta.get("links") or []
@@ -144,6 +176,10 @@ def build_brief_payload(*, keyword: str, intent: str = "",
         "sources": sources,
         "summary": str(meta.get("summary") or description or "").strip(),
         "template_intent": intent,
+        # Keyword targets the operator supplied on the keyword sheet. Carried
+        # verbatim so the gate, the prompt and the audit all see the same
+        # phrases. Empty means "no secondary targets" -- never invented.
+        "secondary_keywords": keyword_block,
         # Link graph for the article path: real candidates the publisher
         # supplied (or service enrichment found on the WP site). Rendered
         # as hard requirements by render_prompt; never invent URLs.

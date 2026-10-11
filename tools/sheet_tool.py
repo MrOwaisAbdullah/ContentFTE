@@ -291,7 +291,8 @@ def log_image_usage(
 # of scanning past it; the workflow that owns the process then either clears
 # the state on success (row legitimately stays "used") or releases the row
 # back to "available" on failure via release_keyword_claim().
-_keyword_claim: Dict[str, Any] = {"row_index": None, "keyword": None}
+_keyword_claim: Dict[str, Any] = {"row_index": None, "keyword": None,
+                                  "primary": "", "secondary": ""}
 
 
 def _keyword_preview(keyword: str, limit: int = 80) -> str:
@@ -300,6 +301,42 @@ def _keyword_preview(keyword: str, limit: int = 80) -> str:
     per-row debug print used to dump each one in full -- a single run's log
     became an unreadable wall of text (confirmed live)."""
     return keyword if len(keyword) <= limit else keyword[: limit - 3] + "..."
+
+
+# Column names in ContentSpark_Keywords. The list is the ONLY place the
+# sheet's shape is declared -- get_keyword_tool resolves every column from the
+# header row, so adding a keyword column here is a one-line change and never
+# silently shifts Status onto the wrong cell.
+KEYWORD_SHEET_COLUMNS = {
+    "subject": ("Topic/YT Transcript", "Keyword"),
+    "primary": ("Primary Keyword",),
+    "secondary": ("Secondary Keywords",),
+    "status": ("Status",),
+}
+
+
+def _column_index(header: list) -> dict:
+    """Map logical field -> actual column name + 1-based position, taken from
+    the sheet's own header row. Falls back to a canonical name so a sheet
+    whose header is missing a column still returns a readable error rather
+    than a KeyError."""
+    def pick(candidates):
+        for cand in candidates:
+            for pos, name in enumerate(header, 1):
+                if str(name).strip().lower() == cand.strip().lower():
+                    return cand, pos
+        return candidates[0], len(header) + 1
+
+    subject, subject_pos = pick(KEYWORD_SHEET_COLUMNS["subject"])
+    primary, primary_pos = pick(KEYWORD_SHEET_COLUMNS["primary"])
+    secondary, _ = pick(KEYWORD_SHEET_COLUMNS["secondary"])
+    status, status_pos = pick(KEYWORD_SHEET_COLUMNS["status"])
+    return {
+        "subject": subject, "subject_pos": subject_pos,
+        "primary": primary, "primary_pos": primary_pos,
+        "secondary": secondary,
+        "status": status, "status_pos": status_pos,
+    }
 
 
 @function_tool
@@ -312,6 +349,8 @@ def get_keyword_tool():
         if _keyword_claim["keyword"] is not None:
             return {
                 "selected_keyword": _keyword_claim["keyword"],
+                "primary_keyword": _keyword_claim.get("primary", ""),
+                "secondary_keywords": _keyword_claim.get("secondary", ""),
                 "status_update": (
                     f"Row {_keyword_claim['row_index']} already claimed by this run; "
                     "re-issuing the same keyword (sheet unchanged)."
@@ -328,28 +367,42 @@ def get_keyword_tool():
         if not records:
             return {"error": "No keywords available in sheet"}
 
-        # Find the first available keyword
+        # Find the first available keyword.
+        # Column positions are resolved from the header row, NOT hardcoded:
+        # the sheet's four columns are Topic/YT Transcript, Primary Keyword,
+        # Secondary Keywords, Status -- so Status sits at whatever index the
+        # header says. Writing to a fixed column number here would land on
+        # Primary Keyword the moment the order changed.
+        header = sheet.row_values(1) if sheet.row_count > 0 else []
+        col = _column_index(header)
+
         for i, record in enumerate(records, 2):  # Start at row 2 (skip header)
-            status = record.get("Status", "").strip().lower()
-            print(f"Row {i}: Keyword={_keyword_preview(record.get('Keyword', ''))}, Status={status}")  # Debug
+            status = str(record.get(col["status"], "")).strip().lower()
+            print(f"Row {i}: Topic={_keyword_preview(record.get(col['subject'], ''))}, Status={status}")  # Debug
             if status == "available":
-                keyword = record.get("Keyword", "")
-                if not keyword:
-                    print(f"Row {i}: Empty keyword, skipping")
+                subject = str(record.get(col["subject"], "")).strip()
+                if not subject:
+                    print(f"Row {i}: Empty topic, skipping")
                     continue
                 # Mark as used
-                sheet.update_cell(i, 2, "used")  # Status column is 2nd
+                sheet.update_cell(i, col["status_pos"], "used")
                 _keyword_claim["row_index"] = i
-                _keyword_claim["keyword"] = keyword
+                _keyword_claim["keyword"] = subject
+                _keyword_claim["primary"] = str(
+                    record.get(col["primary"], "")).strip()
+                _keyword_claim["secondary"] = str(
+                    record.get(col["secondary"], "")).strip()
                 return {
-                    "selected_keyword": keyword,
+                    "selected_keyword": subject,
+                    "primary_keyword": _keyword_claim["primary"],
+                    "secondary_keywords": _keyword_claim["secondary"],
                     "status_update": f"Row {i} marked as used"
                 }
 
         return {"error": "No available keywords found"}
 
     except Exception as e:
-        # print(f"Error in get_keyword_tool: {str(e)}")  # Debug
+        # print(f"Error: get_keyword_tool: {str(e)}")  # Debug
         return {"error": f"Failed to fetch keyword: {str(e)}"}
 
 
@@ -370,7 +423,8 @@ def release_keyword_claim() -> bool:
     try:
         client = get_gspread_client()
         sheet = client.open("ContentSpark_Keywords").sheet1
-        current = str(sheet.cell(row_index, 1).value or "")
+        col = _column_index(sheet.row_values(1) if sheet.row_count > 0 else [])
+        current = str(sheet.cell(row_index, col["subject_pos"]).value or "")
         # Prefix compare as well as exact: guards against a mid-run sheet edit
         # shifting rows, without needing the full (possibly huge) keyword to
         # round-trip identically through the API.
@@ -380,12 +434,25 @@ def release_keyword_claim() -> bool:
                 f"content ({_keyword_preview(current)}) than what was claimed."
             )
             return False
-        sheet.update_cell(row_index, 2, "available")
+        sheet.update_cell(row_index, col["status_pos"], "available")
         logger.info(f"Released keyword claim: row {row_index} back to 'available'.")
         return True
     except Exception as e:
         logger.warning(f"Failed to release keyword claim on row {row_index}: {e}")
         return False
+
+
+def keyword_claim_keywords() -> Dict[str, str]:
+    """The subject plus its keyword targets on the currently claimed row.
+
+    Read from the process-local claim rather than any agent output, so a model
+    can never reword, merge or drop the operator's keywords while relaying
+    them down the pipeline."""
+    return {
+        "subject": str(_keyword_claim.get("keyword") or ""),
+        "primary": str(_keyword_claim.get("primary") or ""),
+        "secondary": str(_keyword_claim.get("secondary") or ""),
+    }
 
 
 def clear_keyword_claim() -> None:
@@ -395,6 +462,8 @@ def clear_keyword_claim() -> None:
     (main.py's server) doesn't get handed the stale keyword again."""
     _keyword_claim["row_index"] = None
     _keyword_claim["keyword"] = None
+    _keyword_claim["primary"] = ""
+    _keyword_claim["secondary"] = ""
 
 
 

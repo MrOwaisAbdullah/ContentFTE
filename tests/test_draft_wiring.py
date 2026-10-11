@@ -115,8 +115,9 @@ def test_content_row_carries_repurpose_fields():
 
     run_stage = importlib.import_module("scripts.run_stage")
 
-    assert run_stage._GENERATED_POSTS_FIELDS[-2:] == ["Repurpose Bundle",
-                                                      "Video Script Seed"]
+    assert run_stage._GENERATED_POSTS_FIELDS[-3:] == ["Repurpose Bundle",
+                                                     "Video Script Seed",
+                                                     "Secondary Keywords"]
     values = run_stage._content_row_values({
         "Title": "T",
         "Generated Content": "body",

@@ -37,6 +37,12 @@ def _resolve_site_id(session, site_slug: str) -> tuple[int | None, str]:
 
 
 def _row_payload(row: KeywordLedger) -> Dict[str, Any]:
+    """The brief task the Brief Agent works from: keyword, metrics, research
+    snapshot, the operator's keyword targets, and the intent template.
+
+    `secondary_keywords` is the raw sheet cell (semicolon/comma separated).
+    It is blank for legacy rows and for keywords the operator never targeted --
+    both are valid, and the brief must not invent targets in either case."""
     return {
         "status": "ok",
         "ledger_id": row.id,
@@ -48,6 +54,11 @@ def _row_payload(row: KeywordLedger) -> Dict[str, Any]:
         "cluster_id": row.cluster_id or "",
         "status_label": row.status,
         "research_snapshot": row.research_snapshot or {},
+        # Keyword targets from the keyword sheet, surfaced at the top level
+        # (research_snapshot is easy for a model to skim past). Blank means the
+        # operator supplied none -- the brief must then not invent any.
+        "primary_keyword": str((row.research_snapshot or {}).get("primary_keyword") or ""),
+        "secondary_keywords": str((row.research_snapshot or {}).get("secondary_keywords") or ""),
         "template": template_for(row.intent),
         "template_text": template_text(row.intent),
     }
@@ -66,9 +77,10 @@ def get_next_brief_task(site_slug: str = "") -> Dict[str, Any]:
 
     Returns:
         {"status": "ok", "ledger_id", "keyword", "intent", "volume",
-         "difficulty", "priority_score", "cluster_id", "research_snapshot",
+         "difficulty", "priority_score", "cluster_id", "status_label",
+         "research_snapshot", "primary_keyword", "secondary_keywords",
          "template", "template_text"} on success, or
-        {"status": "error", "message": "..."} when nothing is briefable
+        {"status": "error", "message": ...} when nothing is briefable
         (ledger empty / site missing). The message tells you to register a
         research row via register_brief_task_tool or wait for triage.
     """

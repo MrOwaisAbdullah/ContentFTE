@@ -53,14 +53,16 @@ SHEET_TARGETS: Dict[str, str] = {
 _RESEARCH_HEADERS = [
     "Keyword/Topic", "Search Volume", "Difficulty", "User Intent",
     "Content Summary", "Source URLs", "Source Titles", "Generated",
+    "Primary Keyword", "Secondary Keywords",
 ]
 _BRIEF_HEADERS = [
     "Keyword/Topic", "Brief Content", "FAQs", "External Source Links",
-    "Content Summary", "Generated",
+    "Content Summary", "Generated", "Secondary Keywords",
 ]
 _POST_HEADERS = [
     "Title", "Generated Content", "FAQs", "Quality Score", "Summary",
-    "Approve/Disapprove", "Published",
+    "Approve/Disapprove", "Published", "Repurpose Bundle",
+    "Video Script Seed", "Secondary Keywords",
 ]
 
 
@@ -99,8 +101,13 @@ def _is_yes(v: Any) -> bool:
 # Row mappers
 # ---------------------------------------------------------------------------
 def map_research_row(row: List[Any], headers: Optional[List[str]] = None) -> Dict[str, Any]:
+    primary = _cell(row, headers, "Primary Keyword", 8)
+    subject = _cell(row, headers, "Keyword/Topic", 0)
     return {
-        "keyword": _cell(row, headers, "Keyword/Topic", 0),
+        "keyword": primary or subject,
+        "subject": subject,
+        "primary_keyword": primary,
+        "secondary_keywords": _cell(row, headers, "Secondary Keywords", 9),
         "volume": _to_int(_cell(row, headers, "Search Volume", 1)),
         "difficulty": _to_float(_cell(row, headers, "Difficulty", 2)),
         "intent": _cell(row, headers, "User Intent", 3, default="informational") or "informational",
@@ -117,6 +124,7 @@ def map_brief_row(row: List[Any], headers: Optional[List[str]] = None) -> Dict[s
         "sources": _cell(row, headers, "External Source Links", 3),
         "summary": _cell(row, headers, "Content Summary", 4),
         "generated": _is_yes(_cell(row, headers, "Generated", 5)),
+        "secondary_keywords": _cell(row, headers, "Secondary Keywords", 6),
     }
 
 
@@ -130,6 +138,7 @@ def map_generated_post_row(row: List[Any], headers: Optional[List[str]] = None) 
         "approved": _is_yes(_cell(row, headers, "Approve/Disapprove", 5))
         or str(_cell(row, headers, "Approve/Disapprove", 5)).strip().lower() == "approved",
         "published": _is_yes(_cell(row, headers, "Published", 6)),
+        "secondary_keywords": _cell(row, headers, "Secondary Keywords", 9),
     }
 
 
@@ -150,14 +159,28 @@ def get_or_create_site(session: Session, slug: str = "") -> Site:
 def mirror_keyword(session: Session, *, keyword: str, volume: int = 0,
                    difficulty: float = 0.0, intent: str = "informational",
                    summary: str = "", generated: bool = False,
-                   site_slug: str = "") -> Optional[KeywordLedger]:
+                   primary_keyword: str = "", secondary_keywords: str = "",
+                   subject: str = "", site_slug: str = "") -> Optional[KeywordLedger]:
     if not (keyword or "").strip():
         return None
     site = get_or_create_site(session, site_slug)
     row = upsert_keyword(session, site.id, keyword.strip(), intent=intent,
                          volume=volume, difficulty=difficulty,
-                         research_snapshot={"summary": summary})
-    # research_data's Generated=Yes means the brief was produced → briefed.
+                         research_snapshot={
+                             "summary": summary,
+                             # The topic the research was actually about, kept
+                             # separate from the keyword it is optimized for
+                             # (they differ on rows that carry a YT
+                             # transcript or a long title-style topic).
+                             "subject": subject,
+                             # Keyword targets the operator supplied on the
+                             # keyword sheet. They ride in research_snapshot
+                             # (JSON, so no schema migration) and are read back
+                             # by get_next_brief_task -> brief -> generation.
+                             "primary_keyword": primary_keyword,
+                             "secondary_keywords": secondary_keywords,
+                         })
+    # research_data's Generated=Yes means the brief was produced -> briefed.
     if generated and row.status in ("researched", "approved", "queued"):
         row.status = "briefed"
         session.commit()
@@ -166,7 +189,7 @@ def mirror_keyword(session: Session, *, keyword: str, volume: int = 0,
 
 def mirror_brief(session: Session, *, keyword: str, brief_content: str = "",
                  faqs: str = "", sources: str = "", summary: str = "",
-                 generated: bool = False,
+                 generated: bool = False, secondary_keywords: str = "",
                  site_slug: str = "") -> Optional[KeywordLedger]:
     if not (keyword or "").strip():
         return None
@@ -183,6 +206,7 @@ def mirror_brief(session: Session, *, keyword: str, brief_content: str = "",
         "faqs": faqs,
         "sources": sources,
         "summary": summary,
+        "secondary_keywords": secondary_keywords,
     }
     if generated and row.status in ("researched", "approved", "queued"):
         row.status = "briefed"
@@ -194,6 +218,7 @@ def mirror_brief(session: Session, *, keyword: str, brief_content: str = "",
 def mirror_article(session: Session, *, title: str, content: str = "",
                    faqs: str = "", quality_score: float = 0.0, summary: str = "",
                    approved: bool = False, published: bool = False,
+                   secondary_keywords: str = "",
                    site_slug: str = "") -> Optional[Article]:
     if not (title or "").strip():
         return None
@@ -208,6 +233,10 @@ def mirror_article(session: Session, *, title: str, content: str = "",
     art.content_md = content or art.content_md
     art.scores = {**(art.scores or {}), "quality": quality_score}
     art.meta = {**(art.meta or {}), "faqs": faqs, "summary": summary}
+    if secondary_keywords:
+        # Carried so the publish step can store the operator's keyword targets
+        # on the delivered document (content_briefs is gone by then).
+        art.meta = {**art.meta, "secondary_keywords": secondary_keywords}
     art.status = status
     session.commit()
     session.refresh(art)
