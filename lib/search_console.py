@@ -17,10 +17,14 @@ import requests
 from google.auth.transport.requests import Request
 from google.oauth2.service_account import Credentials
 
+from lib.site_env import SEARCH_CONSOLE_SITE_URL
+
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
-SITE_URL = "https://owaisabdullah.dev/"
+# Default GSC property = this instance's site (site_env); a domain property
+# ("sc-domain:...") or per-site override goes in SEARCH_CONSOLE_SITE_URL.
+SITE_URL = SEARCH_CONSOLE_SITE_URL
 
 _cached_token: Optional[str] = None
 _token_creds: Optional[Credentials] = None

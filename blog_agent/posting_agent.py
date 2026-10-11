@@ -10,6 +10,7 @@ import json
 import asyncio
 import copy
 from blog_agent.custom_runner import FallbackAgentRunner
+from lib.site_env import SITE_HOST
 from lib.run_result_utils import run_looks_failed
 from lib.geo import extract_tldr
 # Jev general helpers — category taxonomy Choice + tool-call gate (general SEO pipeline)
@@ -245,7 +246,7 @@ posting_agent = Agent(
     - Step 3 (calling post_to_sanity_tool) is REQUIRED - you MUST do this
     - After posting succeeds, do steps 4 and 5 to update sheets
     - If you skip calling post_to_sanity_tool, you have completely failed
-    """,
+    """.replace("owaisabdullah.dev", SITE_HOST),
     tools=[post_to_sanity_tool, manage_sheet_data_tool, jev_gate_tool_call_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-3.1-flash-lite"),

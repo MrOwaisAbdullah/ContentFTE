@@ -12,6 +12,7 @@ from tools.ledger_tool import (get_next_brief_task_tool, register_brief_task_too
 from tools.seo_tool import get_keyword_metrics_tool
 from tools.offer_tool import get_offer_catalog_tool
 from tools.linkguard_tool import check_link_hygiene_tool, fetch_rescue_links_tool
+from lib.site_env import SITE_HOST
 from tools.tactics_tool import (get_skill_pack_tool, build_paa_page_tool,
                                 build_comparison_page_tool, plan_keyword_cluster_tool)
 from tools.search_tools import web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_url_title
@@ -189,7 +190,7 @@ content_evaluation_agent = Agent(
      - `jev_check_pii(text)` — Noul contains_pii pre-check before sending content to external tools.
 
      ```
-     """,
+     """.replace("owaisabdullah.dev", SITE_HOST),
     tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
     # Cross-provider evaluation: DeepSeek evaluates Gemini-written content
     # and vice versa, preventing same-provider bias. DeepSeek V4 Flash is
@@ -445,7 +446,7 @@ content_generator_agent = Agent(
     "errors": [],
     "warnings": []
     }
-    """,
+    """.replace("owaisabdullah.dev", SITE_HOST),
     tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, fetch_rescue_links_tool, check_link_hygiene_tool, factcheck_gate_tool, jev_rank_internal_links_tool, jev_verify_external_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, get_offer_catalog_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
     handoff_description="Use the given brief to create a high quality seo friendly Blog content, and use evaluation tools for feedback and improve the content using it.",
     hooks=MyAgentHooks(),
@@ -512,7 +513,7 @@ post_editor_agent = Agent(
       edit as-is rather than blocking the edit on a broken tool.
 
     Return ONLY the complete revised Markdown content -- no preamble, no explanation, no code fence, no commentary about what changed.
-    """,
+    """.replace("owaisabdullah.dev", SITE_HOST),
     tools=[get_author_context_tool, fetch_internal_links_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the edited content to check for quality issues in the section you changed")],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),

@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from lib import image_format
+from lib.site_env import SITE_HOST
 from lib.jev import JevError, call_jev_sync
 from lib.run_result_utils import loads_lenient
 
@@ -211,7 +212,7 @@ _JEV_STYLE_INSTRUCTIONS = (
     "focal point, and minimal on-image text? Penalize flat stock photography, watercolor, "
     "hand-drawn sketch, flat corporate vector illustration, cluttered floating dashboards, "
     "oversaturated neon everywhere, watermarks, and misspelled or garbled text."
-)
+).replace("owaisabdullah.dev", SITE_HOST)
 
 _JEV_TOPIC_INSTRUCTIONS = (
     "Does the image clearly represent the article's topic? A viewer should connect the "

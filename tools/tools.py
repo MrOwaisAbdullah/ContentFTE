@@ -12,6 +12,7 @@ from lib.sanity_adapter import SanityAdapter
 from lib import image_vision
 from lib import image_format
 from lib import image_provenance
+from lib.site_env import AUTHOR_PROFILE_API_URL, SITE_HOST
 from tools.sheet_tool import log_image_usage
 from dotenv import load_dotenv
 import tempfile
@@ -172,8 +173,9 @@ def get_brand_context_tool():
 # The portfolio site's own API is the source of truth for anything that
 # changes over time (current job, bio, skills) -- hardcoding that here would
 # just go stale. Only the brand-voice constants below (tone, banned words,
-# CTAs, etc.) stay static, since those are a style guide, not biographical fact.
-AUTHOR_PROFILE_API_URL = "https://owaisabdullah.dev/api/profile"
+# CTAs, etc.) stay static, since they are a style guide, not biographical fact.
+# (AUTHOR_PROFILE_API_URL comes from lib.site_env: env override, default =
+# this instance's SITE_BASE_URL + /api/profile.)
 
 
 # Owais Abdullah – Personal Brand Context
@@ -890,7 +892,7 @@ Generic stock imagery, repetitive compositions, the same robot mascot across pos
 
 **Article URL or summary:** [INSERT URL OR SUMMARY]
 
-**Brand logo or reference image:** [ATTACH IF RELEVANT]'''
+**Brand logo or reference image:** [ATTACH IF RELEVANT]'''.replace("owaisabdullah.dev", SITE_HOST)
 
 # Exact slot markers from the original manual template, replaced per post.
 _TITLE_SLOT = "[INSERT TITLE]"
@@ -949,7 +951,7 @@ _HEADLINE_CLOSING_RULE = '''**FINAL RULE - this overrides every instruction abov
 - The image may carry exactly ONE piece of text: a short headline (2-5 words) taken from the article title below.
 - Never render a URL, the domain owaisabdullah.dev, a site name, an author name, a signature, a logo, a watermark, a badge or a corner label.
 - No subtitle, no body copy, no UI text, no prices or numbers, no credits.
-- Any surface that would normally hold a logo or URL stays blank or abstract.'''
+- Any surface that would normally hold a logo or URL stays blank or abstract.'''.replace("owaisabdullah.dev", SITE_HOST)
 
 # Cap on an agent-supplied scene concept so a model that tries to write a
 # whole replacement prompt cannot blow past the flux-2 prompt limits.

@@ -43,6 +43,8 @@ from typing import Any, Dict, Literal, Optional, Union
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from lib.site_env import SITE_BASE_URL
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -142,7 +144,7 @@ def _build_headers() -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {_get_api_key()}",
         "Content-Type": "application/json",
-        "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "https://owaisabdullah.dev"),
+            "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", SITE_BASE_URL),
         "X-Title": os.environ.get("OPENROUTER_APP_TITLE", "ContentFTE"),
     }
 

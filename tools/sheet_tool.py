@@ -6,6 +6,8 @@ from google.oauth2.service_account import Credentials
 from typing import List, TypedDict, Optional, Union, Any, Dict, Literal
 import logging
 import time
+
+from lib.site_env import SITE_PREFIX
 from agents import function_tool
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file if present
@@ -823,7 +825,9 @@ def validate_row(row, row_index):
     if not 4 <= h2_count <= 6:
         errors.append(f"Found {h2_count} H2 sections, expected 4–6")
 
-    internal_links = len(re.findall(r'\[.+?\]\(https://owaisabdullah\.dev/blog/.+?\)', content)) + len(re.findall(r'\[.+?\]\(/blog/.+?\)', content))
+    _internal_absolute = re.findall(
+        rf"\[.+?\]\({re.escape(SITE_PREFIX)}.+?\)", content)
+    internal_links = len(_internal_absolute) + len(re.findall(r'\[.+?\]\(/blog/.+?\)', content))
     if not 2 <= internal_links <= 3:
         errors.append(f"Found {internal_links} internal links, expected 2–3")
 

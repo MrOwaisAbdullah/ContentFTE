@@ -44,6 +44,7 @@ from agents.run import set_default_agent_runner
 from blog_agent.blog_agents import brief_agent, content_generator_agent, post_editor_agent, freshness_check_agent, repurposing_agent, repurpose_angle_agent, feedback_pattern_agent
 from blog_agent.custom_runner import FallbackAgentRunner
 from lib.run_result_utils import loads_lenient
+from lib.site_env import SITE_HOST, SITE_PREFIX
 from blog_agent.posting_agent import run_posting_workflow
 from blog_agent.research_agent import combined_research_workflow, run_topic_discovery_workflow
 from tools.sheet_tool import manage_sheet_data, ensure_worksheet_exists
@@ -1865,7 +1866,7 @@ async def run_search_performance_review() -> None:
         print(f"[search_performance_review] {msg}")
         _notify(f"📊 Search performance review: {msg}")
         return
-    page_url = f"https://owaisabdullah.dev/blog/{slug}"
+    page_url = f"{SITE_PREFIX}{slug}"
 
     print(f"[search_performance_review] Checking Search Console performance for '{title}' ({page_url}).")
     perf = get_page_performance(page_url, days=28)
@@ -2124,7 +2125,7 @@ async def run_log_coverage() -> None:
 
     rel_paths = [os.path.relpath(p, _REPO_ROOT) for p in new_files]
     _run_git("config", "user.name", "seo-blog-agent-pipeline")
-    _run_git("config", "user.email", "pipeline@owaisabdullah.dev")
+    _run_git("config", "user.email", f"pipeline@{SITE_HOST}")
     add_result = _run_git("add", *rel_paths)
     if add_result.returncode != 0:
         print(f"[log_coverage] git add failed: {add_result.stderr}")

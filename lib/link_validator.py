@@ -4,10 +4,10 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 import requests
 
+from lib.site_env import SITE_HOST, SITE_PREFIX
+
 logger = logging.getLogger(__name__)
 
-SITE_HOST = "owaisabdullah.dev"
-SITE_PREFIX = "https://owaisabdullah.dev/blog/"
 REL_PREFIX = "/blog/"
 MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+|/blog/[^\s\)]+)\)")
 

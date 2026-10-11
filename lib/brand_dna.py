@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from lib.db import BrandProfile
 from lib.run_result_utils import loads_lenient
+from lib.site_env import SITE_BASE_URL
 
 DEFAULT_PROFILE = {
     "tone_sliders": {"formal_casual": 0.5, "terse_expansive": 0.5},
@@ -83,8 +84,7 @@ def _default_llm(prompt: str, *, model: str | None = None) -> str:
         DISTILL_ENDPOINT, data=body, method="POST",
         headers={"Content-Type": "application/json; charset=utf-8",
                  "Authorization": f"Bearer {key}",
-                 "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL",
-                                                "https://owaisabdullah.dev"),
+                 "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", SITE_BASE_URL),
                  "X-Title": os.environ.get("OPENROUTER_APP_TITLE",
                                            "ContentFTE")})
     with urllib.request.urlopen(req, timeout=90) as resp:

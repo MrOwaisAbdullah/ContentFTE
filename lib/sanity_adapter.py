@@ -6,6 +6,8 @@ from datetime import datetime
 import logging
 import json
 import uuid
+
+from lib.site_env import SITE_PREFIX
 import re
 import urllib.parse
 from lib import image_format
@@ -177,7 +179,7 @@ class SanityAdapter:
             is_relevant = any(word in title or word in slug for word in topic_words)
             
             # Include the post regardless of relevance (better to have some links than none)
-            validated_links.append({"title": post["title"], "slug": f"https://owaisabdullah.dev/blog/{post['slug']}", "summary": summary})
+            validated_links.append({"title": post["title"], "slug": f"{SITE_PREFIX}{post['slug']}", "summary": summary})
             if not is_relevant:
                 logger.info(f"Including potentially less relevant post: title='{post['title']}', slug='{post['slug']}'")
         
@@ -1228,7 +1230,7 @@ class SanityAdapter:
                 logger.warning("Failed to resolve any category references.")
 
             # 7. Construct Document Object
-            full_url = f"https://owaisabdullah.dev/blog/{slug}"
+            full_url = f"{SITE_PREFIX}{slug}"
 
             # Deterministic, slug-derived _id: create_document uses Sanity's
             # createIfNotExists mutation keyed on this, so publishing the same
