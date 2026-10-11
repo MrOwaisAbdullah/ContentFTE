@@ -71,17 +71,29 @@
         "default": "./contentfte-prose.css"
       }
     },
+    "./sanity": {
+      "types": "./sanity/index.ts",
+      "default": "./sanity/index.ts"
+    },
+    "./sanity/seo": {
+      "types": "./sanity/lib/seo.ts",
+      "default": "./sanity/lib/seo.ts"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "renderer": [
         "./dist/renderer.d.ts"
+      ],
+      "sanity": [
+        "./sanity/index.ts"
       ]
     }
   },
   "files": [
     "dist",
+    "sanity",
     "contentfte.ts",
     "ContentFTEArticle.tsx",
     "contentfte-prose.css",

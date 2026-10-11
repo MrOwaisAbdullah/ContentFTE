@@ -1,0 +1,22 @@
+{
+  // Typechecks the Sanity package. Only meaningful where the Sanity
+  // dependencies are installed -- i.e. in the consuming site repo, which has
+  // `sanity`, `next-sanity` and `@sanity/*`. The SDK package itself does not
+  // depend on them (they are the studio's peer deps), so this is NOT wired
+  // into `npm test`; run it from a site repo after copying the folder:
+  //
+  //   cp -r node_modules/content-fte/sanity ./sanity
+  //   npx tsc --noEmit -p sanity/tsconfig.json
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

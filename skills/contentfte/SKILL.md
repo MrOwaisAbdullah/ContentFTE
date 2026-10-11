@@ -27,15 +27,19 @@ The npm package `content-fte` has three entry points:
 | :--- | :--- |
 | `content-fte` | `ContentFTEClient` — typed client (fetch, retry/backoff, idempotency keys) |
 | `content-fte/renderer` | `<ContentFTEArticle>` React component + `ContentFTEPayload` type |
+| `content-fte/sanity` | Sanity schema + `resolveSeoTitle`/`resolveSeoDescription` + webhook route (for Sanity stores) |
 | `content-fte/contentfte-prose.css` | Framework-agnostic typography (wrapper class `cfte-prose`) |
 
 The engine returns a **unified payload** at `GET /sdk/v1/articles/{id}/content`:
 `title, slug, url, excerpt, html, markdown, markdown_alternate, schema{article, faq}, meta`.
 `html` is pre-rendered by the engine; `markdown` is the source; `markdown_alternate`
 is the agent-ready `.md`; `schema` is Article + FAQPage JSON-LD.
+`seo{title, description, focus_keyword, tldr}` carries the SEO/AEO fields — read
+them instead of parsing them out of the markdown.
 
 > Full endpoint + MCP tool list: `references/api.md`.
 > Per-stack code: `references/stacks.md`.
+> Sanity schema, SEO-field fallbacks, publish blockers: `references/sanity.md`.
 
 ## Before Implementation
 
@@ -60,6 +64,9 @@ knowledge is in this skill.
   Continue below.
 - **AI agent (Claude Code, etc.)?** → connect over MCP instead of writing a
   client. (See `references/stacks.md#ai-agent-mcp`.)
+- **Sanity store?** → install the schema + SEO-field fallback rule and check
+  the publish blockers (mainImage/alt, category). (See
+  `references/sanity.md`.)
 
 ### 1. Install
 ```bash
@@ -142,6 +149,14 @@ JSON-LD — sanitized. Other stacks use the engine's `html` + `faq_html`, or run
 - **Assuming push for custom sites** — only `site_type="wordpress"` pushes; custom
   sites pull. Register the site with the correct `site_type`.
 - **Ignoring the payload `markdown_alternate`** — it's free GEO/LLM value; serve it.
+- **Parsing the TL;DR out of the markdown** — read `payload.seo.tldr` (and, on
+  Sanity, the post's `tldr` field) instead; the 40-60 word answer blockquote
+  is already stored as its own value by the engine.
+- **A Sanity post stuck in Draft** — check mainImage + alt (both required),
+  a category, and summary. Those are the only required fields; see
+  `references/sanity.md` before debugging Studio.
+- **Rendering hardcoded SEO fields for posts written before they existed** —
+  fall back: `seoTitle || title`, `seoDescription || summary`.
 - **`content.rendered` vs raw** — for Gutenberg block checks read `content.raw`.
 
 ## Scope
@@ -157,3 +172,4 @@ generation prompts, or manage the engine's database.
 | :--- | :--- |
 | `references/stacks.md` | Full code per stack (Next, Astro, Vue, Svelte, HTML, WordPress, MCP) |
 | `references/api.md` | REST routes, MCP tools, payload shape, lifecycle, auth |
+| `references/sanity.md` | Sanity schema, SEO-field fallback rule, TL;DR field, publish blockers (mainImage/alt) |
