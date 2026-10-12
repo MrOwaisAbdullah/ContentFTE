@@ -91,7 +91,7 @@ _sdk_cors_origins = [o.strip() for o in
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_sdk_cors_origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Idempotency-Key"],
     max_age=600,

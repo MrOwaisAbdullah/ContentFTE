@@ -1,0 +1,121 @@
+import "server-only";
+import { engineApiKey, engineBaseUrl } from "./env";
+
+export class EngineError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function engine<T = unknown>(
+  path: string,
+  init?: RequestInit & { json?: unknown },
+): Promise<T> {
+  const { json, headers, ...rest } = init ?? {};
+  const res = await fetch(`${engineBaseUrl()}/sdk/v1${path}`, {
+    ...rest,
+    cache: "no-store",
+    headers: {
+      ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(engineApiKey() ? { "X-Site-Key": engineApiKey() } : {}),
+      ...(headers as Record<string, string> | undefined),
+    },
+    body: json !== undefined ? JSON.stringify(json) : (rest.body as BodyInit | undefined),
+  });
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+  if (!res.ok) {
+    const detail =
+      (data as { detail?: string } | null)?.detail ||
+      (data as { error?: string } | null)?.error ||
+      text.slice(0, 300);
+    throw new EngineError(res.status, `${res.status} ${detail}`);
+  }
+  return data as T;
+}
+
+export interface SiteInfo {
+  id: number;
+  slug: string;
+  name: string;
+  site_type: string;
+  base_url: string;
+  publish_mode?: string;
+}
+
+export interface SiteList {
+  sites: SiteInfo[];
+  count: number;
+}
+
+export interface QueueRow {
+  id: number;
+  keyword: string;
+  status: string;
+  intent: string;
+  volume: number;
+  difficulty: number;
+  priority_score: number;
+  cluster_id: string;
+  target_url: string;
+  subject: string;
+  added_at: string | null;
+}
+
+export interface QueueView {
+  site: string;
+  counts: Record<string, number>;
+  queue: QueueRow[];
+  count: number;
+}
+
+export interface BriefPeek {
+  keyword?: string;
+  intent?: string;
+  status?: string;
+  priority_score?: number;
+  research_snapshot?: Record<string, unknown>;
+  hint?: string;
+  error?: string;
+}
+
+export interface ArticleListItem {
+  id: number;
+  site_id: number;
+  site_slug: string;
+  title: string;
+  slug: string;
+  status: string;
+  created_at: string | null;
+  published_at: string | null;
+  cost_usd: number | null;
+}
+
+export interface ArticleList {
+  articles: ArticleListItem[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ArticleDetail {
+  id: number;
+  site_id: number;
+  title: string;
+  slug: string;
+  status: string;
+  scores: Record<string, unknown>;
+  cost_usd: number | null;
+  keyword_id: number | null;
+  markdown?: string;
+  html?: string;
+  meta?: Record<string, unknown>;
+}

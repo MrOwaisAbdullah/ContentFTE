@@ -7,9 +7,12 @@ shared-mode slug guard, `scripts/provision_tenant.py`, Discord channel-list) lan
 `tools/sheet_tool.get_gspread_client`, keyword-tool pointer to the SDK brief
 endpoint) landed. **Phase 4 engine backing landed**: `GET /sites/{slug}/queue`,
 `GET /sites/{slug}/brief` (read-only), `PATCH /articles/{id}/content`,
-`POST /run/{stage}` — the console's REST surface is complete; the console UI
-itself (§7 Q1–Q2) not started. Phase 2 rest = read rewiring off `STORE_READ_SOURCE` + site-#1
-flip (gated on live `verify_cutover.py` drift report); Phase 3 + console UI not started.
+`POST /run/{stage}` — the console's REST surface is complete; **console UI landed**
+(`console/` Next.js app: login/session, dashboard, queue, articles list/detail
+with edit + approve/publish/refresh, stage triggers — §7 Q1–Q6 answered 2026-10-12).
+Phase 2 rest = read rewiring off
+`STORE_READ_SOURCE` + site-#1 flip (gated on live `verify_cutover.py` drift report);
+Phase 3 (provision instance 2) not started.
 Supersedes the "second Google instance + sheet provisioning" approach discussed
 earlier the same day: the user decision is **direct Postgres** — site #2 has no
 Google Sheets at all.
@@ -193,14 +196,20 @@ mutations in `'use server'` actions with revalidate). No user tables.
 Order: **Phase 1 → Phase 2 → Phase 3 → Phase 4** (console can start after Phase 1
 against instance #1; Phase 2's 3c/3a make it honest).
 
-Open questions (answer before/during the marked phase):
+Open questions (answered 2026-10-12):
 
-1. Console location: `console/` in this repo vs separate repo? (Phase 4 start)
-2. Console MVP scope: view+approve only, or edit + queue + run-triggers day one? (Phase 4)
-3. Keep Discord approval for site #1, or retire it once the console ships? (3c)
-4. Site #2 hosting: same machine second process, or its own VPS/Dokploy? (Phase 3)
-5. `lib/db.py` schema sign-off before any cutover ALTERs (TASKS open question; none planned for v1).
-6. Shared-bot v2 (guild→tenant lookup for SaaS) is deferred to the SaaS phase — v1 ships channel-list routing only. Confirm timing.
+1. Console location: **`console/` in this repo** (Next.js 15 App Router +
+   Tailwind; shares env + `/sdk/v1` with the engine).
+2. Console MVP scope: **the full §5 table** (dashboard, queue, articles
+   view/edit, approve/publish/refresh/stage-images, run-stage triggers).
+3. Discord: **keep both** — site #1 keeps reaction approvals; the console
+   becomes the primary control surface; Discord stays a parallel path.
+4. Site #2 hosting: **same machine, second process** (own checkout/env;
+   VPS later if needed).
+5. `lib/db.py` schema: no ALTERs planned for v1 — current schema suffices
+   (see §3 out-of-scope note); revisit before any cutover ALTER.
+6. Shared-bot v2 (guild→tenant lookup): confirmed deferred to the SaaS
+   phase; v1 ships channel-list routing only.
 
 ## References
 
