@@ -230,12 +230,13 @@ Logs screen reads that on both instances; site #1 keeps its sheets too.
 | **Briefs** (content_briefs sheet) | `GET /sdk/v1/sites/{slug}/briefs` — **new** (rows with `research_snapshot.brief`; the existing `…/brief` peek stays as "next briefable") |
 | **Logs** (usage + audit sheets) | `GET /sdk/v1/logs` — **new** (`audit_log` + `cost_ledger`, kind filter) |
 | **Content** list + detail (view markdown, scores, FAQ) | `GET /sdk/v1/articles` (rows + quality/summary), `GET /sdk/v1/articles/{id}`, `…/content` |
+| **New article** (add keyword from the console — closes "posts manageable from frontend") | `POST /sdk/v1/articles` (exists — binds/creates the ledger row, §5.16 lineage, article lands `briefed`; console redirects to the detail screen where Generate/Approve/Publish continue the flow) |
 | **Edit** content | `PATCH /sdk/v1/articles/{id}/content` — **landed** (updates `content_md`, edits logged to `meta.edit_log` + audit; approved → reopened to generated, published keeps status; no re-gate — regenerate is the re-score path) |
 | **Approve / reject** | `POST /sdk/v1/articles/{id}/approve` (exists) |
 | Publish / refresh / stage images | `POST …/publish`, `…/refresh`, `…/stage-images` (exist) |
 | WP + Elementor build | existing `/sdk/v1/wp/*`, `/sdk/v1/elementor/*` |
 | Run a stage | `POST /sdk/v1/run/{stage}` — **landed** (wraps `run_stage.STAGE_HANDLERS` in a background task; 404 unknown, 409 overlap, 503 if the engine can't import) |
-| Sites screen (create/upsert rows) | `POST /sdk/v1/sites` (upsert — existing) |
+| Sites screen (create/upsert rows) | `POST /sdk/v1/sites` (upsert — existing; **update fix**: re-submitting an existing slug now applies `name`/`site_type`/`base_url`, it was create-only so "edit site" silently no-opped) |
 | Instances screen (add/edit/remove/switch) | console-local `instances.json` merged with `CONSOLE_INSTANCES` env (no engine call) |
 
 Auth: operator password → session cookie; engine `API_KEY` stays server-side

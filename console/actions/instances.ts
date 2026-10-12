@@ -58,12 +58,19 @@ export async function createSiteAction(formData: FormData) {
     redirect("/sites?err=" + encodeURIComponent("slug and base_url are required"));
   }
   try {
-    await engine("/sites", { method: "POST", json: { slug, name, site_type, base_url } });
+    const res = await engine<{ created?: boolean }>("/sites", {
+      method: "POST",
+      json: { slug, name, site_type, base_url },
+    });
+    revalidatePath("/sites");
+    redirect(
+      res?.created === false
+        ? `/sites?updated=${encodeURIComponent(slug)}`
+        : `/sites?created=${encodeURIComponent(slug)}`,
+    );
   } catch (e) {
     redirect("/sites?err=" + encodeURIComponent(errorOf(e)));
   }
-  revalidatePath("/sites");
-  redirect(`/sites?created=${encodeURIComponent(slug)}`);
 }
 
 export interface EnvResult {

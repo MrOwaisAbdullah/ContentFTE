@@ -96,7 +96,7 @@ class ArticlePublish(BaseModel):
 class SiteUpsert(BaseModel):
     slug: str
     name: str = ""
-    site_type: str = "custom"  # custom | wordpress
+    site_type: str = ""  # custom | wordpress; empty = keep existing (create defaults to custom)
     base_url: str = ""
 
 

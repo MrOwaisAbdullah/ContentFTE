@@ -114,8 +114,10 @@ class ContentFTEClient:
         qs = f"?site_slug={site_slug}&status={status}&limit={limit}&offset={offset}"
         return self._request("GET", f"/sdk/v1/articles{qs}")
 
-    def upsert_site(self, slug: str, name: str = "", site_type: str = "custom",
+    def upsert_site(self, slug: str, name: str = "", site_type: str = "",
                     base_url: str = "") -> dict:
+        """Create a site, or update name/site_type/base_url of an existing
+        slug (empty strings leave fields untouched)."""
         return self._request("POST", "/sdk/v1/sites",
                              json={"slug": slug, "name": name,
                                    "site_type": site_type, "base_url": base_url})

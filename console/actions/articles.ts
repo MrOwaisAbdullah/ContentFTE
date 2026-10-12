@@ -14,6 +14,36 @@ function errorOf(e: unknown): string {
   return e instanceof EngineError ? e.message : `unexpected error: ${String(e)}`;
 }
 
+// "Add keyword" on the Keywords (ledger) tab — mirrors adding a row in the
+// sheet: POST /articles binds/creates the ledger row (§5.16 lineage) and the
+// article lands `briefed`, then we open its detail to continue Generate →
+// Approve → Publish.
+export async function createArticleAction(formData: FormData) {
+  await requireSession();
+  const kwBase = "/articles/keywords";
+  const keyword = String(formData.get("keyword") || "").trim();
+  const title = String(formData.get("title") || "").trim();
+  const site = String(formData.get("site") || "").trim();
+  if (!keyword) redirect(`${kwBase}?err=${encodeURIComponent("keyword is required")}`);
+  if (!site) {
+    redirect(
+      `${kwBase}?err=${encodeURIComponent("no site — create one on the Sites screen first")}`,
+    );
+  }
+  try {
+    const res = await engine<{ id: number; status: string }>(`/articles`, {
+      method: "POST",
+      json: { site_slug: site, keyword, brief: title ? { title } : {} },
+    });
+    revalidatePath("/");
+    revalidatePath("/articles");
+    revalidatePath(kwBase);
+    redirect(`/articles/${res.id}`);
+  } catch (e) {
+    redirect(`${kwBase}?err=${encodeURIComponent(errorOf(e))}`);
+  }
+}
+
 export async function approveArticleAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));

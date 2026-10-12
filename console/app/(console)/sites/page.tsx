@@ -8,10 +8,10 @@ export const dynamic = "force-dynamic";
 export default async function SitesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ err?: string; created?: string }>;
+  searchParams: Promise<{ err?: string; created?: string; updated?: string }>;
 }) {
   await requireSession();
-  const { err, created } = await searchParams;
+  const { err, created, updated } = await searchParams;
   const inst = await currentInstance();
 
   let sites: SiteList | null = null;
@@ -35,6 +35,11 @@ export default async function SitesPage({
       {created && (
         <p className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
           Site &quot;{created}&quot; created.
+        </p>
+      )}
+      {updated && (
+        <p className="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-300">
+          Site &quot;{updated}&quot; updated.
         </p>
       )}
       {err && (
@@ -112,7 +117,7 @@ export default async function SitesPage({
             />
           </label>
           <button className="mt-1 w-fit rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500">
-            Create site
+            Save site (existing slug updates)
           </button>
         </form>
       </section>

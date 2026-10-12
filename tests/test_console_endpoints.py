@@ -350,3 +350,56 @@ def test_list_articles_carries_quality_and_summary():
     assert row["quality"] == 92.5
     assert row["summary"] == "A strong tie guide."
     assert row["status"] == "approved"
+
+
+def test_upsert_site_updates_existing_row():
+    from sdk import service
+
+    first = service.upsert_site("up-site", name="Old Name", site_type="wordpress",
+                                base_url="http://old.test")
+    assert first["created"] is True
+    assert first["updated"] is False
+
+    second = service.upsert_site("up-site", name="New Name", site_type="custom",
+                                 base_url="http://new.test")
+    assert second["created"] is False
+    assert second["updated"] is True
+    row = {s["slug"]: s for s in service.list_sites()["sites"]}["up-site"]
+    assert row["name"] == "New Name"
+    assert row["site_type"] == "custom"
+    assert row["base_url"] == "http://new.test"
+
+    # empty strings leave every field untouched (no clobber from defaults)
+    third = service.upsert_site("up-site")
+    assert third["created"] is False
+    assert third["updated"] is False
+    row = {s["slug"]: s for s in service.list_sites()["sites"]}["up-site"]
+    assert row["name"] == "New Name"
+    assert row["base_url"] == "http://new.test"
+
+    # create still defaults site_type when none is given
+    service.upsert_site("fresh-site")
+    fresh = {s["slug"]: s for s in service.list_sites()["sites"]}["fresh-site"]
+    assert fresh["site_type"] == "custom"
+
+
+def test_sites_route_update_keeps_site_type_when_omitted():
+    from sdk import service
+
+    client = _client()
+    created = client.post("/sdk/v1/sites", json={"slug": "api-site", "name": "One",
+                                                 "site_type": "wordpress",
+                                                 "base_url": "http://wp.test"})
+    assert created.status_code == 200
+    assert created.json()["created"] is True
+
+    # name-only update: site_type omitted from the body must not downgrade
+    # the row back to the model default
+    updated = client.post("/sdk/v1/sites", json={"slug": "api-site", "name": "Two"})
+    assert updated.status_code == 200
+    assert updated.json()["created"] is False
+    assert updated.json()["updated"] is True
+    row = {s["slug"]: s for s in service.list_sites()["sites"]}["api-site"]
+    assert row["name"] == "Two"
+    assert row["site_type"] == "wordpress"
+    assert row["base_url"] == "http://wp.test"

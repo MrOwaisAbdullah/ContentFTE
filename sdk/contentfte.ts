@@ -210,7 +210,9 @@ export class ContentFTEClient {
     return this.request("GET", `/sdk/v1/articles?${qs}`);
   }
 
-  async upsertSite(slug: string, name = "", siteType = "custom", baseUrl = "") {
+  /** Create a site, or update name/site_type/baseUrl of an existing slug
+   *  (empty values leave fields untouched; create defaults to "custom"). */
+  async upsertSite(slug: string, name = "", siteType = "", baseUrl = "") {
     return this.request("POST", "/sdk/v1/sites", { slug, name, site_type: siteType, base_url: baseUrl });
   }
 }

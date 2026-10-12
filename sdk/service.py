@@ -89,21 +89,43 @@ def list_sites() -> dict:
         s.close()
 
 
-def upsert_site(slug: str, name: str = "", site_type: str = "custom",
+def upsert_site(slug: str, name: str = "", site_type: str = "",
                 base_url: str = "") -> dict:
+    """Create a site row, or update the named fields of an existing one.
+
+    Empty strings mean "leave alone" on update (create falls back:
+    name → slug title, site_type → "custom"). Before this, an existing
+    slug silently kept its old row — so the console Sites screen's edit
+    (spec §5 "create/upsert rows") was a no-op.
+    """
     init_db()
     s = get_session()
     try:
         site = _site_by_slug(s, slug)
         created = False
+        updated = False
         if site is None:
-            site = Site(slug=slug, name=name or slug.title(), site_type=site_type,
-                        base_url=base_url)
+            site = Site(slug=slug, name=name or slug.title(),
+                        site_type=site_type or "custom", base_url=base_url)
             s.add(site)
             s.commit()
             s.refresh(site)
             created = True
-        return {"id": site.id, "slug": site.slug, "created": created}
+        else:
+            if (name or "").strip():
+                site.name = name
+                updated = True
+            if (site_type or "").strip():
+                site.site_type = site_type
+                updated = True
+            if (base_url or "").strip():
+                site.base_url = base_url
+                updated = True
+            if updated:
+                s.commit()
+                s.refresh(site)
+        return {"id": site.id, "slug": site.slug, "created": created,
+                "updated": updated}
     finally:
         s.close()
 
