@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { engine, ArticleList, BriefPeek, QueueView, SiteList } from "@/lib/engine";
+import {
+  ArticleList,
+  BriefPeek,
+  engine,
+  QueueView,
+  SiteHealth,
+  SiteList,
+} from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +23,7 @@ export default async function DashboardPage() {
   let queue: QueueView | null = null;
   let brief: BriefPeek | null = null;
   let articles: ArticleList | null = null;
+  let health: (SiteHealth | null)[] = [];
   let error = "";
   try {
     sites = await engine<SiteList>("/sites");
@@ -24,6 +32,15 @@ export default async function DashboardPage() {
       queue = await engine<QueueView>(`/sites/${encodeURIComponent(slug)}/queue?limit=5`);
       brief = await engine<BriefPeek>(`/sites/${encodeURIComponent(slug)}/brief`);
       articles = await engine<ArticleList>("/articles?limit=8");
+      // Live probes run per site in parallel; a failed/unreachable site
+      // renders as a warning row instead of failing the whole dashboard.
+      health = await Promise.all(
+        sites.sites.map((s) =>
+          engine<SiteHealth>(`/sites/${encodeURIComponent(s.slug)}/health`).catch(
+            () => null,
+          ),
+        ),
+      );
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
@@ -93,6 +110,51 @@ export default async function DashboardPage() {
           ) : null}
         </div>
       </section>
+
+      {sites.sites.length > 0 ? (
+        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
+          <h2 className="mb-3 text-sm font-medium text-slate-400">Site health</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {sites.sites.map((s, i) => {
+              const h = health[i];
+              if (!h) {
+                return (
+                  <div key={s.id} className="rounded-md border border-amber-900 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+                    {s.name || s.slug}: health unreachable
+                  </div>
+                );
+              }
+              return (
+                <div key={s.id} className="rounded-md border border-slate-800 bg-slate-950 px-4 py-3">
+                  <div className="mb-2 flex items-center justify-between text-sm">
+                    <span className="text-slate-200">{s.name || s.slug}</span>
+                    <span className={h.ok ? "text-emerald-400" : "text-red-400"}>
+                      {h.ok ? "healthy" : "attention"}
+                    </span>
+                  </div>
+                  <p className="mb-2 text-xs text-slate-500">
+                    ledger: {h.ledger.briefable} briefable · {h.ledger.published} published ·{" "}
+                    {h.wp_configured ? "WP config OK" : "WP not configured"}
+                  </p>
+                  {h.critical.length > 0 ? (
+                    <ul className="mb-2 space-y-1 text-xs text-red-400">
+                      {h.critical.map((c) => (
+                        <li key={c}>● {c}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <ul className="space-y-0.5 text-xs text-slate-500">
+                    {h.checks.slice(0, 6).map((c) => (
+                      <li key={c}>{c}</li>
+                    ))}
+                    {h.checks.length > 6 ? <li>… +{h.checks.length - 6} more</li> : null}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
         <div className="mb-3 flex items-center justify-between">

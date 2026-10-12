@@ -8,8 +8,10 @@ two surfaces cannot drift.
 
 Spec tools: list_sites, get_brief, generate_article, get_article_status,
 get_image, publish_article, site_health, elementor_available/_document/
-_save/_build — prefixed `contentfte_` per MCP naming convention so they
-never collide with other servers (e.g. WordPress's own MCP adapter). The
+_save/_build, queue, research, briefs, logs, approve_article,
+update_content, run_stage - prefixed `contentfte_` per MCP naming
+convention so they never collide with other servers (e.g. WordPress's own
+MCP adapter). The
 elementor_* tools ride native REST document meta (Elementor >= 3.27,
 §5.13) — no third-party MCP server is required for layout writes.
 
@@ -23,8 +25,10 @@ DB/HTTP, and the MCP *client* remains the LLM driving the workflow.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -32,6 +36,12 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, Field
 
 from sdk import service
+
+# contentfte_run_stage: one concurrent run per stage (mirrors the REST
+# /run/{stage} single-flight); task refs are kept so asyncio cannot GC them.
+_stage_lock = threading.Lock()
+_running_stages: set[str] = set()
+_stage_tasks: set[asyncio.Task] = set()
 
 # FastMCP auto-enables DNS-rebinding protection for host=127.0.0.1 with an
 # allow-list of localhost forms only — any other Host header (TestClient's
@@ -151,6 +161,53 @@ class ElementorBuildInput(BaseModel):
     mode: Literal["draft", "auto"] = Field(
         default="draft",
         description="'draft' (default for new sites) | 'auto' = publish live")
+
+
+class QueueInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    site_slug: str = Field(..., min_length=1, max_length=100,
+                            description="Site slug, e.g. 'acme' (from contentfte_list_sites)")
+    status: str = Field(default="", max_length=30,
+                        description="Optional ledger status filter (omit for all rows)")
+    limit: int = Field(default=100, ge=1, le=500, description="Page size (max 500)")
+
+
+class BriefsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    site_slug: str = Field(..., min_length=1, max_length=100,
+                            description="Site slug, e.g. 'acme' (from contentfte_list_sites)")
+    limit: int = Field(default=100, ge=1, le=500, description="Page size (max 500)")
+
+
+class LogsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    kind: str = Field(default="", max_length=40,
+                      description="Optional action prefix filter, e.g. 'usage' or 'cost' (omit for all)")
+    limit: int = Field(default=200, ge=1, le=1000, description="Row cap (max 1000)")
+
+
+class ApproveArticleInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    article_id: int = Field(..., ge=1, description="Numeric article ID to approve/reject")
+    approved: bool = Field(default=True,
+                           description="true = approve (gate can publish), false = reopen for edits")
+    note: str = Field(default="", max_length=500, description="Optional operator note (audit)")
+
+
+class UpdateContentInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    article_id: int = Field(..., ge=1, description="Numeric article ID to edit")
+    content_md: str = Field(..., min_length=1,
+                            description="Full replacement markdown for the article body")
+    note: str = Field(default="", max_length=500,
+                      description="Optional edit note (meta.edit_log + audit)")
+
+
+class RunStageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    stage: str = Field(..., min_length=1, max_length=60,
+                        description="Pipeline stage name, e.g. 'research', 'brief', "
+                                    "'content', 'post' (see the tool's valid list on error)")
 
 
 def _out(data: dict) -> str:
@@ -571,6 +628,183 @@ async def elementor_build(params: ElementorBuildInput) -> str:
     """
     return _out(service.elementor_build(params.article_id, post_id=params.post_id,
                                         mode=params.mode))
+
+
+# ---------------------------------------------------------------------------
+# Console-parity tools (spec-site2 §5 REST surface mirrored over MCP:
+# queue/research/briefs/logs reads + approve/content/run-stage mutations)
+# ---------------------------------------------------------------------------
+@mcp.tool(
+    name="contentfte_queue",
+    annotations={"title": "Keyword Ledger Queue", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def queue(params: QueueInput) -> str:
+    """Read the keyword ledger (the ContentSpark_Keywords queue) with per-status counts.
+
+    Args:
+        params (QueueInput): site_slug, status?, limit?.
+
+    Returns:
+        str: JSON {"site", "counts": {status: n}, "queue": [{id, keyword,
+        status, intent, volume, difficulty, priority_score, added_at, ...}],
+        "count"} — newest first. Errors: {"error", "next"}.
+    """
+    return _out(service.list_queue(params.site_slug, status=params.status,
+                                   limit=params.limit))
+
+
+@mcp.tool(
+    name="contentfte_research",
+    annotations={"title": "Research Worksheet View", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def research(params: QueueInput) -> str:
+    """Read the research_data view: keyword rows with their research snapshot.
+
+    Args:
+        params (QueueInput): site_slug, status?, limit?.
+
+    Returns:
+        str: JSON {"site", "research": [{keyword, intent, volume,
+        difficulty, status, summary, primary_keyword, secondary_keywords,
+        generated, ...}], "count"}. Errors: {"error", "next"}.
+    """
+    return _out(service.list_research(params.site_slug, status=params.status,
+                                      limit=params.limit))
+
+
+@mcp.tool(
+    name="contentfte_briefs",
+    annotations={"title": "Content Briefs View", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def briefs(params: BriefsInput) -> str:
+    """Read the content_briefs view: only rows whose research carries a brief.
+
+    Args:
+        params (BriefsInput): site_slug, limit?.
+
+    Returns:
+        str: JSON {"site", "briefs": [{keyword, status, intent, brief,
+        faqs, sources, summary, ...}], "count"}. Errors: {"error", "next"}.
+    """
+    return _out(service.list_briefs(params.site_slug, limit=params.limit))
+
+
+@mcp.tool(
+    name="contentfte_logs",
+    annotations={"title": "Usage, Audit and Cost Logs", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def logs(params: LogsInput) -> str:
+    """Read the operator logs (model/image usage, audit trail, cost ledger).
+
+    Args:
+        params (LogsInput): kind? ("usage" | "cost" | any audit action
+        prefix), limit?.
+
+    Returns:
+        str: JSON {"audit": [{action, article_id, created_at, payload}],
+        "costs": [{kind, model, usd, created_at, ...}], "counts", "kind"}.
+    """
+    return _out(service.list_logs(kind=params.kind, limit=params.limit))
+
+
+@mcp.tool(
+    name="contentfte_approve_article",
+    annotations={"title": "Approve or Reopen Article", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def approve_article(params: ApproveArticleInput) -> str:
+    """Approve an evaluated article (gate passes → publishable) or reopen it.
+
+    The DB-backed approve path (spec §5.16/3c) — the console and Discord
+    reaction approvals call the same service function.
+
+    Args:
+        params (ApproveArticleInput): article_id, approved?, note?.
+
+    Returns:
+        str: JSON {"id", "status": "approved"|"needs_review", "event",
+        "scores"} or {"error", "next"} (missing article, not evaluable yet).
+    """
+    return _out(service.approve_article(params.article_id, approved=params.approved,
+                                        note=params.note or "mcp", via="mcp"))
+
+
+@mcp.tool(
+    name="contentfte_update_content",
+    annotations={"title": "Edit Article Content", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+async def update_content(params: UpdateContentInput) -> str:
+    """Replace an article's markdown body (operator edit).
+
+    Approved articles reopen to "generated" so the quality gate re-runs;
+    published keeps its status. The edit is appended to meta.edit_log and
+    an audit row is written.
+
+    Args:
+        params (UpdateContentInput): article_id, content_md, note?.
+
+    Returns:
+        str: JSON {"id", "status", "event": "article.edited",
+        "edit_log_count"} or {"error", "next"}.
+    """
+    return _out(service.update_content(params.article_id, content_md=params.content_md,
+                                       note=params.note or "mcp", via="mcp"))
+
+
+@mcp.tool(
+    name="contentfte_run_stage",
+    annotations={"title": "Run Pipeline Stage", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def run_stage(params: RunStageInput) -> str:
+    """Trigger a pipeline stage in the background (research, brief, content, post, ...).
+
+    Same STAGE_HANDLERS the scheduler runs, accepted asynchronously: returns
+    immediately with {"status": "accepted"} — poll contentfte_logs / the
+    console for completion. One concurrent run per stage.
+
+    Args:
+        params (RunStageInput): stage name.
+
+    Returns:
+        str: JSON {"status": "accepted", "stage"} |
+        {"error": "stage 'x' is already running"} |
+        {"error": "unknown stage 'x'", "valid": [...]} |
+        {"error": "run_stage engine not importable: ..."}.
+    """
+    try:
+        from scripts import run_stage as run_stage_mod
+    except Exception as e:  # pragma: no cover - env-dependent import
+        return _out({"error": f"run_stage engine not importable: {e}"})
+    handlers = getattr(run_stage_mod, "STAGE_HANDLERS", {})
+    stage = params.stage
+    if stage not in handlers:
+        return _out({"error": f"unknown stage '{stage}'",
+                     "valid": sorted(handlers)})
+    with _stage_lock:
+        if stage in _running_stages:
+            return _out({"error": f"stage '{stage}' is already running",
+                         "next": "wait for the current run to finish"})
+        _running_stages.add(stage)
+
+    async def _invoke() -> None:
+        try:
+            await handlers[stage]()
+        except Exception as e:  # surface the failure in the server log
+            print(f"[run_stage:{stage}] failed: {e}")
+        finally:
+            with _stage_lock:
+                _running_stages.discard(stage)
+
+    task = asyncio.create_task(_invoke())
+    _stage_tasks.add(task)
+    task.add_done_callback(_stage_tasks.discard)
+    return _out({"status": "accepted", "stage": stage})
 
 
 def main() -> None:

@@ -57,6 +57,17 @@ export interface SiteList {
   count: number;
 }
 
+/** GET /sites/{slug}/health — ledger + WP config + live probes (spec §5.6). */
+export interface SiteHealth {
+  site: string;
+  ok: boolean;
+  ledger: { briefable: number; published: number };
+  wp_configured: boolean;
+  base_url: string;
+  checks: string[];
+  critical: string[];
+}
+
 export interface QueueRow {
   id: number;
   keyword: string;

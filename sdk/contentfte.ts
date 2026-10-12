@@ -215,4 +215,37 @@ export class ContentFTEClient {
   async upsertSite(slug: string, name = "", siteType = "", baseUrl = "") {
     return this.request("POST", "/sdk/v1/sites", { slug, name, site_type: siteType, base_url: baseUrl });
   }
+
+  /** Keyword-ledger view: rows + per-status counts (parity B1). */
+  async listQueue(siteSlug: string, status = "", limit = 100) {
+    const qs = new URLSearchParams({ status, limit: String(limit) });
+    return this.request("GET", `/sdk/v1/sites/${siteSlug}/queue?${qs}`);
+  }
+
+  /** research_data worksheet view: keyword rows + research snapshot. */
+  async listResearch(siteSlug: string, status = "", limit = 100) {
+    const qs = new URLSearchParams({ status, limit: String(limit) });
+    return this.request("GET", `/sdk/v1/sites/${siteSlug}/research?${qs}`);
+  }
+
+  /** content_briefs worksheet view: only rows carrying a brief. */
+  async listBriefs(siteSlug: string, limit = 100) {
+    return this.request("GET", `/sdk/v1/sites/${siteSlug}/briefs?limit=${limit}`);
+  }
+
+  /** Audit + cost-ledger view (kind: "usage" | "cost" | action prefix). */
+  async listLogs(kind = "", limit = 200) {
+    const qs = new URLSearchParams({ kind, limit: String(limit) });
+    return this.request("GET", `/sdk/v1/logs?${qs}`);
+  }
+
+  /** Operator edit of contentMd (approved reopens to generated). */
+  async updateContent(id: number, contentMd: string, note = "") {
+    return this.request("PATCH", `/sdk/v1/articles/${id}/content`, { content_md: contentMd, note });
+  }
+
+  /** Trigger a pipeline stage in the background (202; 409 on overlap). */
+  async runStage(stage: string) {
+    return this.request("POST", `/sdk/v1/run/${stage}`);
+  }
 }

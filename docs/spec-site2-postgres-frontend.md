@@ -86,11 +86,89 @@ drift gate (TASKS "cutover step 2 flip" / "Postgres migration complete").
 
 | Step | Work | State |
 | :-- | :-- | :-- |
-| 3a Read path | `STORE_READ_SOURCE=postgres` already exists (`lib/store.py:43,296–301`); rewire `run_stage`/agent queue reads (`list_briefable`, `list_generated_posts`, `find_generated_post`, `keyword_set`) off the switch | API done; flip pending |
-| 3b Write path | Gate every sheet write in `scripts/run_stage.py` + `tools/sheet_tool.py` behind one env `SHEETS_ENABLED` (default `1`). When `0`: claim → `keyword_ledger.status`; brief → `Article.meta.brief`; content → `Article.content_md` (+scores/faqs); approve → `Article.status`; no `worksheet.update`/`append_row` | not started |
+| 3a Read path | `STORE_READ_SOURCE=postgres` already exists (`lib/store.py:43,296–301`); rewire `run_stage`/agent queue reads (`list_briefable`, `list_generated_posts`, `find_generated_post`, `keyword_set`) off the switch | implemented at the choke point (below); site-#1 flip pending (3e) |
+| 3b Write path | Gate every sheet write in `scripts/run_stage.py` + `tools/sheet_tool.py` behind one env `SHEETS_ENABLED` (default `1`). When `0`: claim → `keyword_ledger.status`; brief → `Article.meta.brief`; content → `Article.content_md` (+scores/faqs); approve → `Article.status`; no `worksheet.update`/`append_row` | implemented at the choke point (below) |
 | 3c Approve flow | Console (and Discord, if kept) call `POST /sdk/v1/articles/{id}/approve` instead of writing the `Approve/Disapprove` cell | REST exists |
 | 3d Telemetry (§B8) | `model_usage`/`image_logs` worksheets: when sheets off, skip (no new DB tables in v1) | decision: skip |
 | 3e Site #1 flip gate | Run `scripts/backfill_postgres.py`, then `scripts/verify_cutover.py` until clean; only then set site #1 env `STORE_READ_SOURCE=postgres` | TASKS open item |
+
+### 3a/3b design — one choke point, derived worksheet views (decided 2026-10-12)
+
+Both switches act inside `tools/sheet_tool.py` so no agent prompt, stage, or
+tool call changes:
+
+- **Mode.** `_pg_reads()` = `SHEETS_ENABLED=0` **or** `STORE_READ_SOURCE=postgres`
+  (reads). Mapped-worksheet writes go Postgres-only when either is set;
+  unmapped worksheet writes stay on Sheets while enabled and become
+  no-op successes when disabled (3d — logs already mirror to `audit_log`).
+- **Mapped worksheets are derived views over Postgres**, rebuilt on every
+  call in append order (`row_index` = position + 2):
+  - `research_data` ← `keyword_ledger` + `research_snapshot` (headers =
+    `lib.store._RESEARCH_HEADERS` + `Created At`); `Keyword/Topic` shows the
+    subject and matches subject **or** keyword/primary so lookups by any of
+    them resolve. `Generated` derives from a brief existing **on this row or
+    on any row sharing its subject** (sheets keys the brief by subject, the
+    store keys the row by primary keyword — see the join rule below).
+  - `content_briefs` ← rows carrying `snapshot.brief`; `Keyword/Topic` shows
+    the subject; `Generated` derives from a per-row
+    `snapshot.content_generated` marker that the stage sets when it deletes
+    the row after generating content — the delete **is** the consumption
+    signal (the row itself must stay for history).
+  - `generated_posts` ← `articles` (headers = `lib.store._POST_HEADERS` +
+    stamps `Created At`, `Image Source`, `Last Freshness/Performance Check`);
+    `Approve/Disapprove`/`Published` derive from `status`.
+  - `approved_unpublished` ← the same article rows filtered to
+    `status == "approved"` (a filter view of `generated_posts`, per
+    `scripts/backfill_postgres.py`). **Required**, not optional: the
+    Preparation Agent's `get_row(row_index=2)` is how a Sheets-off instance
+    picks the next post to ship — an unmapped/no-op read there would mean
+    "NO_POSTS_FOUND" forever. Nothing writes to it; `delete_row` is a no-op.
+- **Writes on mapped worksheets** map header → field: brief columns →
+  `research_snapshot.*`, post columns → `content_md`/`scores`/`meta`,
+  stamps/unknown columns → `snapshot`/`meta.sheet_stamps` (never fail).
+  Header-row writes (`row_index=1`) are no-ops — canonical headers are fixed.
+  `research_data.delete_row` (graduate) is a no-op; `content_briefs.delete_row`
+  sets `content_generated`.
+  - **Join rule on `append_row`:** resolve the target ledger row by exact
+    keyword **first, then by `research_snapshot.subject`** — sheets
+    addresses research_data/content_briefs by the subject while
+    `lib.store` keys the row by the primary keyword, so a naive upsert would
+    put the brief on a second row and leave the research row reading
+    `Generated=No` forever (an unbreakable brief loop). Appends therefore
+    apply onto the resolved row (merge, never replace the snapshot) and only
+    fall back to `mirror_keyword`/`mirror_brief` when no row matches.
+  - `append_row` calls `mirror_keyword`/`mirror_brief`/`mirror_article`
+    **directly** (not via `mirror_sheet_append`), so `DUALWRITE_ENABLED=0`
+    never blocks the primary write; messages keep the exact
+    `"Row appended to {worksheet}."` phrasing `run_stage` matches on.
+  - Trailing sheet-only columns the mappers don't cover (`Created At`,
+    `Source URLs`/`Source Titles`, image/check stamps) are stashed into the
+    row's JSON buckets on append.
+- **Unmapped worksheets** (`claims_audit`, `published_posts`, `review`,
+  `repurposed_content`, telemetry) keep the Sheets path while Sheets is on;
+  with Sheets off they return success + `[]` (reads) or a
+  `skipped: True` success (writes), which every stage's `status ==
+  "success"` soft path already tolerates. Loss by design (3d).
+- **Mixed mode** (site #1 post-flip: reads PG, sheets still enabled): mapped
+  reads+writes both serve Postgres, so row indexes can never point into the
+  wrong store; unmapped worksheets and telemetry keep their Sheets path.
+  The mapped tabs therefore freeze at flip time (archive), which is the
+  intent of "retire Sheets".
+- **`get_keyword_tool`/`release_keyword_claim`** get a Postgres claim path
+  under `not sheets_enabled()` only (not `_pg_reads()`: `ContentSpark_Keywords`
+  is an unmapped worksheet, and site #1's mixed mode must keep reading the
+  real sheet so topic discovery still works): claim = first non-terminal
+  ledger row with no research summary, no brief and no `claimed_at` marker
+  (recorded in `research_snapshot.claimed_at`, released by clearing it);
+  process-local `_keyword_claim` keeps the idempotent re-claim behavior and
+  records `source` (`sheet`/`postgres`) so release writes back to the right
+  store. Body lives in the plain `claim_keyword()` (the `@function_tool`
+  wrapper is what agents see).
+- **`ensure_worksheet_exists`** returns `True` (no-op) in Postgres mode;
+  `custom_runner._seed_usage_from_sheet` already fails soft.
+- **run_stage rewire:** `_get_successful_published_posts` reads published
+  `articles` (keyword/title, post URL) under `_pg_reads()` instead of the
+  `published_posts` worksheet, so the repurpose gate still has candidates.
 
 Out of scope here: Postgres schema redesign (TASKS open question "Postgres schema
 approved" — review `lib/db.py` before any ALTER; current schema suffices for v1).

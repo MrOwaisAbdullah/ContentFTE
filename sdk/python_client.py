@@ -121,3 +121,34 @@ class ContentFTEClient:
         return self._request("POST", "/sdk/v1/sites",
                              json={"slug": slug, "name": name,
                                    "site_type": site_type, "base_url": base_url})
+
+    def list_queue(self, site_slug: str, status: str = "",
+                   limit: int = 100) -> dict:
+        """Keyword-ledger view: rows + per-status counts (parity B1)."""
+        qs = f"?status={status}&limit={limit}"
+        return self._request("GET", f"/sdk/v1/sites/{site_slug}/queue{qs}")
+
+    def list_research(self, site_slug: str, status: str = "",
+                      limit: int = 100) -> dict:
+        """research_data worksheet view: keyword rows + research snapshot."""
+        qs = f"?status={status}&limit={limit}"
+        return self._request("GET", f"/sdk/v1/sites/{site_slug}/research{qs}")
+
+    def list_briefs(self, site_slug: str, limit: int = 100) -> dict:
+        """content_briefs worksheet view: only rows carrying a brief."""
+        return self._request("GET",
+                             f"/sdk/v1/sites/{site_slug}/briefs?limit={limit}")
+
+    def list_logs(self, kind: str = "", limit: int = 200) -> dict:
+        """Audit + cost-ledger view (kind: "usage" | "cost" | action prefix)."""
+        return self._request("GET", f"/sdk/v1/logs?kind={kind}&limit={limit}")
+
+    def update_content(self, article_id: int, content_md: str,
+                       note: str = "") -> dict:
+        """Operator edit of content_md (approved reopens to generated)."""
+        return self._request("PATCH", f"/sdk/v1/articles/{article_id}/content",
+                             json={"content_md": content_md, "note": note})
+
+    def run_stage(self, stage: str) -> dict:
+        """Trigger a pipeline stage in the background (202; 409 on overlap)."""
+        return self._request("POST", f"/sdk/v1/run/{stage}")

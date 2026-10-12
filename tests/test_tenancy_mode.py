@@ -131,13 +131,41 @@ def test_keyword_tool_disabled_points_to_sdk(monkeypatch):
     assert sheet_tool._sheets_disabled_error() is None
 
 
-def test_manage_sheet_data_disabled_returns_error(monkeypatch):
+def test_manage_sheet_data_disabled_serves_postgres(temp_db, monkeypatch):
+    """Spec 3b replaces the old "fail at the choke point" behavior: with
+    SHEETS_ENABLED=0 the mapped worksheets are derived from Postgres and
+    unmapped ones become a no-op success, so no stage ever sees an auth
+    error -- and the gspread client is never constructed at all."""
     monkeypatch.setenv("SHEETS_ENABLED", "0")
     from tools import sheet_tool
-    result = sheet_tool.manage_sheet_data(
-        "research_data", "append_row", row_values=["a", "b"])
-    assert result["status"] == "error"
-    assert "SHEETS_ENABLED=0" in result["message"]
+
+    sheet_tool._reset_gspread_cache()
+
+    def _boom(*a, **k):  # pragma: no cover - a hit here is the bug
+        raise AssertionError("gspread client touched while Sheets is disabled")
+
+    monkeypatch.setattr(sheet_tool, "get_gspread_client", _boom)
+    try:
+        appended = sheet_tool.manage_sheet_data(
+            "research_data", "append_row", row_values=["kw one", "100"])
+        assert appended["status"] == "success"
+
+        rows = sheet_tool.manage_sheet_data(
+            "research_data", action="get_all_records")
+        assert rows["status"] == "success" and rows["count"] == 1
+        assert rows["data"][0]["Keyword/Topic"] == "kw one"
+        assert rows["data"][0]["Generated"] == "No"
+
+        skipped = sheet_tool.manage_sheet_data(
+            "published_posts", "append_row", row_values=["kw one", "https://x"])
+        assert skipped["status"] == "success" and skipped.get("skipped") is True
+
+        empty = sheet_tool.manage_sheet_data(
+            "claims_audit", action="get_all_records")
+        assert empty["status"] == "success" and empty["data"] == []
+    finally:
+        monkeypatch.delenv("SHEETS_ENABLED", raising=False)
+        sheet_tool._reset_gspread_cache()
 
 
 # ---------------------------------------------------------------------------

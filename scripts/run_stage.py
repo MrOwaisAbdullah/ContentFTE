@@ -1607,6 +1607,43 @@ _REPURPOSED_CONTENT_HEADERS = ["Keyword/Topic", "Title", "Post URL", "LinkedIn P
 
 
 def _get_successful_published_posts() -> list:
+    # Postgres mode (spec 3b): published_posts is an unmapped worksheet, so
+    # a Sheets-off instance would get an empty read back. Derive the same
+    # rows from articles with status=published instead -- repurpose/review
+    # gates key off Keyword/Topic + Post URL + a blank Error cell.
+    try:
+        from tools.sheet_tool import _pg_reads, _pg_site
+    except Exception:
+        _pg_reads, _pg_site = None, None
+    if _pg_reads is not None and _pg_reads():
+        from lib.db import Article, KeywordLedger, get_session, init_db
+        from sqlalchemy import select as _select
+        init_db()
+        session = get_session()
+        try:
+            site = _pg_site(session)
+            if site is None:
+                return []
+            articles = session.execute(
+                _select(Article).where(
+                    Article.site_id == site.id, Article.status == "published")
+                .order_by(Article.id.asc())).scalars()
+            rows = []
+            for a in articles:
+                meta = a.meta or {}
+                keyword = ""
+                if a.keyword_id:
+                    kw = session.get(KeywordLedger, a.keyword_id)
+                    keyword = (kw.keyword if kw is not None else "") or ""
+                rows.append({
+                    "Keyword/Topic": keyword or a.title,
+                    "Title": a.title,
+                    "Post URL": str(meta.get("wp_url") or meta.get("post_url") or ""),
+                    "Error": "",
+                })
+            return rows
+        finally:
+            session.close()
     published = manage_sheet_data(worksheet_name="published_posts", action="get_all_records")
     if published.get("status") != "success":
         raise RuntimeError(f"Failed to read published_posts: {published}")

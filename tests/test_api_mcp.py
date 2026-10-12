@@ -198,6 +198,10 @@ def test_mcp_tools_registered_and_thin_over_service():
         "contentfte_sitemap",
         "contentfte_elementor_available", "contentfte_elementor_document",
         "contentfte_elementor_save", "contentfte_elementor_build",
+        # console-parity twins (spec-site2 §5 REST surface over MCP)
+        "contentfte_queue", "contentfte_research", "contentfte_briefs",
+        "contentfte_logs", "contentfte_approve_article",
+        "contentfte_update_content", "contentfte_run_stage",
     }
     assert expected == names, f"tool name mismatch: {names ^ expected}"
 
@@ -234,6 +238,106 @@ def test_mcp_tool_end_to_end_via_tool_manager(monkeypatch):
 
     count = asyncio.run(run())
     assert count == 1
+
+
+def test_mcp_console_parity_read_tools():
+    import asyncio
+
+    from mcp_server.server import mcp
+    from sdk import service
+
+    service.upsert_site("acme", name="Acme", site_type="wordpress")
+    service.submit_article("acme", keyword="mcp parity kw")
+
+    async def run():
+        q = await mcp._tool_manager.call_tool(
+            "contentfte_queue", {"params": {"site_slug": "acme"}})
+        r = await mcp._tool_manager.call_tool(
+            "contentfte_research", {"params": {"site_slug": "acme"}})
+        b = await mcp._tool_manager.call_tool(
+            "contentfte_briefs", {"params": {"site_slug": "acme"}})
+        lg = await mcp._tool_manager.call_tool(
+            "contentfte_logs", {"params": {"kind": "", "limit": 50}})
+        return json.loads(q), json.loads(r), json.loads(b), json.loads(lg)
+
+    queue, research, briefs, logs = asyncio.run(run())
+    assert queue["count"] >= 1 and "counts" in queue, queue
+    assert isinstance(research.get("research"), list), research
+    assert isinstance(briefs.get("briefs"), list), briefs
+    assert "audit" in logs and "costs" in logs, logs
+
+
+def test_mcp_update_content_and_approve_tools():
+    import asyncio
+
+    from mcp_server.server import mcp
+    from sdk import service
+
+    service.upsert_site("acme", name="Acme", site_type="wordpress")
+    art = service.submit_article("acme", keyword="mcp edit kw")
+    aid = art["id"]
+
+    async def run():
+        edit = await mcp._tool_manager.call_tool(
+            "contentfte_update_content",
+            {"params": {"article_id": aid, "content_md": "## Edited\n\nBody text.",
+                        "note": "parity"}})
+        app = await mcp._tool_manager.call_tool(
+            "contentfte_approve_article",
+            {"params": {"article_id": aid, "approved": True, "note": "parity"}})
+        reopen = await mcp._tool_manager.call_tool(
+            "contentfte_approve_article",
+            {"params": {"article_id": aid, "approved": False}})
+        missing = await mcp._tool_manager.call_tool(
+            "contentfte_update_content",
+            {"params": {"article_id": 999999, "content_md": "x"}})
+        return (json.loads(edit), json.loads(app), json.loads(reopen),
+                json.loads(missing))
+
+    edit, app, reopen, missing = asyncio.run(run())
+    assert edit["event"] == "article.edited", edit
+    assert app["status"] == "approved", app
+    assert reopen["status"] == "needs_review", reopen
+    assert "error" in missing, missing
+
+
+def test_mcp_run_stage_tool_accept_overlap_and_unknown(monkeypatch):
+    import asyncio
+
+    from mcp_server.server import mcp
+    from scripts import run_stage as run_stage_mod
+
+    async def run():
+        started = asyncio.Event()
+        gate = asyncio.Event()
+
+        async def stub():
+            started.set()
+            await gate.wait()
+
+        monkeypatch.setattr(run_stage_mod, "STAGE_HANDLERS",
+                            {"stub_stage": stub})
+
+        first = json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_run_stage", {"params": {"stage": "stub_stage"}}))
+        await started.wait()
+        overlap = json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_run_stage", {"params": {"stage": "stub_stage"}}))
+        unknown = json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_run_stage", {"params": {"stage": "not_a_stage"}}))
+        gate.set()
+        await asyncio.sleep(0.05)
+        again = json.loads(await mcp._tool_manager.call_tool(
+            "contentfte_run_stage", {"params": {"stage": "stub_stage"}}))
+        gate.set()
+        await asyncio.sleep(0.05)
+        return first, overlap, unknown, again
+
+    first, overlap, unknown, again = asyncio.run(run())
+    assert first == {"status": "accepted", "stage": "stub_stage"}, first
+    assert "already running" in overlap["error"], overlap
+    assert "valid" in unknown and "stub_stage" in unknown["valid"], unknown
+    assert again["status"] == "accepted", again
 
 
 def test_brand_dna_idempotent_injection():
