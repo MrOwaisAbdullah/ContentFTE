@@ -5,8 +5,11 @@ shared-mode slug guard, `scripts/provision_tenant.py`, Discord channel-list) lan
 **Phase 1** (site identity env-ified, 12 files) landed; **Phase 2 slice 2a** (the
 `SHEETS_ENABLED=0` gate: `lib/site_env.sheets_enabled()`, loud failure at
 `tools/sheet_tool.get_gspread_client`, keyword-tool pointer to the SDK brief
-endpoint) landed. Phase 2 rest = read rewiring off `STORE_READ_SOURCE` + site-#1
-flip (gated on live `verify_cutover.py` drift report); Phases 3–5 not started.
+endpoint) landed. **Phase 4 engine backing landed**: `GET /sites/{slug}/queue`,
+`GET /sites/{slug}/brief` (read-only), `PATCH /articles/{id}/content`,
+`POST /run/{stage}` — the console's REST surface is complete; the console UI
+itself (§7 Q1–Q2) not started. Phase 2 rest = read rewiring off `STORE_READ_SOURCE` + site-#1
+flip (gated on live `verify_cutover.py` drift report); Phase 3 + console UI not started.
 Supersedes the "second Google instance + sheet provisioning" approach discussed
 earlier the same day: the user decision is **direct Postgres** — site #2 has no
 Google Sheets at all.
@@ -161,14 +164,14 @@ Next.js 15 App Router + Tailwind, matching the Owais-Abdullah repo skill set).
 | Screen | Backing call (existing unless noted) |
 | :-- | :-- |
 | Dashboard: queue counts, site health | `GET /sdk/v1/sites`, `GET /sdk/v1/sites/{slug}/health` |
-| Queue (keywords/ledger) | **add** `GET /sdk/v1/sites/{slug}/queue` (reads `keyword_ledger`; parity §B1) |
-| Briefs | `GET /sdk/v1/sites/{slug}/brief` — **verify exists; add if only MCP-side** (`contentfte_get_brief`) |
+| Queue (keywords/ledger) | `GET /sdk/v1/sites/{slug}/queue` — **landed** (rows + per-status counts, read-only; parity §B1) |
+| Briefs | `GET /sdk/v1/sites/{slug}/brief` — **landed** (read-only peek of next briefable row; no claim) |
 | Articles list + detail (view markdown, scores, FAQ) | `GET /sdk/v1/articles`, `GET /sdk/v1/articles/{id}`, `…/content` |
-| **Edit** content | **add** `PATCH /sdk/v1/articles/{id}/content` (updates `content_md`; re-run gate optional) |
+| **Edit** content | `PATCH /sdk/v1/articles/{id}/content` — **landed** (updates `content_md`, edits logged to `meta.edit_log` + audit; approved → reopened to generated, published keeps status; no re-gate — regenerate is the re-score path) |
 | **Approve / reject** | `POST /sdk/v1/articles/{id}/approve` (exists) |
 | Publish / refresh / stage images | `POST …/publish`, `…/refresh`, `…/stage-images` (exist) |
 | WP + Elementor build | existing `/sdk/v1/wp/*`, `/sdk/v1/elementor/*` |
-| Run a stage | **add** `POST /sdk/v1/run/{stage}` → wraps `run_stage.STAGE_HANDLERS` (research/brief/content/post/…) |
+| Run a stage | `POST /sdk/v1/run/{stage}` — **landed** (wraps `run_stage.STAGE_HANDLERS` in a background task; 404 unknown, 409 overlap, 503 if the engine can't import) |
 
 Auth: operator password → session cookie; engine `API_KEY` stays server-side
 (route-handler/server-action pattern per Next.js docs: `verifySession()` guard,

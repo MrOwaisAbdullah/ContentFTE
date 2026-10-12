@@ -155,6 +155,44 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
         s.close()
 
 
+def list_queue(site_slug: str, status: str = "", limit: int = 100) -> dict:
+    """Read-only keyword-ledger view for the operator console (parity §B1).
+
+    Returns the ledger rows (newest first) plus per-status counts, so one
+    call covers both the queue screen and the dashboard counters. Read-only:
+    claiming stays an explicit action (get_brief / submit_article)."""
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        counts: dict[str, int] = {}
+        for st, n in s.execute(
+            select(KeywordLedger.status, func.count())
+            .where(KeywordLedger.site_id == site.id)
+            .group_by(KeywordLedger.status)
+        ):
+            counts[st or ""] = n
+        q = select(KeywordLedger).where(KeywordLedger.site_id == site.id)
+        if (status or "").strip():
+            q = q.where(KeywordLedger.status == status.strip())
+        rows = s.execute(q.order_by(KeywordLedger.id.desc()).limit(limit)).scalars()
+        queue = [
+            {"id": r.id, "keyword": r.keyword, "status": r.status,
+             "intent": r.intent, "volume": r.volume, "difficulty": r.difficulty,
+             "priority_score": r.priority_score, "cluster_id": r.cluster_id,
+             "target_url": r.target_url,
+             "subject": (r.research_snapshot or {}).get("subject", ""),
+             "added_at": _iso(r.added_at)}
+            for r in rows
+        ]
+        return {"site": site.slug, "counts": counts, "queue": queue,
+                "count": len(queue)}
+    finally:
+        s.close()
+
+
 def get_brief(site_slug: str) -> dict:
     """§5.16 — briefs pull ONLY from approved/queued rows, highest priority first."""
     init_db()
@@ -827,6 +865,46 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         s.commit()
         return {"id": art.id, "status": art.status,
                 "event": "article.published" if approved else "article.needs_review"}
+    finally:
+        s.close()
+
+
+def update_content(article_id: int, content_md: str, note: str = "",
+                   via: str = "api") -> dict:
+    """Operator edit of an article's markdown (console PATCH /articles/{id}/content).
+
+    - Every edit is appended to `meta["edit_log"]` and audit-logged.
+    - An `approved` article is reopened to `generated` so the approve gate
+      runs again on the edited text; a `published` one keeps its status
+      (the live post changes on the next refresh).
+    - The quality gate is NOT re-run here -- regenerating is the path for
+      a full re-score; an edit is a human override."""
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run generate_article first")
+        if not (content_md or "").strip():
+            return _err("content_md is empty", "send the full replacement markdown")
+        reopened = art.status == "approved"
+        art.content_md = content_md
+        if reopened:
+            art.status = "generated"
+        meta = dict(art.meta or {})
+        meta["edit_log"] = [
+            *(meta.get("edit_log") or []),
+            {"at": datetime.now(timezone.utc).isoformat(), "note": note, "via": via},
+        ]
+        art.meta = meta  # assign-before-commit (JSON in-place mutation fix)
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.edit",
+                       payload={"note": note, "via": via,
+                                "reopened": reopened,
+                                "chars": len(content_md)}))
+        s.commit()
+        return {"id": art.id, "status": art.status, "reopened": reopened,
+                "edits": len(meta["edit_log"]), "event": "article.edited"}
     finally:
         s.close()
 

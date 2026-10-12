@@ -19,6 +19,11 @@ Endpoints:
                                              (html + markdown + meta + JSON-LD)    GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
+    GET  /sdk/v1/sites/{slug}/queue       -> keyword-ledger view (console; parity §B1)
+    GET  /sdk/v1/sites/{slug}/brief       -> next briefable keyword (read-only peek)
+    PATCH /sdk/v1/articles/{id}/content   -> operator edit of content_md (console)
+    POST /sdk/v1/run/{stage}              -> trigger a pipeline stage in the
+                                              background (console; 409 on overlap)
     GET  /sdk/v1/sites/{slug}/llms.txt    -> site llms.txt (§5.8 GEO) from published articles
     GET  /sdk/v1/wp/posts/{id}            -> read a WP post back (raw content + SEO meta)
     GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
@@ -34,11 +39,13 @@ audit-logged by the service.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 
 import sdk.service as service
@@ -87,6 +94,11 @@ class SiteUpsert(BaseModel):
     name: str = ""
     site_type: str = "custom"  # custom | wordpress
     base_url: str = ""
+
+
+class ContentPatch(BaseModel):
+    content_md: str
+    note: str = ""
 
 
 class ElementorSave(BaseModel):
@@ -251,6 +263,74 @@ def sitemap_xml(site_slug: str, x_site_key: str | None = Header(default=None)) -
     """
     _check_site_key(x_site_key)
     return _resolve(service.sitemap_xml(site_slug))
+
+
+# --- Operator console backing (spec-site2-postgres-frontend §5) ---
+
+
+@router.get("/sites/{site_slug}/queue")
+def get_queue(site_slug: str, status: str = "", limit: int = 100,
+              x_site_key: str | None = Header(default=None)) -> dict:
+    """Keyword-ledger view (read-only): rows + per-status counts for the
+    console queue screen and dashboard counters."""
+    _check_site_key(x_site_key)
+    return _resolve(service.list_queue(site_slug, status=status, limit=limit))
+
+
+@router.get("/sites/{site_slug}/brief")
+def get_brief(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    """Next briefable keyword (read-only peek, highest priority first).
+    Returns {"status": "empty"} when the queue has nothing briefable."""
+    _check_site_key(x_site_key)
+    return _resolve(service.get_brief(site_slug))
+
+
+@router.patch("/articles/{article_id}/content")
+def patch_content(article_id: int, body: ContentPatch,
+                  x_site_key: str | None = Header(default=None)) -> dict:
+    """Operator edit of an article's markdown; an approved article is
+    reopened to generated so the approve gate runs on the edited text."""
+    _check_site_key(x_site_key)
+    return _resolve(service.update_content(article_id, body.content_md,
+                                           note=body.note))
+
+
+_running_stages: set[str] = set()
+_run_lock = threading.Lock()
+
+
+@router.post("/run/{stage}", status_code=202)
+def run_stage(stage: str, background_tasks: BackgroundTasks,
+              x_site_key: str | None = Header(default=None)) -> dict:
+    """Trigger a legacy pipeline stage in the background (console).
+
+    Wraps scripts/run_stage.STAGE_HANDLERS — the same stage functions the
+    scheduler runs. One concurrent run per stage (409 on overlap)."""
+    _check_site_key(x_site_key)
+    try:
+        from scripts import run_stage as run_stage_mod
+    except Exception as e:  # pragma: no cover - env-dependent import
+        raise HTTPException(status_code=503,
+                            detail=f"run_stage engine not importable: {e}")
+    handlers = getattr(run_stage_mod, "STAGE_HANDLERS", {})
+    if stage not in handlers:
+        raise HTTPException(status_code=404,
+                            detail=f"unknown stage '{stage}' — valid: {sorted(handlers)}")
+    with _run_lock:
+        if stage in _running_stages:
+            raise HTTPException(status_code=409,
+                                detail=f"stage '{stage}' is already running")
+        _running_stages.add(stage)
+
+    def _invoke() -> None:
+        try:
+            asyncio.run(handlers[stage]())
+        finally:
+            with _run_lock:
+                _running_stages.discard(stage)
+
+    background_tasks.add_task(_invoke)
+    return {"status": "accepted", "stage": stage}
 
 
 @router.get("/wp/posts/{post_id}")
