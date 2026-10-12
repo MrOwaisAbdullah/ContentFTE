@@ -5,13 +5,11 @@ import { switchInstanceAction } from "@/actions/instances";
 import { currentInstance, registry } from "@/lib/instances";
 
 // Sheet-tab order (spec §5): the console mirrors the Google Sheets workbook —
-// keywords, research, brief, content, logs — then the instance/tooling screens.
+// keywords, research, brief, content, logs — grouped under the Articles
+// section, then the instance/tooling screens.
 const NAV = [
   { href: "/", label: "Dashboard" },
-  { href: "/keywords", label: "Keywords" },
-  { href: "/research", label: "Research" },
-  { href: "/briefs", label: "Briefs" },
-  { href: "/articles", label: "Content" },
+  { href: "/articles", label: "Articles" },
   { href: "/logs", label: "Logs" },
   { href: "/sites", label: "Sites" },
   { href: "/instances", label: "Instances" },

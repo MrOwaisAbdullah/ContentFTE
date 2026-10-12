@@ -200,15 +200,19 @@ Single-operator internal app in `console/` (Next.js 15 App Router + Tailwind).
 structure as the Google Sheets workbook** — keywords, research, brief,
 content, and the other logs — so the two surfaces are muscle-memory for the
 operator.
+**Grouping decision (user, 2026-10-12): keyword, research, brief, and content
+live *under* one Articles section** (single top-nav entry → sub-tabs
+Content/Keywords/Research/Briefs), so they are managed together instead of as
+four scattered top-level screens.
 
 ### Sheet → console screen mapping (Postgres-backed)
 
 | Sheets tab | Console screen | Postgres source |
 | :-- | :-- | :-- |
-| keyword ledger | **Keywords** (`/keywords`) | `keyword_ledger` (via `GET /sites/{slug}/queue`) |
-| research_data | **Research** (`/research`) — subject, intent, volume, difficulty, summary, primary/secondary keywords, Generated flag | `keyword_ledger` + `research_snapshot` JSON (`GET /sites/{slug}/research` — **new**) |
-| content_briefs | **Briefs** (`/briefs`) — brief content, FAQs, sources, summary; rows that have one | `keyword_ledger.research_snapshot.brief/faqs/sources` (`GET /sites/{slug}/briefs` — **new**) |
-| generated_posts + approved_unpublished | **Content** (`/articles`) — title, Quality Score, Summary, Approve/Disapprove + Published states | `articles` (`GET /articles`, rows extended with quality + summary) |
+| keyword ledger | **Keywords** (Articles → `/articles/keywords`) | `keyword_ledger` (via `GET /sites/{slug}/queue`) |
+| research_data | **Research** (Articles → `/articles/research`) — subject, intent, volume, difficulty, summary, primary/secondary keywords, Generated flag | `keyword_ledger` + `research_snapshot` JSON (`GET /sites/{slug}/research` — **new**) |
+| content_briefs | **Briefs** (Articles → `/articles/briefs`) — brief content, FAQs, sources, summary; rows that have one | `keyword_ledger.research_snapshot.brief/faqs/sources` (`GET /sites/{slug}/briefs` — **new**) |
+| generated_posts + approved_unpublished | **Content** (Articles → `/articles`) — title, Quality Score, Summary, Approve/Disapprove + Published states | `articles` (`GET /articles`, rows extended with quality + summary) |
 | model_usage_log, image_logs, audit worksheets | **Logs** (`/logs`) — usage + audit + cost rows | `audit_log` (`action=usage.model`/`usage.image`/publish actions) + `cost_ledger` (`GET /logs` — **new**) |
 
 **Usage-log gap:** `log_model_usage`/`log_image_usage` append to Sheets only,

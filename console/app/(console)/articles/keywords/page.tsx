@@ -3,7 +3,7 @@ import { engine, QueueView, SiteList } from "@/lib/engine";
 
 export const dynamic = "force-dynamic";
 
-export default async function QueuePage({
+export default async function KeywordsPage({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string; site?: string }>;
@@ -20,7 +20,7 @@ export default async function QueuePage({
     if (slug) {
       const qs = new URLSearchParams({ limit: "200" });
       if (status) qs.set("status", status);
-      queue = await engine<QueueView>(`/sites/${encodeURIComponent(slug)}/keywords?${qs}`);
+      queue = await engine<QueueView>(`/sites/${encodeURIComponent(slug)}/queue?${qs}`);
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
@@ -31,9 +31,11 @@ export default async function QueuePage({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Keywords (ledger) {slug ? `â€” ${slug}` : ""}</h1>
+        <h1 className="text-lg font-semibold">
+          Keywords (ledger sheet) {slug ? `— ${slug}` : ""}
+        </h1>
         <Link href="/stages" className="text-xs text-sky-400 hover:underline">
-          run research stage to fill â†’
+          run research stage to fill →
         </Link>
       </div>
 
@@ -45,7 +47,7 @@ export default async function QueuePage({
 
       <div className="flex flex-wrap gap-2 text-xs">
         <Link
-          href={`/keywords?site=${encodeURIComponent(slug)}`}
+          href={`/articles/keywords?site=${encodeURIComponent(slug)}`}
           className={`rounded-full border px-3 py-1 ${!status ? "border-sky-700 text-sky-300" : "border-slate-700 text-slate-400"}`}
         >
           all
@@ -53,7 +55,7 @@ export default async function QueuePage({
         {statuses.map((s) => (
           <Link
             key={s}
-            href={`/keywords?site=${encodeURIComponent(slug)}&status=${encodeURIComponent(s)}`}
+            href={`/articles/keywords?site=${encodeURIComponent(slug)}&status=${encodeURIComponent(s)}`}
             className={`rounded-full border px-3 py-1 ${status === s ? "border-sky-700 text-sky-300" : "border-slate-700 text-slate-400"}`}
           >
             {s} ({queue?.counts[s]})
@@ -62,7 +64,9 @@ export default async function QueuePage({
       </div>
 
       {!queue || queue.queue.length === 0 ? (
-        <p className="text-sm text-slate-500">No keyword rows{status ? ` with status â€œ${status}â€` : ""}.</p>
+        <p className="text-sm text-slate-500">
+          No keyword rows{status ? ` with status “${status}”` : ""}.
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-slate-800">
           <table className="w-full text-sm">
@@ -83,13 +87,13 @@ export default async function QueuePage({
                   <td className="px-4 py-2">{r.keyword}</td>
                   <td className="px-4 py-2 text-xs text-slate-400">{r.status}</td>
                   <td className="px-4 py-2 text-xs text-slate-400">{r.intent}</td>
-                  <td className="px-4 py-2 text-right">{r.volume || "â€”"}</td>
-                  <td className="px-4 py-2 text-right">{r.difficulty || "â€”"}</td>
+                  <td className="px-4 py-2 text-right">{r.volume || "—"}</td>
+                  <td className="px-4 py-2 text-right">{r.difficulty || "—"}</td>
                   <td className="px-4 py-2 text-right text-sky-400">
                     {r.priority_score?.toFixed?.(2) ?? r.priority_score}
                   </td>
                   <td className="px-4 py-2 text-xs text-slate-500">
-                    {r.added_at ? r.added_at.slice(0, 10) : "â€”"}
+                    {r.added_at ? r.added_at.slice(0, 10) : "—"}
                   </td>
                 </tr>
               ))}
