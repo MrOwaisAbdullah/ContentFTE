@@ -1,5 +1,5 @@
 import "server-only";
-import { engineApiKey, engineBaseUrl } from "./env";
+import { currentInstance } from "./instances";
 
 export class EngineError extends Error {
   status: number;
@@ -9,17 +9,19 @@ export class EngineError extends Error {
   }
 }
 
+/** Engine call against the currently selected instance (cookie-switched). */
 export async function engine<T = unknown>(
   path: string,
   init?: RequestInit & { json?: unknown },
 ): Promise<T> {
   const { json, headers, ...rest } = init ?? {};
-  const res = await fetch(`${engineBaseUrl()}/sdk/v1${path}`, {
+  const inst = await currentInstance();
+  const res = await fetch(`${inst.baseUrl}/sdk/v1${path}`, {
     ...rest,
     cache: "no-store",
     headers: {
       ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(engineApiKey() ? { "X-Site-Key": engineApiKey() } : {}),
+      ...(inst.apiKey ? { "X-Site-Key": inst.apiKey } : {}),
       ...(headers as Record<string, string> | undefined),
     },
     body: json !== undefined ? JSON.stringify(json) : (rest.body as BodyInit | undefined),
