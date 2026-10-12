@@ -11,6 +11,136 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-12 — Site #2 spec, tenancy, Postgres cutover 3a/3b, operator console
+
+**Branch:** `master` · **Commits:** `0fed8a4`, `78d7d80`, `42b2487`, `03216d0`, `ef77644`, `152a800`, `9ed7e29`, `576734b`, `f1fa283`, `0bf74c0`, `47cc61e`
+**Tests:** 408 passed / 1 skipped pytest · console `npm run build` clean (14 routes) · sdk `tsc --noEmit` clean
+
+### Goal
+Ship the spec'd path to a second, isolated blog instance (WordPress, separate
+provider accounts, **direct Postgres — no Google Sheets at all**) plus an internal
+operator console, on `master`, with site #1 unchanged until the drift gate clears.
+Plan of record: `docs/spec-site2-postgres-frontend.md`. User decisions locked in §7:
+console in `console/`, full §5 MVP, second instance as a separate process on one
+machine, Discord kept (reaction approvals stay for site #1), no ALTERs in v1.
+
+### What changed
+- **Spec** (new): phases, env key inventory, sheet-parity mapping, §7 Q1–Q6
+  answered; §3 carries the 3a/3b design note written during implementation.
+- **Phase 1** (`0fed8a4`): site identity env-ified into `lib/site_env.py` (9 files
+  inventoried); defaults = site #1, so the running instance is identical until an
+  env var says otherwise.
+- **Tenancy**: `TENANCY_MODE=isolated|shared` — shared mode *refuses* the silent
+  default-tenant fallback (cross-tenant misattribution guard);
+  `scripts/provision_tenant.py`. Discord multi-tenant: one bot token = one gateway
+  process, so same-bot-across-tenants = one process +
+  `DISCORD_APPROVAL_CHANNEL_IDS` comma list (legacy single id honored;
+  `on_raw_reaction_add` filters membership).
+- **Phase 2a** (`42b2487`): `SHEETS_ENABLED` (call-time read, default on) — every
+  sheet call funnels through `get_gspread_client()`, so `0` fails loudly instead of
+  deep inside google-auth; `get_keyword_tool` points at the SDK brief endpoint.
+  Verified the SDK path (`sdk/service.py`, `sdk/server.py`) has zero gspread
+  imports at any level — sheets-off pipeline = REST → service → DB.
+- **Phase 2 3a/3b** (`0bf74c0`): `tools/sheet_tool.manage_sheet_data` gained a
+  Postgres branch ahead of the gspread retry loop — one choke point, so no agent
+  prompt, stage, or tool call changed. Derived views rebuilt per call in append
+  order (`row_index` = position + 2):
+  - `research_data` ← `keyword_ledger` + `research_snapshot` (`Generated` derives
+    from a brief on that row *or any row sharing its subject*),
+  - `content_briefs` ← rows with `snapshot.brief` (`Generated` = the
+    `content_generated` marker the stage sets when it deletes the row),
+  - `generated_posts` ← `articles`,
+  - **`approved_unpublished`** ← articles with `status == "approved"`. Required,
+    not cosmetic: the Preparation Agent's `get_row(row_index=2)` is how a
+    sheets-off instance picks the next post to ship; a no-op read there means
+    `NO_POSTS_FOUND` forever. Nothing writes to it; `delete_row` is a no-op.
+  Writes map header → field (brief columns → `research_snapshot.*`, post columns →
+  `content_md`/`scores`/`meta`, stamps/unknown → `snapshot`/`meta.sheet_stamps`,
+  never fail); `row_index=1` writes and `research_data.delete_row` are no-ops.
+  Two design traps found while implementing:
+  1. **Join rule** — sheets addresses `research_data`/`content_briefs` by
+     *subject* while `lib.store` keys the row by *primary keyword*. `append_row`
+     therefore resolves the target row by keyword, then subject, and merges the
+     snapshot: a naive upsert parks the brief on a second row and freezes
+     `Generated=No` on the research row (unbreakable brief loop).
+  2. **Direct mirrors** — appends call `mirror_keyword`/`mirror_brief`/
+     `mirror_article` directly rather than the `DUALWRITE_ENABLED`-gated
+     `mirror_sheet_append`, and keep the exact `"Row appended to {worksheet}."`
+     phrasing `run_stage` string-matches. Sheet-only trailing columns
+     (`Created At`, `Source URLs/Titles`, image/check stamps) are stashed into the
+     row's JSON buckets.
+  Unmapped worksheets (claims_audit, published_posts, review, telemetry) keep
+  Sheets while enabled and return `[]` reads / `skipped:True` writes when off
+  (spec 3d — logs already mirror to `audit_log`). Keyword claim/release get a
+  Postgres path (first non-terminal row with no research summary, no brief, no
+  `claimed_at`; the process-local `_keyword_claim["source"]` decides where release
+  writes back) gated on `not sheets_enabled()` **only** — `ContentSpark_Keywords`
+  is unmapped, so site #1's mixed mode must keep reading the real sheet for topic
+  discovery. `ensure_worksheet_exists` no-ops. `run_stage.
+  _get_successful_published_posts` derives repurpose candidates from published
+  `articles` under the same switch.
+- **Console** (`03216d0` → `f1fa283`): `console/` Next.js 15 App Router + React 19
+  + Tailwind v4 — server-only engine access (`ENGINE_BASE_URL`/`ENGINE_API_KEY` →
+  `X-Site-Key`, the key never reaches the browser), operator password + HMAC
+  HttpOnly cookie, `(console)` route group running `requireSession()`. Sheets-layout
+  parity by user request: Dashboard → Articles (sub-tabs Content/Keywords/Research/
+  Briefs) → Logs → Sites/Instances/Stages/Provision; instance registry
+  (`CONSOLE_INSTANCES` + runtime `instances.json`) with cookie-based switcher;
+  provision wizard generates the instance `.env` (secrets never stored, shown once);
+  Add-keyword form → `POST /sdk/v1/articles` → detail actions (Generate/Approve/
+  Publish/Refresh/Stage-images). **Engine fix: `upsert_site` was create-only** — the
+  console's documented create/upsert silently no-op'd; it now updates
+  name/`site_type`/`base_url` when non-empty and returns `updated`, with the client
+  defaults flipped `"custom"` → `""` so an omitted field can't downgrade a
+  `wordpress` row. Also fixed en route: a greedy `/queue`→`/keywords` replace that
+  rewrote an engine API path (404 red box), and a Get-Content/Set-Content
+  round-trip that re-encoded a page as Latin-1 (mojibake) — replaced by tool-based
+  edits for UTF-8 files.
+- **MCP/SDK parity** (`0bf74c0`): 7 new tools `contentfte_{queue,research,briefs,
+  logs,approve_article,update_content,run_stage}` with input models and background
+  single-flight stages (`_stage_lock`/`_running_stages`/`_stage_tasks`);
+  `sdk/python_client.py` and `sdk/contentfte.ts` mirror them.
+- **Console health** (`0bf74c0`): `SiteHealth` + a dashboard "Site health" section —
+  parallel per-site fetch with `.catch(()=>null)` so one dead instance never blanks
+  the page.
+
+### Verification (commands + observed result)
+- `pytest tests/ --basetemp=D:/opencode-npm-temp/pytest-basetemp -q` → **408
+  passed, 1 skipped**. New `tests/test_pg_cutover_choke.py` (12): header contract
+  (`posts[:10] == lib.store._POST_HEADERS`), row addressing, A1 ranges, brief →
+  research `Generated` derivation and re-research merge, brief delete →
+  `content_generated`, article status/score writes, unmapped no-ops, `clear_sheet`
+  refusal, **`approved_unpublished` publish-read contract**, claim idempotence/
+  release/terminal skip, sheets-on keeps gspread, published-posts derivation.
+  `test_manage_sheet_data_disabled_serves_postgres` asserts the gspread client is
+  never constructed. `tests/test_api_mcp.py` +15 → parity.
+- `console`: `npm run build` clean (14 routes; `.next` removed first — never build
+  while `npm run dev` holds :3000), then dev restarted with `OPERATOR_PASSWORD`,
+  `SESSION_SECRET`, `ENGINE_BASE_URL` in the process env (console has no
+  `.env.local`).
+- Authed smoke (session cookie forged in Python — PS 5.1's `New-Object
+  HMACSHA256` mishandles it; header passed via `curl.exe -H @file` because PS 5.1
+  splits native-arg strings containing spaces): `/` → 200 with per-site health
+  cards (ledger counts, WP config missing, robots/sitemap checks incl. a real
+  ConnectionError), and the served HTML re-checked byte-level for U+2014/U+00A7/
+  U+00B7 — no mojibake (console only displays these as `A¿` because the terminal
+  re-encodes UTF-8 as cp1252).
+- Engine `:8000` and console `:3000` dev servers left running (logs:
+  `D:\opencode-npm-temp\{engine,console}-dev.log`).
+
+### Open / next
+- [ ] **Live sheets-off e2e** (spec §6 item 2) — next priority: scratch DB +
+  `SHEETS_ENABLED=0`, `content` → `post` stages, approve via REST, publish to
+  LocalWP. Only remaining check needing no new infra.
+- [ ] TASKS 44/47 flip: `backfill_postgres.py` → clean `verify_cutover.py` → env
+  (needs the live store; mapped tabs freeze at flip, which is the intent).
+- [ ] Instance #2 end-to-end on the real WordPress site (2nd Neon/providers/WP).
+- [ ] Console e2e pointed at instance #2, then site #1 observed over one run.
+- [ ] Standing rules: `_theirprompt.py` is never staged; no literal secrets in
+  code/docs/commits.
+
+---
+
 ## 2026-10-10 — Live-run defects (image/SEO/keywords) + model fleet migration
 **Branch:** `master`
 **Tests:** 366/366 pytest + 1 skip (site repo absent), sdk `tsc --noEmit` clean
