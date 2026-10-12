@@ -1,5 +1,6 @@
 """Operator-console backing endpoints (spec-site2-postgres-frontend §5):
-queue view, read-only brief peek, PATCH content, run/{stage} trigger."""
+queue view, read-only brief peek, PATCH content, run/{stage} trigger,
+research/briefs/logs worksheet views, usage-log audit mirror."""
 import os
 
 import pytest
@@ -186,3 +187,166 @@ def test_run_stage_route_accept_unknown_and_overlap(monkeypatch):
     # TestClient drains background tasks before returning the response
     assert calls == ["ran"]
     assert "stub_stage" not in server._running_stages
+
+
+def _seed_research_and_brief(site_slug: str):
+    """Mirror a research row + its brief into the ledger snapshot."""
+    from lib.store import mirror_brief, mirror_keyword
+
+    s = __import__("lib.db", fromlist=["get_session"]).get_session()
+    try:
+        mirror_keyword(s, keyword="how to tie a tie", volume=900, difficulty=21.0,
+                       intent="informational", summary="A tie-tying explainer.",
+                       subject="How to tie a tie", primary_keyword="how to tie a tie",
+                       secondary_keywords="windsor knot, four in hand", site_slug=site_slug)
+        mirror_brief(s, keyword="how to tie a tie", brief_content="# Brief\n\nSteps…",
+                     faqs='[{"question":"Q","answer":"A"}]',
+                     sources="https://example.com/src", summary="Covers 4 knots.",
+                     secondary_keywords="windsor knot", site_slug=site_slug)
+        mirror_keyword(s, keyword="best crm software", volume=12000, difficulty=55.0,
+                       intent="commercial", summary="CRM comparison.",
+                       subject="Best CRM software", primary_keyword="best crm software",
+                       site_slug=site_slug)
+    finally:
+        s.close()
+
+
+def test_research_route_returns_snapshot_fields():
+    _seed_research_and_brief("acme")
+    client = _client()
+
+    res = client.get("/sdk/v1/sites/acme/research")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["count"] == 2
+    tie = next(r for r in body["research"] if r["keyword"] == "how to tie a tie")
+    assert tie["subject"] == "How to tie a tie"
+    assert tie["volume"] == 900
+    assert tie["difficulty"] == 21.0
+    # mirror_brief refreshes summary/secondary_keywords in the same snapshot,
+    # so the brief's values are what the research screen shows afterwards.
+    assert tie["summary"] == "Covers 4 knots."
+    assert tie["secondary_keywords"] == "windsor knot"
+    assert tie["generated"] is True          # brief present in snapshot
+    crm = next(r for r in body["research"] if r["keyword"] == "best crm software")
+    assert crm["generated"] is False
+
+    assert client.get("/sdk/v1/sites/nope/research").status_code == 404
+
+
+def test_briefs_route_only_rows_with_a_brief():
+    _seed_research_and_brief("acme")
+    client = _client()
+
+    res = client.get("/sdk/v1/sites/acme/briefs")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["count"] == 1
+    b = body["briefs"][0]
+    assert b["keyword"] == "how to tie a tie"
+    assert b["brief"].startswith("# Brief")
+    assert "example.com/src" in b["sources"]
+    assert b["summary"] == "Covers 4 knots."
+
+    assert client.get("/sdk/v1/sites/nope/briefs").status_code == 404
+
+
+def test_logs_route_audit_and_costs_with_kind_filter():
+    from lib.db import AuditLog, get_session
+    from sdk import service
+
+    art = service.submit_article("acme", keyword="how to tie a tie")
+    s = get_session()
+    try:
+        s.add(AuditLog(article_id=art["id"], action="article.submit",
+                       payload={"keyword": "how to tie a tie"}))
+        s.commit()
+    finally:
+        s.close()
+    from lib.store import log_usage_event
+    assert log_usage_event("model", {"model": "m1", "stage": "content"}) is True
+    assert log_usage_event("image", {"model": "img1", "stage": "generate"}) is True
+    # cost row for the cost-ledger section
+    from lib.db import CostLedger
+    s = get_session()
+    try:
+        s.add(CostLedger(article_id=art["id"], kind="llm", amount_usd=0.0123,
+                         detail={"model": "m1"}))
+        s.commit()
+    finally:
+        s.close()
+
+    client = _client()
+    res = client.get("/sdk/v1/logs")
+    assert res.status_code == 200
+    body = res.json()
+    actions = [a["action"] for a in body["audit"]]
+    assert "article.submit" in actions
+    assert "usage.model" in actions
+    assert "usage.image" in actions
+    assert body["costs"][0]["kind"] == "llm"
+    assert body["costs"][0]["amount_usd"] == pytest.approx(0.0123)
+
+    usage = client.get("/sdk/v1/logs?kind=usage").json()
+    usage_actions = {a["action"] for a in usage["audit"]}
+    assert usage_actions == {"usage.model", "usage.image"}
+    assert usage["costs"] == []
+
+    cost = client.get("/sdk/v1/logs?kind=cost").json()
+    assert cost["audit"] == []
+    assert len(cost["costs"]) == 1
+
+
+def test_usage_log_functions_mirror_to_audit_when_sheets_fail(monkeypatch):
+    import tools.sheet_tool as st
+    from lib.db import AuditLog, get_session
+
+    def _no_sheets():
+        raise RuntimeError("no sheets in test")
+
+    monkeypatch.setattr(st, "get_spreadsheet", _no_sheets)
+
+    assert st.log_model_usage("model-x", "agent-y", "content", "ok", 1.5) is True
+    assert st.log_image_usage("img-model", "generate", "puppy", "ok", 2.0,
+                              cost_usd=0.001, slot="featured", prompt="a puppy") is True
+
+    s = get_session()
+    try:
+        rows = s.execute(select_audit()).scalars().all()
+    finally:
+        s.close()
+    by_action = {r.action: r.payload for r in rows
+                 if r.action in ("usage.model", "usage.image")}
+    assert by_action["usage.model"]["model"] == "model-x"
+    assert by_action["usage.model"]["agent"] == "agent-y"
+    assert by_action["usage.model"]["latency"] == "1.5"
+    assert by_action["usage.image"]["subject"] == "puppy"
+    assert by_action["usage.image"]["cost_usd"] == "0.0010"
+
+
+def select_audit():
+    from sqlalchemy import select
+
+    from lib.db import AuditLog
+    return select(AuditLog)
+
+
+def test_list_articles_carries_quality_and_summary():
+    from lib.db import get_session
+    from lib.store import mirror_article
+    from sdk import service
+
+    s = get_session()
+    try:
+        mirror_article(s, title="Tie Guide", content="# Body", quality_score=92.5,
+                       summary="A strong tie guide.", approved=True,
+                       site_slug="acme")
+    finally:
+        s.close()
+
+    client = _client()
+    body = client.get("/sdk/v1/articles?site_slug=acme").json()
+    row = next(a for a in body["articles"] if a["title"] == "Tie Guide")
+    assert row["quality"] == 92.5
+    assert row["summary"] == "A strong tie guide."
+    assert row["status"] == "approved"

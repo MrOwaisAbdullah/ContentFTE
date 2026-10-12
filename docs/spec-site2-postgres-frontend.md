@@ -195,20 +195,44 @@ the SaaS guild→tenant lookup).
 
 ## 5. Phase 4 — Operator console (frontend)
 
-Single-operator internal app; location + stack open (default: `console/` folder,
-Next.js 15 App Router + Tailwind, matching the Owais-Abdullah repo skill set).
+Single-operator internal app in `console/` (Next.js 15 App Router + Tailwind).
+**Layout decision (user, 2026-10-12): the console follows the same tab
+structure as the Google Sheets workbook** — keywords, research, brief,
+content, and the other logs — so the two surfaces are muscle-memory for the
+operator.
+
+### Sheet → console screen mapping (Postgres-backed)
+
+| Sheets tab | Console screen | Postgres source |
+| :-- | :-- | :-- |
+| keyword ledger | **Keywords** (`/keywords`) | `keyword_ledger` (via `GET /sites/{slug}/queue`) |
+| research_data | **Research** (`/research`) — subject, intent, volume, difficulty, summary, primary/secondary keywords, Generated flag | `keyword_ledger` + `research_snapshot` JSON (`GET /sites/{slug}/research` — **new**) |
+| content_briefs | **Briefs** (`/briefs`) — brief content, FAQs, sources, summary; rows that have one | `keyword_ledger.research_snapshot.brief/faqs/sources` (`GET /sites/{slug}/briefs` — **new**) |
+| generated_posts + approved_unpublished | **Content** (`/articles`) — title, Quality Score, Summary, Approve/Disapprove + Published states | `articles` (`GET /articles`, rows extended with quality + summary) |
+| model_usage_log, image_logs, audit worksheets | **Logs** (`/logs`) — usage + audit + cost rows | `audit_log` (`action=usage.model`/`usage.image`/publish actions) + `cost_ledger` (`GET /logs` — **new**) |
+
+**Usage-log gap:** `log_model_usage`/`log_image_usage` append to Sheets only,
+so a `SHEETS_ENABLED=0` instance would lose every row. They now also append a
+best-effort `audit_log` row (payload = the sheet's columns) — the console
+Logs screen reads that on both instances; site #1 keeps its sheets too.
+
+### Console REST surface
 
 | Screen | Backing call (existing unless noted) |
 | :-- | :-- |
 | Dashboard: queue counts, site health | `GET /sdk/v1/sites`, `GET /sdk/v1/sites/{slug}/health` |
-| Queue (keywords/ledger) | `GET /sdk/v1/sites/{slug}/queue` — **landed** (rows + per-status counts, read-only; parity §B1) |
-| Briefs | `GET /sdk/v1/sites/{slug}/brief` — **landed** (read-only peek of next briefable row; no claim) |
-| Articles list + detail (view markdown, scores, FAQ) | `GET /sdk/v1/articles`, `GET /sdk/v1/articles/{id}`, `…/content` |
+| **Keywords** (ledger sheet) | `GET /sdk/v1/sites/{slug}/queue` — **landed** (rows + per-status counts, read-only; parity §B1) |
+| **Research** (research_data sheet) | `GET /sdk/v1/sites/{slug}/research` — **new** (keyword rows + `research_snapshot` research fields) |
+| **Briefs** (content_briefs sheet) | `GET /sdk/v1/sites/{slug}/briefs` — **new** (rows with `research_snapshot.brief`; the existing `…/brief` peek stays as "next briefable") |
+| **Logs** (usage + audit sheets) | `GET /sdk/v1/logs` — **new** (`audit_log` + `cost_ledger`, kind filter) |
+| **Content** list + detail (view markdown, scores, FAQ) | `GET /sdk/v1/articles` (rows + quality/summary), `GET /sdk/v1/articles/{id}`, `…/content` |
 | **Edit** content | `PATCH /sdk/v1/articles/{id}/content` — **landed** (updates `content_md`, edits logged to `meta.edit_log` + audit; approved → reopened to generated, published keeps status; no re-gate — regenerate is the re-score path) |
 | **Approve / reject** | `POST /sdk/v1/articles/{id}/approve` (exists) |
 | Publish / refresh / stage images | `POST …/publish`, `…/refresh`, `…/stage-images` (exist) |
 | WP + Elementor build | existing `/sdk/v1/wp/*`, `/sdk/v1/elementor/*` |
 | Run a stage | `POST /sdk/v1/run/{stage}` — **landed** (wraps `run_stage.STAGE_HANDLERS` in a background task; 404 unknown, 409 overlap, 503 if the engine can't import) |
+| Sites screen (create/upsert rows) | `POST /sdk/v1/sites` (upsert — existing) |
+| Instances screen (add/edit/remove/switch) | console-local `instances.json` merged with `CONSOLE_INSTANCES` env (no engine call) |
 
 Auth: operator password → session cookie; engine `API_KEY` stays server-side
 (route-handler/server-action pattern per Next.js docs: `verifySession()` guard,

@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from lib.db import Article, KeywordLedger, Site, get_session, init_db
+from lib.db import Article, AuditLog, KeywordLedger, Site, get_session, init_db
 from lib.ledger import briefable_rows, upsert_keyword
 from lib.site_env import is_shared_mode
 
@@ -256,6 +256,31 @@ def mirror_article(session: Session, *, title: str, content: str = "",
 # ---------------------------------------------------------------------------
 # The dual-write hook (called from tools/sheet_tool after a Sheets append)
 # ---------------------------------------------------------------------------
+def log_usage_event(kind: str, payload: dict) -> bool:
+    """Best-effort Postgres mirror for one usage-log row (console Logs screen).
+
+    The model/image usage worksheets are Sheets-only (not in SHEET_TARGETS),
+    so a SHEETS_ENABLED=0 instance would silently lose every row. Callers
+    append to Sheets as before AND call this; site #1 keeps both surfaces in
+    sync, instance 2 gets audit rows only. Writes audit_log
+    action="usage.<kind>". Never raises."""
+    if not str(kind or "").strip():
+        return False
+    try:
+        init_db()
+        session = get_session()
+        try:
+            session.add(AuditLog(action=f"usage.{str(kind).strip()}",
+                                 payload=dict(payload or {})))
+            session.commit()
+            return True
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"usage mirror failed for {kind} (non-fatal): {e}")
+        return False
+
+
 def mirror_sheet_append(worksheet_name: str, row_values: List[Any],
                         headers: Optional[List[str]] = None) -> bool:
     """Best-effort mirror of one appended Sheets row into Postgres.

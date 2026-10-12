@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { engine, EngineError } from "@/lib/engine";
 import { requireSession } from "@/lib/session";
-import { setCurrentInstance } from "@/lib/instances";
+import { removeInstance, saveInstance, setCurrentInstance } from "@/lib/instances";
 import { generateInstanceEnv } from "@/lib/provision";
 
 function errorOf(e: unknown): string {
@@ -18,6 +18,34 @@ export async function switchInstanceAction(formData: FormData) {
   if (!ok) redirect("/?err=" + encodeURIComponent(`unknown instance: ${name}`));
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+export async function saveInstanceAction(formData: FormData) {
+  await requireSession();
+  const name = String(formData.get("name") || "").trim();
+  try {
+    await saveInstance({
+      name,
+      baseUrl: String(formData.get("base_url") || ""),
+      apiKey: String(formData.get("api_key") || ""),
+    });
+  } catch (e) {
+    redirect("/instances?err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)));
+  }
+  revalidatePath("/", "layout");
+  redirect(`/instances?saved=${encodeURIComponent(name)}`);
+}
+
+export async function removeInstanceAction(formData: FormData) {
+  await requireSession();
+  const name = String(formData.get("name") || "");
+  try {
+    await removeInstance(name);
+  } catch (e) {
+    redirect("/instances?err=" + encodeURIComponent(e instanceof Error ? e.message : String(e)));
+  }
+  revalidatePath("/", "layout");
+  redirect(`/instances?removed=${encodeURIComponent(name)}`);
 }
 
 export async function createSiteAction(formData: FormData) {

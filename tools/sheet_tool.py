@@ -166,10 +166,15 @@ def log_model_usage(
 
     Deliberately synchronous: a deferred ``create_task()`` can be dropped if
     the process exits right after the caller returns, which is exactly what
-    happens in a one-shot GitHub Actions run."""
+    happens in a one-shot GitHub Actions run.
+
+    Every row is also mirrored to Postgres (audit_log action="usage.model")
+    so a SHEETS_ENABLED=0 instance keeps the log and the console Logs screen
+    reads the same rows on both instances."""
+    if not model:
+        return False
+    wrote_sheet = False
     try:
-        if not model:
-            return False
         spreadsheet = get_spreadsheet()
         ensure_worksheet_exists(MODEL_USAGE_WORKSHEET, MODEL_USAGE_HEADERS)
         worksheet = resolve_worksheet(spreadsheet, MODEL_USAGE_WORKSHEET)
@@ -184,10 +189,21 @@ def log_model_usage(
             ],
             value_input_option="USER_ENTERED",
         )
-        return True
+        wrote_sheet = True
     except Exception as e:
         logger.warning(f"model usage log append failed (non-fatal): {e}")
-        return False
+    try:
+        from lib.store import log_usage_event
+        wrote_pg = log_usage_event("model", {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "model": str(model), "agent": str(agent or "unknown"),
+            "stage": str(stage or "unknown"), "status": str(status),
+            "latency": f"{float(latency or 0.0):.1f}",
+        })
+    except Exception as e:
+        logger.warning(f"model usage mirror failed (non-fatal): {e}")
+        wrote_pg = False
+    return wrote_sheet or wrote_pg
 
 
 # Dedicated image-audit worksheet, kept separate from model_usage_log so
@@ -285,10 +301,27 @@ def log_image_usage(
             ],
             value_input_option="USER_ENTERED",
         )
-        return True
+        wrote_sheet = True
     except Exception as e:
         logger.warning(f"image log append failed (non-fatal): {e}")
-        return False
+        wrote_sheet = False
+    # Postgres mirror (console Logs screen; sheets-disabled instances keep
+    # the row as audit action="usage.image").
+    try:
+        from lib.store import log_usage_event
+        wrote_pg = log_usage_event("image", {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "model": str(model), "stage": str(stage or ""), "subject": str(subject or ""),
+            "status": str(status or ""), "reference": str(reference or ""),
+            "latency": f"{float(latency or 0.0):.1f}", "detail": str(detail or "")[:500],
+            "cost_usd": "" if cost_usd is None else f"{float(cost_usd):.4f}",
+            "slot": str(slot or ""), "latency_ms": f"{float(latency_ms or 0.0):.0f}",
+            "prompt": str(prompt or "")[:1000],
+        })
+    except Exception as e:
+        logger.warning(f"image usage mirror failed (non-fatal): {e}")
+        wrote_pg = False
+    return wrote_sheet or wrote_pg
 
 
 # In-process record of the keyword row get_keyword_tool claimed most recently

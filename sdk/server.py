@@ -16,11 +16,15 @@ Endpoints:
     POST /sdk/v1/articles/{id}/refresh    -> update an existing WP post in place
                                              (decay path; custom sites re-pull)
     GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
-                                             (html + markdown + meta + JSON-LD)    GET  /sdk/v1/sites                    -> list sites
+                                              (html + markdown + meta + JSON-LD)
+    GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
     GET  /sdk/v1/sites/{slug}/queue       -> keyword-ledger view (console; parity §B1)
     GET  /sdk/v1/sites/{slug}/brief       -> next briefable keyword (read-only peek)
+    GET  /sdk/v1/sites/{slug}/research    -> research_data worksheet view (console)
+    GET  /sdk/v1/sites/{slug}/briefs      -> content_briefs worksheet view (console)
+    GET  /sdk/v1/logs                     -> audit + cost ledger view (console)
     PATCH /sdk/v1/articles/{id}/content   -> operator edit of content_md (console)
     POST /sdk/v1/run/{stage}              -> trigger a pipeline stage in the
                                               background (console; 409 on overlap)
@@ -283,6 +287,35 @@ def get_brief(site_slug: str, x_site_key: str | None = Header(default=None)) -> 
     Returns {"status": "empty"} when the queue has nothing briefable."""
     _check_site_key(x_site_key)
     return _resolve(service.get_brief(site_slug))
+
+
+@router.get("/sites/{site_slug}/research")
+def get_research(site_slug: str, status: str = "", limit: int = 100,
+                 x_site_key: str | None = Header(default=None)) -> dict:
+    """research_data worksheet view (read-only): keyword rows with their
+    research snapshot — subject, summary, primary/secondary keywords,
+    Generated flag — for the console Research screen."""
+    _check_site_key(x_site_key)
+    return _resolve(service.list_research(site_slug, status=status, limit=limit))
+
+
+@router.get("/sites/{site_slug}/briefs")
+def get_briefs(site_slug: str, limit: int = 100,
+               x_site_key: str | None = Header(default=None)) -> dict:
+    """content_briefs worksheet view (read-only): rows whose snapshot
+    carries a brief — brief content, FAQs, sources, summary — for the
+    console Briefs screen."""
+    _check_site_key(x_site_key)
+    return _resolve(service.list_briefs(site_slug, limit=limit))
+
+
+@router.get("/logs")
+def get_logs(kind: str = "", limit: int = 200,
+             x_site_key: str | None = Header(default=None)) -> dict:
+    """Logs worksheet view (read-only): audit_log rows (kind = action
+    prefix, e.g. "usage" or "publish"; empty = all) + the cost ledger."""
+    _check_site_key(x_site_key)
+    return _resolve(service.list_logs(kind=kind, limit=limit))
 
 
 @router.patch("/articles/{article_id}/content")

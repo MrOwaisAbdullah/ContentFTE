@@ -4,3 +4,5 @@ next-env.d.ts
 .env
 .env.local
 *.tsbuildinfo
+# UI-managed engine instance registry (may contain API keys)
+instances.json

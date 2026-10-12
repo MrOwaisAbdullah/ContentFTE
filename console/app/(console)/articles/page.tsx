@@ -23,7 +23,10 @@ export default async function ArticlesPage({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-lg font-semibold">Articles</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Content (generated_posts + approved_unpublished)</h1>
+        <span className="text-xs text-slate-500">quality score + summary from the sheet columns</span>
+      </div>
 
       {err ? (
         <div className="rounded-md border border-red-900 bg-red-950/50 px-4 py-3 text-sm text-red-300">
@@ -58,6 +61,8 @@ export default async function ArticlesPage({
                 <th className="px-4 py-2">Title</th>
                 <th className="px-4 py-2">Site</th>
                 <th className="px-4 py-2">Status</th>
+                <th className="px-4 py-2 text-right">Quality</th>
+                <th className="px-4 py-2">Summary</th>
                 <th className="px-4 py-2">Created</th>
                 <th className="px-4 py-2 text-right">Cost</th>
               </tr>
@@ -71,7 +76,30 @@ export default async function ArticlesPage({
                     </Link>
                   </td>
                   <td className="px-4 py-2 text-xs text-slate-500">{a.site_slug}</td>
-                  <td className="px-4 py-2 text-xs text-slate-400">{a.status}</td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={`text-xs ${
+                        a.status === "published"
+                          ? "text-emerald-400"
+                          : a.status === "approved"
+                            ? "text-sky-400"
+                            : a.status === "needs_review"
+                              ? "text-amber-400"
+                              : "text-slate-400"
+                      }`}
+                    >
+                      {a.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right text-xs">
+                    {a.quality != null ? Number(a.quality).toFixed(1) : "—"}
+                  </td>
+                  <td
+                    className="max-w-sm truncate px-4 py-2 text-xs text-slate-400"
+                    title={a.summary}
+                  >
+                    {a.summary || "—"}
+                  </td>
                   <td className="px-4 py-2 text-xs text-slate-500">
                     {a.created_at ? a.created_at.slice(0, 10) : "—"}
                   </td>

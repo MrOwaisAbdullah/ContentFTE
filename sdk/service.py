@@ -31,7 +31,7 @@ from sqlalchemy import func, select
 
 from lib import custom_site
 from lib import generation
-from lib.db import Article, Article as ArticleModel, AuditLog, KeywordLedger, Site, get_session, init_db
+from lib.db import Article, Article as ArticleModel, AuditLog, CostLedger, KeywordLedger, Site, get_session, init_db
 from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 from lib.taxonomy import derive_taxonomy
@@ -148,6 +148,10 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
                 "title": a.title, "slug": _resolve_slug(a), "status": a.status,
                 "created_at": _iso(a.created_at), "published_at": _iso(a.published_at),
                 "cost_usd": a.cost_usd,
+                # console Content screen (generated_posts sheet parity):
+                # Quality Score + Summary columns, still no html/markdown.
+                "quality": (a.scores or {}).get("quality"),
+                "summary": (a.meta or {}).get("summary", ""),
             })
         return {"articles": articles, "count": len(articles), "total": total,
                 "limit": limit, "offset": offset}
@@ -211,6 +215,113 @@ def get_brief(site_slug: str) -> dict:
                 "intent_value": INTENT_VALUE.get((r.intent or "").lower(), 1.0),
                 "research_snapshot": r.research_snapshot,
                 "ledger_id": r.id, "status": r.status}
+    finally:
+        s.close()
+
+
+def list_research(site_slug: str, status: str = "", limit: int = 100) -> dict:
+    """Read-only research_data view for the console (Sheets parity).
+
+    One row per keyword carrying the research worksheet's columns:
+    subject, intent, volume, difficulty, content summary, primary/secondary
+    keywords, and Generated (= a brief exists in the snapshot)."""
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        q = select(KeywordLedger).where(KeywordLedger.site_id == site.id)
+        if (status or "").strip():
+            q = q.where(KeywordLedger.status == status.strip())
+        rows = s.execute(q.order_by(KeywordLedger.id.desc()).limit(limit)).scalars()
+        research = []
+        for r in rows:
+            snap = r.research_snapshot or {}
+            research.append({
+                "id": r.id, "keyword": r.keyword, "status": r.status,
+                "intent": r.intent, "volume": r.volume, "difficulty": r.difficulty,
+                "subject": snap.get("subject", ""),
+                "summary": snap.get("summary", ""),
+                "primary_keyword": snap.get("primary_keyword", ""),
+                "secondary_keywords": snap.get("secondary_keywords", ""),
+                "generated": bool(snap.get("brief")),
+                "added_at": _iso(r.added_at),
+            })
+        return {"site": site.slug, "research": research, "count": len(research)}
+    finally:
+        s.close()
+
+
+def list_briefs(site_slug: str, limit: int = 100) -> dict:
+    """Read-only content_briefs view for the console (Sheets parity).
+
+    Only rows whose research snapshot carries a brief (the content_briefs
+    worksheet shape: brief content, FAQs, sources, summary, secondary
+    keywords). Newest first; limit applies after the filter."""
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        # Over-fetch: the brief lives in JSON, so the filter runs in Python.
+        rows = s.execute(
+            select(KeywordLedger).where(KeywordLedger.site_id == site.id)
+            .order_by(KeywordLedger.id.desc()).limit(max(100, limit * 5))
+        ).scalars()
+        briefs = []
+        for r in rows:
+            snap = r.research_snapshot or {}
+            if not snap.get("brief"):
+                continue
+            if len(briefs) >= limit:
+                break
+            briefs.append({
+                "id": r.id, "keyword": r.keyword, "status": r.status,
+                "intent": r.intent,
+                "brief": snap.get("brief", ""),
+                "faqs": snap.get("faqs", ""),
+                "sources": snap.get("sources", ""),
+                "summary": snap.get("summary", ""),
+                "secondary_keywords": snap.get("secondary_keywords", ""),
+            })
+        return {"site": site.slug, "briefs": briefs, "count": len(briefs)}
+    finally:
+        s.close()
+
+
+def list_logs(kind: str = "", limit: int = 200) -> dict:
+    """Read-only logs view for the console (Sheets usage/audit parity).
+
+    Returns audit rows (action-prefix filtered by `kind`: "usage" ->
+    usage.model + usage.image rows, "publish" -> publish decisions; empty
+    = all) plus the per-article cost ledger (llm|image|data|total)."""
+    init_db()
+    s = get_session()
+    try:
+        k = (kind or "").strip()
+        audit: list[dict] = []
+        if k != "cost":
+            aq = select(AuditLog)
+            if k:
+                aq = aq.where(AuditLog.action.startswith(k))
+            audit_rows = s.execute(
+                aq.order_by(AuditLog.id.desc()).limit(limit)
+            ).scalars()
+            audit = [{"id": a.id, "action": a.action, "article_id": a.article_id,
+                      "payload": a.payload or {}, "created_at": _iso(a.created_at)}
+                     for a in audit_rows]
+        costs = []
+        if not k or k == "cost":
+            for c in s.execute(
+                select(CostLedger).order_by(CostLedger.id.desc()).limit(limit)
+            ).scalars():
+                costs.append({"id": c.id, "article_id": c.article_id, "kind": c.kind,
+                              "amount_usd": c.amount_usd, "detail": c.detail or {},
+                              "created_at": _iso(c.created_at)})
+        return {"audit": audit, "costs": costs, "kind": k,
+                "count": len(audit) + len(costs)}
     finally:
         s.close()
 

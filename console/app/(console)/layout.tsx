@@ -4,27 +4,33 @@ import { logoutAction } from "@/actions/auth";
 import { switchInstanceAction } from "@/actions/instances";
 import { currentInstance, registry } from "@/lib/instances";
 
+// Sheet-tab order (spec §5): the console mirrors the Google Sheets workbook —
+// keywords, research, brief, content, logs — then the instance/tooling screens.
 const NAV = [
   { href: "/", label: "Dashboard" },
-  { href: "/queue", label: "Queue" },
-  { href: "/articles", label: "Articles" },
-  { href: "/stages", label: "Stages" },
+  { href: "/keywords", label: "Keywords" },
+  { href: "/research", label: "Research" },
+  { href: "/briefs", label: "Briefs" },
+  { href: "/articles", label: "Content" },
+  { href: "/logs", label: "Logs" },
   { href: "/sites", label: "Sites" },
+  { href: "/instances", label: "Instances" },
+  { href: "/stages", label: "Stages" },
   { href: "/provision", label: "Provision" },
 ];
 
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
   await requireSession();
-  const instances = registry();
+  const instances = await registry();
   const current = await currentInstance();
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-800 bg-slate-900/60">
-        <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
           <span className="text-sm font-semibold tracking-wide text-sky-400">
             ContentFTE
           </span>
-          <nav className="flex gap-4 text-sm text-slate-300">
+          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-300">
             {NAV.map((n) => (
               <Link key={n.href} href={n.href} className="hover:text-white">
                 {n.label}

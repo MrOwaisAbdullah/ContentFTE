@@ -62,7 +62,12 @@ export default async function DashboardPage() {
         </div>
 
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <h2 className="mb-3 text-sm font-medium text-slate-400">Queue counts</h2>
+          <h2 className="mb-3 text-sm font-medium text-slate-400">
+            Keyword counts{" "}
+            <Link href="/keywords" className="text-xs text-sky-400 hover:underline">
+              ledger →
+            </Link>
+          </h2>
           {!queue ? (
             <p className="text-sm text-slate-500">—</p>
           ) : (
@@ -70,7 +75,7 @@ export default async function DashboardPage() {
               {Object.entries(queue.counts).map(([status, n]) => (
                 <Link
                   key={status}
-                  href={`/queue?status=${encodeURIComponent(status)}`}
+                  href={`/keywords?status=${encodeURIComponent(status)}`}
                   className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs"
                 >
                   {status} <span className="text-sky-400">{n}</span>

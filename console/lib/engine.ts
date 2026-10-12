@@ -98,6 +98,8 @@ export interface ArticleListItem {
   created_at: string | null;
   published_at: string | null;
   cost_usd: number | null;
+  quality?: number | null;
+  summary?: string;
 }
 
 export interface ArticleList {
@@ -106,6 +108,72 @@ export interface ArticleList {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** research_data worksheet row (GET /sites/{slug}/research). */
+export interface ResearchItem {
+  id: number;
+  keyword: string;
+  status: string;
+  intent: string;
+  volume: number;
+  difficulty: number;
+  subject: string;
+  summary: string;
+  primary_keyword: string;
+  secondary_keywords: string;
+  generated: boolean;
+  added_at: string | null;
+}
+
+export interface ResearchView {
+  site: string;
+  research: ResearchItem[];
+  count: number;
+}
+
+/** content_briefs worksheet row (GET /sites/{slug}/briefs). */
+export interface BriefItem {
+  id: number;
+  keyword: string;
+  status: string;
+  intent: string;
+  brief: string;
+  faqs: string;
+  sources: string;
+  summary: string;
+  secondary_keywords: string;
+}
+
+export interface BriefsView {
+  site: string;
+  briefs: BriefItem[];
+  count: number;
+}
+
+/** audit_log row (GET /logs). */
+export interface LogEntry {
+  id: number;
+  action: string;
+  article_id: number | null;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface CostEntry {
+  id: number;
+  article_id: number;
+  kind: string;
+  amount_usd: number;
+  detail: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface LogsView {
+  audit: LogEntry[];
+  costs: CostEntry[];
+  kind: string;
+  count: number;
 }
 
 export interface ArticleDetail {
