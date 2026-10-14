@@ -444,6 +444,32 @@ class FallbackAgentRunner(AgentRunner):
             if "tool" in msg and not any(x in msg for x in ["model", "rate limit", "quota", "429", "llm", "openai", "gemini", "cohere", "provider"]):
                 return False
             return True
+        # Transport failures: the endpoint itself is unreachable or hung
+        # (gemini-free-router stopped, connection refused/reset, read timeout)
+        # -- NOT a caller bug. Routing policy is gemini-free-router primary,
+        # OpenRouter fallback, so these MUST fail over to the next provider
+        # instead of aborting the run. Found by live test: with the router
+        # process stopped, openai.APIConnectionError("Connection error.")
+        # matched nothing below and raised "Non-LLM error" with no fallback.
+        if isinstance(e, ConnectionError):
+            return True
+        try:
+            from openai import APIConnectionError as _OpenAIConnectionError
+            # APITimeoutError subclasses APIConnectionError in openai>=1.x,
+            # so a hung router (accepts, never responds) also fails over.
+            if isinstance(e, _OpenAIConnectionError):
+                return True
+        except Exception:
+            pass
+        for keyword in (
+            "connection error", "connection refused", "connection reset",
+            "connection aborted", "connection attempts failed",
+            "getaddrinfo", "name resolution", "name or service not known",
+            "network error", "unreachable", "eof occurred", "broken pipe",
+            "timed out",
+        ):
+            if keyword in msg:
+                return True
         # 2. Exclude user/guardrail errors (assuming these are defined in your code)
         # if isinstance(e, (UserError, InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered)):
         #     return False
