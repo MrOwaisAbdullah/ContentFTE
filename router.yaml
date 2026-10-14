@@ -1,0 +1,57 @@
+# gemini-free-router config for the contentfte SEO Blog Agent.
+# Start:  npm run router        (loads .env for GEMINI_API_KEY)
+# Point clients at: http://127.0.0.1:8787/v1  (GFR_BASE_URL in .env)
+#
+# fleet_mode: merge — the router's built-in fleet (11 models, limits captured
+# from aistudio.google.com/rate-limit) is the base; only the entries below are
+# overlaid/appended. Explicit numbers below are never scaled by plan.
+project: contentfte
+listen:
+  host: 127.0.0.1
+  port: 8787
+
+fleet_mode: merge
+fleet:
+  # --- Models the blog agent requests that are NOT in the router's built-in
+  # fleet. Without these the router would silently auto-pick a different model
+  # for those requests (resolveModel falls back to any candidate).
+  # gemini-flash-latest: 20 RPD / 5 RPM (AI Studio flash row).
+  - { model: gemini-flash-latest, rpm: 5, rpd: 20, tpm: 250000, tier: scarce }
+  # Gemma 4 small models: 30 RPM / 16K TPM / 14,400 RPD — small-task tier.
+  # BOTH DISABLED (confirmed broken-for-routing 2026-10-15, not just 500ing):
+  #   - A "Say OK" direct probe returns 200, so a shallow health check passes,
+  #     BUT on real prompts gemma-4-31b-it returns HTTP 200 with finishReason=STOP
+  #     and EMPTY content (empty completion to the client — a 200 never triggers
+  #     router failover), or verbose planning text that ignores the instruction
+  #     ("Reply with exactly: ROUTER_OK" -> an essay ABOUT the request, not the
+  #     string). gemini-3.5-flash-lite returns exactly "ROUTER_OK" for the same
+  #     prompt. Combined with gemma's 14,400 RPD it is always auto-picked first,
+  #     so it poisons every auto-pick request. Keep disabled until a probe with
+  #     a REAL instruction-following prompt (not "Say OK") returns the exact
+  #     expected string:
+  #     curl -s -H "x-goog-api-key: $GEMINI_API_KEY" -H "content-type: application/json" \
+  #       -d '{"contents":[{"role":"user","parts":[{"text":"Reply with exactly: ROUTER_OK"}]}]}' \
+  #       https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent
+  - { model: gemma-4-26b-a4b-it, rpm: 30, rpd: 14400, tpm: 16000, tier: bulk }
+  - { model: gemma-4-31b-it, rpm: 30, rpd: 14400, tpm: 16000, tier: bulk }
+
+# Dead-on-upstream entries burn failover slots and can surface as empty
+# content_filter responses (observed live) — keep them out until healthy.
+# 26b 500s on direct probes; 31b 200s but returns empty/ignores instructions
+# (see note above, 2026-10-15).
+disabled:
+  - gemma-4-26b-a4b-it
+  - gemma-4-31b-it
+
+pacing:
+  max_queue_wait_s: 30
+  burn_curve: even
+
+# Auto-apply limits learned from real 429 payloads (same as GFR_LEARN=1) —
+# converges to the account's true rpm/rpd/tpm instead of guessed defaults.
+# Changing rpm/rpd/tpm in this file clears the learned value for that model.
+learning:
+  auto_apply: true
+
+modalities: [chat]
+ledger_path: ./data/ledger.sqlite

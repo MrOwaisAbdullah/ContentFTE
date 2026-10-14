@@ -181,3 +181,9 @@ test_*.jpg
 tmp*.png
 
 test-sites/
+
+# gemini-free-router runtime state (quota ledger persisted across CI runs via actions/cache)
+data/
+router.log
+router.pid
+

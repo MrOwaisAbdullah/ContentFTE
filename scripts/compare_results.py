@@ -42,7 +42,12 @@ JUDGE_MODELS = [m.strip() for m in os.environ.get(
     "COMPARE_JUDGE_MODELS",
     "gemini-3.5-flash,gemini-3.6-flash,gemini-flash-latest,gemini-3.5-flash-lite",
 ).split(",") if m.strip()]
-JUDGE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+# Overridable to point judges at the local gemini-free-router
+# (GFR_BASE_URL=http://127.0.0.1:8787/v1); default stays direct Google.
+JUDGE_URL = os.environ.get(
+    "JUDGE_URL",
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+)
 
 WEIGHTS = {"facts": 30, "style": 20, "seo": 20, "tone": 10, "structure": 10, "images": 5, "length": 5}
 

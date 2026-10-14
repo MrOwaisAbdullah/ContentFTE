@@ -251,6 +251,23 @@ class FallbackAgentRunner(AgentRunner):
 
     def get_gemini_client(self):
         from agents import AsyncOpenAI
+        # gemini-free-router (npm: gemini-free-router): when GFR_BASE_URL is
+        # set, every Gemini chat call goes through the local router instead of
+        # Google directly. The router owns quota scheduling -- per-model
+        # RPM/RPD/TPM sliding windows, queueing (up to 30s), 429 forensics
+        # learning, and failover across its fleet -- so the direct-Google path
+        # below stays the default only until the operator opts in by setting
+        # GFR_BASE_URL (e.g. http://127.0.0.1:8787/v1). Start the router with
+        # `npm run router`; if it isn't running, calls fail fast (Connection
+        # error) rather than silently double-billing Google.
+        gfr_base = (os.environ.get("GFR_BASE_URL") or "").strip().rstrip("/")
+        if gfr_base:
+            # Router ignores Authorization unless GFR_TOKEN is configured on
+            # it, in which case that same token is the client api_key.
+            return AsyncOpenAI(
+                base_url=gfr_base,
+                api_key=os.environ.get("GFR_TOKEN") or "router",
+            )
         return AsyncOpenAI(
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             api_key=os.environ['GEMINI_API_KEY']

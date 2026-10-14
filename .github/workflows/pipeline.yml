@@ -135,6 +135,54 @@ jobs:
         with:
           enable-cache: true
 
+      # --- gemini-free-router: local quota scheduler in front of Gemini ---
+      # Every Gemini call in this run goes through the router (GFR_BASE_URL on
+      # the Run stage step), which owns per-model RPM/RPD/TPM windows, queues
+      # up to 30s instead of burning a 429, and learns real limits from 429
+      # payloads (GFR_LEARN=1). The quota ledger (data/) is restored from and
+      # saved back to the actions cache so RPD spend and learned limits carry
+      # over between runs -- each run's save uses a unique run-scoped key and
+      # restore falls back to the most recent gfr-ledger-* entry. The existing
+      # `concurrency: contentspark-pipeline` group serializes runs, which is
+      # what keeps those cache writes from clobbering each other.
+      - name: Setup Node (gemini-free-router)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install gemini-free-router
+        run: npm ci
+
+      - name: Restore router quota ledger
+        uses: actions/cache/restore@v4
+        with:
+          path: data/
+          key: gfr-ledger-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            gfr-ledger-
+
+      - name: Start gemini-free-router
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GFR_LOG: info
+          GFR_LEARN: "1"
+        run: |
+          # node_modules/.bin shims `exec` node, so router.pid IS the node
+          # process and SIGTERM below reaches the ledger-flush handler.
+          nohup ./node_modules/.bin/gemini-free-router --config router.yaml > router.log 2>&1 &
+          echo $! > router.pid
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8787/healthz > /dev/null; then
+              echo "gemini-free-router up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "gemini-free-router failed to start:" >&2
+          cat router.log >&2
+          exit 1
+
       # contextual_image_insertion_agent (the only caller of
       # capture_screenshot_tool, tools/screenshot_tool.py) runs inside
       # run_posting_workflow(), which the POST stage calls -- NOT content.
@@ -168,6 +216,9 @@ jobs:
 
       - name: Run stage
         env:
+          # Route every Gemini chat call through the local router started
+          # above (quota scheduling). Unset = legacy direct-to-Google path.
+          GFR_BASE_URL: http://127.0.0.1:8787/v1
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
@@ -207,3 +258,25 @@ jobs:
           # timestamps actually reflect when something happened.
           PYTHONUNBUFFERED: "1"
         run: uv run python -u scripts/run_stage.py --stage "${{ steps.resolve.outputs.stage }}"
+
+      # Quota spent during the run must survive even when the stage failed --
+      # SIGTERM makes the router flush its ledger before exiting, then the
+      # cache save below persists data/ for the next run (unique run-scoped
+      # key, so an already-restored key never collides).
+      - name: Stop gemini-free-router (flush quota ledger)
+        if: always()
+        run: |
+          if [ -f router.pid ]; then
+            kill -TERM "$(cat router.pid)" || true
+            # Give the SIGTERM handler time to ledger.close() -> flush.
+            sleep 2
+          fi
+          echo "--- router.log tail ---"
+          tail -n 50 router.log || true
+
+      - name: Save router quota ledger
+        if: always() && hashFiles('data/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: gfr-ledger-${{ github.run_id }}-${{ github.run_attempt }}
