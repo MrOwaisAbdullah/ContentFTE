@@ -11,6 +11,20 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — gemini-free-router via npm: local Gemini proxy, cross-run quota persistence, OpenRouter fallback
+
+**Branch:** `feature/router-integration` → `master` · **Commits:** `5bf8f51`, `2637ac3`, `8519676`, `d54665b`
+
+**What** — Gemini traffic now runs through the `gemini-free-router` npm package (published 0.2.0 → 0.3.0 by this work) as a local proxy: `GFR_BASE_URL` in `.env` flips `blog_agent/custom_runner.py::get_gemini_client()` to `http://127.0.0.1:8787/v1` (unset = legacy direct-Google fail-safe, inactive in practice). `router.yaml` uses `fleet_mode: merge` (fleet=12) with both gemma-4 models **disabled**: 2026-10-15 instruction-following probes showed gemma-4-31b-it answering HTTP 200 with empty content or planning text that ignores the prompt — a 200 never triggers failover, and its 14,400 RPD would poison auto-picks. Vision QA routes through the router too (`IMAGE_VLM_ENDPOINT` → router ≥ 0.3.0, which translates `image_url` → `inline_data`/`file_data`; a 0.2.x router silently drops images, so the floor is documented in `.env.example`). The judge (`scripts/compare_results.py`) follows the same policy: explicit `JUDGE_URL` > `GFR_BASE_URL + /chat/completions` > legacy direct Google.
+
+**Quota persistence across CI runners** — `pipeline.yml` starts the router per run and round-trips `data/` through `actions/cache` (run-scoped key `gfr-ledger-${{ github.run_id }}-${{ github.run_attempt }}`, restore-prefix `gfr-ledger-`), with `concurrency: contentspark-pipeline` serializing runs and a SIGTERM stop + cache save on `if: always()`. First CI dispatch (run `38628120374`, stage=content) succeeded with every router step green and cache `gfr-ledger-38628120374-1` saved — free-tier accounting now survives ephemeral runners ("no reset"). `IMAGE_VLM_ENDPOINT` added to the stage job env so vision lands in the same ledger.
+
+**Validation (live, this session)** — `scripts/test_router_integration.py` green (`ALL CHECKS PASSED`, fleet=12, gemma disabled). T1 real generation via router (860-word article, ledger `served:1`). T3 fleet-exhausted router → 429 `code=free_tier_exhausted` + `retry-after` → chain walked all 9 Gemini models → `deepseek-v4-flash` via OpenRouter. T2 router STOPPED → `APIConnectionError("Connection error.")` had been classified non-LLM and *aborted* the run (defect) → fixed in `is_llm_error` (builtin `ConnectionError`, openai `APIConnectionError`/`APITimeoutError`, connection/DNS/timeout keywords are now retryable) → re-test `DOWN_OK`. Service-layer E2E (`submit_article` → `generate_content` → `get_article`): briefed→drafted, revise loop fired (809w < 900 floor → auto-revise → accepted), persisted delivery payload, $0.0034 / 24,285 tokens, test rows cleaned (5 real articles untouched). Engine suite **408 passed / 1 skipped**, incl. fixing `_INPOST_IMAGE_RE` (`[^)\s]+` → `[^)]+`): space-containing Windows image paths truncated at the first space, so the featured-image rescue skipped perfectly good AI images.
+
+**Also** — `npm pkg fix` in the router repo (bin-path normalization, `958e868`); docs added: `docs/router-guide.md`, `docs/quota-persistence.md`, `docs/contentfte-integration.md` (AS-IMPLEMENTED table); `.env.example` router/vision/judge block; TASKS.md A4. Untracked by design: `docs/SPEC Free Gemini Router.md`.
+
+---
+
 ## 2026-10-12 — Site #2 spec, tenancy, Postgres cutover 3a/3b, operator console
 
 **Branch:** `master` · **Commits:** `0fed8a4`, `78d7d80`, `42b2487`, `03216d0`, `ef77644`, `152a800`, `9ed7e29`, `576734b`, `f1fa283`, `0bf74c0`, `47cc61e`
