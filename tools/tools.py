@@ -1425,7 +1425,10 @@ def select_inpost_image_tool(topic: str, section_summary: str = "",
     decision) like the other image tools."""
     return _select_inpost_image(topic, section_summary, alt_text)
 
-_INPOST_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+# Group 2 is ([^)]+), NOT ([^)\s]+): local image paths can contain spaces
+# (Windows user profiles do), and a \s-excluding class truncates at the
+# first one -- the captured URL is .strip()ed at the use site.
+_INPOST_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
 def _promote_inpost_ai_image(content: str) -> "tuple[Optional[str], Optional[str]]":

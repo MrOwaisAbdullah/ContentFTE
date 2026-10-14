@@ -219,6 +219,10 @@ jobs:
           # Route every Gemini chat call through the local router started
           # above (quota scheduling). Unset = legacy direct-to-Google path.
           GFR_BASE_URL: http://127.0.0.1:8787/v1
+          # Vision QA (lib/image_vision.py) through the same router so image
+          # calls land in the same quota ledger -- the direct-Google default
+          # would bypass it. Needs gemini-free-router >= 0.3.0 (image parts).
+          IMAGE_VLM_ENDPOINT: http://127.0.0.1:8787/v1/chat/completions
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
