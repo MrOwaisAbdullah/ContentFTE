@@ -4,6 +4,6 @@
     "router": "gemini-free-router --config router.yaml"
   },
   "dependencies": {
-    "gemini-free-router": "^0.2.0"
+    "gemini-free-router": "^0.3.0"
   }
 }
