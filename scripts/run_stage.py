@@ -1933,6 +1933,12 @@ async def run_search_performance_review() -> None:
         return
 
     impressions = perf["impressions"]
+    # ctr/position are read here, before the low-impressions early return --
+    # that return logs them, and when they were assigned below it (after the
+    # return), any post picked with < SEARCH_PERFORMANCE_MIN_IMPRESSIONS
+    # crashed the whole stage with `name 'ctr' is not defined`.
+    ctr = perf["ctr"]
+    position = perf["position"]
     if impressions < SEARCH_PERFORMANCE_MIN_IMPRESSIONS:
         msg = f"'{title}' has only {impressions:.0f} impressions in 28 days -- not enough data to judge yet."
         print(f"[search_performance_review] {msg}")
@@ -1940,8 +1946,6 @@ async def run_search_performance_review() -> None:
         _log_performance_review(title, page_url, impressions, perf.get("clicks", 0), ctr, position, "Low impressions (< 50)", "", "insufficient_data")
         return
 
-    ctr = perf["ctr"]
-    position = perf["position"]
     finding = None
     suggested_edit = None
 
