@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — New gemini-router skill: the integration is now teachable (the old guides were still v0.2.0)
+
+**Commits:** `53e7187`
+
+**What** — No skill existed for `gemini-free-router`, and the three tracked router docs (`docs/router-guide.md`, `docs/contentfte-integration.md`, `docs/quota-persistence.md`) all describe the **v0.2.0** era — written before the two rounds of silent-failure fixes this repo then depended on (0.3.0 image parts, 0.4.0 function-calling translation + `thoughtSignature`, 0.4.1 Gemini tool-schema dialect; the repo pin is `^0.4.1`). An agent following those guides would have integrated a router that silently drops images and tools. New tracked public skill `skills/gemini-router/` (`SKILL.md` + `references/config.md` + `references/ops-and-ci.md`): version floors FIRST (with the exact symptom per floor), install/config including the "Say OK" probe-lies lesson, OpenAI client wiring (`model: "auto"`, vision parts, function calling), run + `/healthz` + `/admin`, app-side fallback policy (429 `free_tier_exhausted` vs retryable transport failures), the verified GitHub Actions wiring (ledger cache restore/save, health wait loop, SIGTERM flush, concurrency serialization), the three-check integration gate, and a troubleshooting table. Pointers added: README AI-agents block; superseded banners on the two v0.2.0 guides and quota-persistence; and `contentfte-integration.md`'s "AS IMPLEMENTED" row corrected — both gemma-4 models are disabled (the "Say OK" probe was the lie, not the model).
+
+**Verified** — every claim in the skill traces to a live-verified fact already in this repo: gemma 200-with-empty-content probes (2026-10-15), 0.4.0 function calling + `thoughtSignature` (router repo `918c27a`, 112/112 router tests; SDK round-trip re-verified here), 0.4.1 schema dialect (re-verified with the exact agno dialect), image parts on 0.3.0 (live `prompt_tokens: 1072`), the ledger cache pattern (`pipeline.yml`), and `scripts/test_router_integration.py` (`ALL CHECKS PASSED` on 0.4.1). Docs/artifact-only change — no code touched, suite unaffected (last run 423 passed / 1 skipped).
+
+**Notes** — The skill registers as `gemini-router` (frontmatter parsed by the agent harness). Historical docs stay as-is behind their banners; `TASKS.md` rows untouched (dated tracker).
+
+---
+
 ## 2026-10-15 — In-post looks become a Jev decision: theme-matched directions, VLM-verified theme lane, rotate-on-retry
 
 **Commits:** `0a2be99`
