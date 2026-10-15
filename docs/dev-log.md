@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — First live content run through the router: two undefined-name crashes fixed in `run_stage.py`
+
+**Commits:** `ce8b074`, `dd2ed1a`
+
+**What** — The content stage (CI, on `6b112b0`) generated a complete post — title, 6 FAQs, TL;DR, repurpose bundle, video-script seed, Quality Score **92** (the eval loop had revised a 58 draft) — then died with `Stage 'content' failed: name 'source_brief' is not defined`, exit 1. Not an agent bug and not a router bug: `scripts/run_stage.py::_ensure_content_persisted()` — the deterministic save the stage falls back to when the agent doesn't append the row to `generated_posts` itself — read `source_brief`, a name that only exists as a local inside `run_content()`. Any such run crashed *after* paying for the whole generation, with nothing persisted. The function now takes the brief explicitly (mirroring `_enforce_keyword_gate`) and reads Secondary Keywords once via a shared `_brief_secondary_keywords()` helper — written on both the append path and the malformed-row repair path (the repair path used to blank that column).
+
+**Second fix, same class** — a pyflakes sweep of the file caught a latent twin from `b3fcf1a` (2026-09-17): `run_search_performance_review()`'s low-impressions branch logs `ctr`/`position`, but both were assigned *after* the early return — the first weekly review whose rotation picked a post with < 50 impressions would have red-failed the same way. Fixed by lifting the two reads above the check (`get_page_performance` always returns the full dict, so this is safe).
+
+**Verified** — regression test drives `_ensure_content_persisted`'s append path against a stubbed sheet and asserts the persisted row carries the brief's Secondary Keywords; `tests/test_keyword_flow.py` 19 passed / 1 skipped; full suite **409 passed / 1 skipped**; `pyflakes scripts/run_stage.py` clean. Remaining live check: re-dispatch the content stage — the failed run persisted nothing (`content_briefs` row still `Generated=No`), so the same brief gets picked up and regenerated cleanly.
+
+---
+
 ## 2026-10-15 — gemini-free-router via npm: local Gemini proxy, cross-run quota persistence, OpenRouter fallback
 
 **Branch:** `feature/router-integration` → `master` · **Commits:** `5bf8f51`, `2637ac3`, `8519676`, `d54665b`
