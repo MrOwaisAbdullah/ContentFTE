@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — jev-1.14 adopted for text; live probe proved native images need TypeSafe's direct API
+
+**Commits:** `5618352`
+
+**What** — TypeSafe's jev-1.14 (released 2026-10-14) ships native image input ("danger zone"), a Box question type, and 262K long-context. Before wiring it, we probed the surface this repo actually calls (~15 live calls, <$0.0002 total): `typesafe/jev-1.14` works for text over `POST https://openrouter.ai/api/alpha/decisions` (response echoes the resolved snapshot `typesafe/jev-1.14-20261014`) — but the route **silently drops `assets`**: invalid base64 still 200s, the documented "every asset must be referenced or 400" rule is not enforced, two visually opposite images produce identical near-uniform answers, and `input_tokens` never scale with image size. OpenAI-style `input_image` parts are 400 (`state`/`questions` validation — the alpha route is System One format only), `/api/v1/decisions` is 404, multipart is rejected, and `typesafe/jev-router` doesn't exist on this route. Native images are documented only on TypeSafe's direct API (`https://api.typesafe.ai/v1/systemone` + `TYPESAFE_API_KEY` + `TypeSafe-Danger-Zone-Images: true`), which this repo doesn't have — so the VLM caption→judge bridge stays for image gates and we pinned `typesafe/jev-1.14` (exact id, not the moving `jev-preview`/`~typesafe/jev-latest` aliases) for text decisions in `lib/jev.py`, `discord_bot/jev_helper.py`, `.env`/`.env.example`.
+
+**Verified** — smoke through the repo's own `call_jev_sync` on the new pin: resolved `typesafe/jev-1.14-20261014`, 370 in-tokens, $0.0000155; full pytest suite **409 passed / 1 skipped**. The local (gitignored) `.claude/skills/jev-system-one` docs got the full surface matrix + the 1.14 image-assets spec so nobody re-learns it by probing.
+
+**Open** — moving image QA to direct-pixel Jev calls needs a `TYPESAFE_API_KEY` (decision pending). In-post image variety (slot-aware prompts + QA gate) remains queued as its own workstream.
+
+---
+
 ## 2026-10-15 — First live content run through the router: two undefined-name crashes fixed in `run_stage.py`
 
 **Commits:** `ce8b074`, `dd2ed1a`
