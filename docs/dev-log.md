@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — In-post looks become a Jev decision: theme-matched directions, VLM-verified theme lane, rotate-on-retry
+
+**Commits:** `0a2be99`
+
+**What** — The morning's variety fix still picked the look with a blind hash, and half the styles were generic (flat-vector, duotone-poster) rather than native to the site's visual world. Both halves changed. (1) **Jev picks the look**: `lib/image_vision.choose_inpost_style()` is ONE batched decision — six Nouls, one per candidate art direction, judged against the section's title/summary — ranked best-first; `tools._resolve_inpost_styles()` turns that ranking into the attempt plan, `_generate_image` prompts the top pick, and a theme-lane failure promotes the next-ranked look for the retry (fresh prompt, no old-image reference — a new style is not an edit of the old image). Jev unreachable → the deterministic hash pick (`_pick_inpost_style`, now fallback-only) so image generation never blocks on the decision service. (2) **The looks now match the theme**: all six directions were rewritten inside the site's visual world (deep navy + electric blue/cyan, violet/magenta/amber, premium cinematic finish) — editorial-3d, cinematic-photo, technical-blueprint, isometric-diorama, cinematic-macro, glow-graphic — and the template gained a "site visual world" paragraph every attempt inherits. In-post QA is now topic + clean + **`theme_fit`** (`IMAGE_THEME_THRESHOLD=0.55`, env-tunable): loose enough that any clean medium passes, tight enough to bounce clip-art/generic looks, and the judge is explicitly told NOT to reward copying the hero thumbnail. `revision_guidance` gained a theme-drift branch; the `qa` block, per-attempt trace and image_logs summary row all carry `theme_fit`, `style_pick`, `style_source`, `style_scores`.
+
+**Verified** — suite **423 passed / 1 skipped** (6 new/updated tests: Jev ranking order + state, fail-open, theme lane pass/fail, hash fallback, rotate-on-theme-failure asserting the rotated attempt carries no revision block). Live single attempt (`IMAGE_MAX_REVISIONS=1`, ~$0.0012 + $0.000032 for the style call): the style decision returned a real, discriminating ranking for "prompt caching" — technical-blueprint 0.82, glow-graphic 0.80, isometric-diorama 0.74, editorial-3d 0.73, cinematic-photo 0.66, cinematic-macro 0.61 — the top pick was the one prompted (`style_source=jev`), and the VLM+Jev gate judged the real pixels `clean=0.96`, `theme=0.72`, `text_seen=none`. The topic lane scored 0.45 on that single cheap-4b attempt (no escalation at max_revisions=1); a full run retries via guidance / 9b as before.
+
+**Notes** — Retry semantics now split by failure kind: a theme-lane miss rotates the look; a topic/clean miss keeps the look and re-edits with the previous image + guidance. Thresholds stay env-tunable (`IMAGE_THEME_THRESHOLD`, `IMAGE_MATCH_THRESHOLD`, `IMAGE_CLEAN_THRESHOLD`) if live posts show any lane running hot.
+
+---
+
 ## 2026-10-15 — In-post images stop wearing the house thumbnail look: own prompt, style rotation, clean QA lane
 
 **Commits:** `60bdedb`
