@@ -1,5 +1,9 @@
 # Quota Persistence for GitHub Actions Workflows
 
+> **Updated (2026-10-15):** written for router v0.2.0. The current, verified
+> end-to-end pattern (ledger cache restore/save, SIGTERM flush, concurrency
+> serialization) lives in `skills/gemini-router/references/ops-and-ci.md`.
+
 ## Why Persist Quota State?
 
 The `gemini-free-router` tracks per-model RPM (requests per minute), RPD (requests per day), and TPM (tokens per minute) using a sliding window. By default, each GitHub Actions workflow runs on a fresh ephemeral runner, so quota state **does not persist** between runs.

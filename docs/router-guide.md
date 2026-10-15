@@ -1,5 +1,10 @@
 # gemini-free-router Integration Guide for contentfte SEO Blog Agent
 
+> **Superseded (2026-10-15):** this guide documents **v0.2.0**. For current
+> integration use `skills/gemini-router/SKILL.md` — the repo now runs
+> `gemini-free-router ^0.4.1` (image parts ≥0.3.0, tool calling ≥0.4.0,
+> Gemini schema dialect ≥0.4.1). Kept for historical reference.
+
 ## Overview
 
 `gemini-free-router` is a per-model RPM/RPD/TPM scheduling proxy that sits between your application and the Gemini API. It optimizes free-tier quota usage by scheduling requests preemptively instead of bursting into 429 errors and rotating keys.

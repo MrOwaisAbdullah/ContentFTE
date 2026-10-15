@@ -2,12 +2,16 @@
 
 > **AS IMPLEMENTED (2026-10-14, branch `feature/router-integration`)** — the
 > integration below is live in this repo. The actual wiring differs from the
-> generic walkthrough further down; trust this section:
+> generic walkthrough further down; trust this section. **Updated floors
+> (2026-10-15):** the repo pin is now `^0.4.1` — tool calling ≥0.4.0, Gemini
+> tool-schema dialect ≥0.4.1, on top of the ≥0.3.0 image parts below. Current
+> recipe: `skills/gemini-router/SKILL.md`; the walkthrough below is the
+> historical v0.2.0 version.
 >
 > | Piece | Where it lives |
 > |---|---|
 > | npm dependency | `package.json` → `npm ci` / `npm run router` |
-> | Router config | `router.yaml` (fleet_mode: merge, gemini-flash-latest appended, gemma-4-31b-it re-enabled 2026-10-15 after a healthy direct probe, gemma-4-26b-a4b-it still disabled — Google 500s it on this account) |
+> | Router config | `router.yaml` (fleet_mode: merge, gemini-flash-latest appended; BOTH gemma-4 models disabled — a "Say OK" probe lied: on real instructions they 200 with empty or prompt-ignoring content, and a 200 never triggers failover) |
 > | Chat routing switch | `GFR_BASE_URL=http://127.0.0.1:8787/v1` in `.env` → `blog_agent/custom_runner.py::get_gemini_client()` points every Gemini call at the router; **unset = legacy direct-Google path** |
 > | Vision QA | **routed through the router** — `IMAGE_VLM_ENDPOINT=http://127.0.0.1:8787/v1/chat/completions` in `.env` → `lib/image_vision.py` posts images through the router too. Requires gemini-free-router **>= 0.3.0** (0.2.x silently dropped image parts — only `type:"text"` was translated; fixed 2026-10-14: `image_url` → Gemini `inline_data`/`file_data`, flat ~1100 tokens/image estimate measured live). Registry install bumped to `^0.3.0` after publish. Verified live end-to-end 2026-10-14: accurate caption through the registry-installed router, `prompt_tokens: 1072`, and `describe_image_vlm()` returned a correct description with `fallback: false` |
 > | Quota persistence across workflow runs | `.github/workflows/pipeline.yml`: ledger `data/` restored/saved via `actions/cache` (`gfr-ledger-*` keys), router started before the stage with health-check, SIGTERM-stopped after (flush), serialized by the existing `concurrency: contentspark-pipeline` |

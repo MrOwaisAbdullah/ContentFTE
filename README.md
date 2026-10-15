@@ -71,6 +71,11 @@ frontend patterns, and `docs/phase1-feature-map.md` for the full surface.
 > **AI agents:** `skills/contentfte/SKILL.md` is a public skill that teaches an
 > agent to install the SDK and implement it correctly for the user's stack
 > (Next.js/React, Astro, Vue/Nuxt, Svelte, plain HTML, WordPress, or MCP).
+>
+> **AI agents (Gemini quota):** `skills/gemini-router/SKILL.md` teaches an
+> agent to integrate `gemini-free-router` — install, `router.yaml`, OpenAI
+> client wiring, the version floors that fail silently (≥0.3.0 images,
+> ≥0.4.0 tools, ≥0.4.1 schemas), and quota persistence across CI runs.
 
 ---
 
