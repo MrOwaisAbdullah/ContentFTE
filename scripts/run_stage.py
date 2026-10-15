@@ -984,6 +984,15 @@ def _clean_hallucinated_links(content: dict) -> dict:
     return out
 
 
+def _brief_secondary_keywords(source_brief: dict) -> str:
+    """The operator's keyword targets for the brief the content stage is
+    working on, unwrapped from the find_row_by_key payload (a stubbed/mock
+    payload may have no "data" wrapper at all). Both the keyword gate and
+    the persist step read this exact field from this exact shape, so the
+    unwrapping lives here once."""
+    return str(_get_field(source_brief.get("data") or {}, "Secondary Keywords")).strip()
+
+
 def _enforce_keyword_gate(content: dict, source_brief: dict) -> None:
     """Hard gate on the operator-supplied keyword targets (keyword sheet).
 
@@ -1000,8 +1009,7 @@ def _enforce_keyword_gate(content: dict, source_brief: dict) -> None:
     uses, and in which slots, so the operator knows what to fix."""
     from lib.seo_keywords import check_keywords, parse_keywords
 
-    brief = source_brief.get("data") or {}
-    secondary = str(_get_field(brief, "Secondary Keywords")).strip()
+    secondary = _brief_secondary_keywords(source_brief)
     keywords, warnings = parse_keywords(secondary)
     for warning in warnings:
         print(f"[content] keyword sheet: {warning}")
@@ -1022,17 +1030,28 @@ def _enforce_keyword_gate(content: dict, source_brief: dict) -> None:
     )
 
 
-def _ensure_content_persisted(content: dict) -> dict:
+def _ensure_content_persisted(content: dict, source_brief: dict) -> dict:
     """Same fix as _ensure_brief_persisted, for the Content Generator Agent
      -> generated_posts. Returns the persisted row (existing, repaired, or
      freshly appended) so the caller can use it directly for the Discord
      notification instead of blindly trusting "last row = the one just
      generated", which would silently notify about a stale row if the agent
-     hadn't actually saved anything."""
+     hadn't actually saved anything.
+
+    Takes the source brief explicitly (it only exists as a local in
+    run_content): the append path used to reference `source_brief` with no
+    such name in scope here, so whenever the agent generated a full post but
+    didn't append the row itself, this deterministic save died with
+    `name 'source_brief' is not defined` AFTER paying for the whole
+    generation -- found live on the 2026-10-15 content run. The brief's
+    keyword targets go into Secondary Keywords on both the append and the
+    malformed-row repair path (the repair path previously wrote an empty
+    value there)."""
     content = _clean_hallucinated_links(content)
     title = str(_get_field(content, "Title")).strip()
     if not title:
         raise RuntimeError(f"Content output missing Title; cannot persist or verify. Keys seen: {list(content.keys())}")
+    secondary_keywords = _brief_secondary_keywords(source_brief)
 
     existing = manage_sheet_data(worksheet_name="generated_posts", action="get_all_records")
     existing_row = None
@@ -1055,7 +1074,7 @@ def _ensure_content_persisted(content: dict) -> dict:
         # writes what it's given. Repair the row by column *name* instead
         # of appending a duplicate.
         print(f"[content] generated_posts row for '{title}' looks malformed (Summary={_get_field(existing_row, 'Summary', '')!r}, Published={_get_field(existing_row, 'Published', '')!r}) -- repairing by column name.")
-        correct_values = _content_row_values(content, title)
+        correct_values = _content_row_values(content, title, secondary_keywords=secondary_keywords)
         headers_result = manage_sheet_data(worksheet_name="generated_posts", action="get_range", cell_range="1:1")
         header_row = (headers_result.get("data") or [[]])[0] if headers_result.get("status") == "success" else _GENERATED_POSTS_FIELDS
         for field_name, value in correct_values.items():
@@ -1080,8 +1099,7 @@ def _ensure_content_persisted(content: dict) -> dict:
     _ensure_column_header("generated_posts", "Secondary Keywords")
     row_values = _content_row_values(
         content, title,
-        secondary_keywords=str(_get_field(source_brief.get("data") or {},
-                                         "Secondary Keywords")).strip(),
+        secondary_keywords=secondary_keywords,
     )
     append_result = manage_sheet_data(
         worksheet_name="generated_posts",
@@ -1229,7 +1247,7 @@ async def run_content() -> None:
     # a re-run clean.
     _enforce_keyword_gate(parsed, source_brief)
 
-    persisted_row = _ensure_content_persisted(parsed)
+    persisted_row = _ensure_content_persisted(parsed, source_brief)
     _persist_claims_audit(parsed, str(persisted_row.get("Title", "")).strip(), source_keyword)
     if source_row_index is not None:
         _graduate_content_brief(source_row_index, source_keyword)

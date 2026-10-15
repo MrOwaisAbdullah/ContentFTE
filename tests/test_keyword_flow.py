@@ -170,7 +170,7 @@ def test_run_stage_gates_before_persisting():
     assert "_enforce_keyword_gate(parsed, source_brief)" in src
     # it runs before the persist call, not after
     assert src.index("_enforce_keyword_gate(parsed, source_brief)") < src.index(
-        "persisted_row = _ensure_content_persisted(parsed)")
+        "persisted_row = _ensure_content_persisted(parsed, source_brief)")
 
 
 def test_sdk_gate_gates_secondaries_not_the_topic():
@@ -224,6 +224,53 @@ def test_run_stage_gate_helper_raises_with_report():
                               "Secondary Keywords": "thermal carafe"}})
     assert "thermal carafe" in str(exc.value)
     assert "keyword gate failed" in str(exc.value)
+
+
+def test_run_stage_persist_appends_brief_keywords(monkeypatch):
+    """Regression (2026-10-15 content run): _ensure_content_persisted
+    referenced `source_brief` without it ever being in scope there -- it
+    only exists as a local in run_content -- so the deterministic save that
+    runs when the agent generated a full post but didn't append the row
+    itself died with a NameError AFTER the whole (paid) generation. Drive
+    the append path against a stubbed sheet and assert the row carries the
+    brief's Secondary Keywords."""
+    import scripts.run_stage as rs
+
+    appended = {}
+
+    def fake_manage_sheet_data(**kwargs):
+        action = kwargs.get("action")
+        if action == "get_all_records":
+            return {"status": "success", "data": []}
+        if action == "get_range":  # header row: every column already exists
+            return {"status": "success", "data": [[
+                "Title", "Generated Content", "FAQs", "Quality Score",
+                "Summary", "Approve/Disapprove", "Published",
+                "Repurpose Bundle", "Video Script Seed",
+                "Secondary Keywords", "Created At",
+            ]]}
+        if action == "find_row_by_key":
+            return {"status": "success", "found": False}
+        if action == "append_row":
+            appended["row_values"] = kwargs.get("row_values")
+            return {"status": "success", "message": "Row appended to generated_posts."}
+        raise AssertionError(f"unexpected sheet call: {kwargs}")
+
+    monkeypatch.setattr(rs, "manage_sheet_data", fake_manage_sheet_data)
+    content = {
+        "Title": "Claude Agent SDK vs OpenAI Agents SDK Error Handling",
+        "Generated Content": "A body without links.",
+        "Quality Score": "92",
+        "Summary": "A summary.",
+    }
+    row = rs._ensure_content_persisted(
+        content,
+        {"data": {"Keyword/Topic": "coffee maker",
+                  "Secondary Keywords": "thermal carafe; coffee grinder"}},
+    )
+    assert row["Title"] == content["Title"]
+    assert row["Secondary Keywords"] == "thermal carafe; coffee grinder"
+    assert appended["row_values"][-1] == "thermal carafe; coffee grinder"
 
 
 # ---------------------------------------------------------------------------
