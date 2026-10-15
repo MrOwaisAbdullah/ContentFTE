@@ -23,6 +23,8 @@ future session can reconstruct *why* the code looks the way it does.
 
 **Also** — `npm pkg fix` in the router repo (bin-path normalization, `958e868`); docs added: `docs/router-guide.md`, `docs/quota-persistence.md`, `docs/contentfte-integration.md` (AS-IMPLEMENTED table); `.env.example` router/vision/judge block; TASKS.md A4. Untracked by design: `docs/SPEC Free Gemini Router.md`.
 
+**Follow-up (later 2026-10-15) — tool-calling gap, found by the first scheduled CI runs** (research 08:05Z / brief 09:39Z, both red). Both failed with EMPTY agent output (`Final output (str):` blank, `completion_tokens: 0`, `1 raw response`/`0 new items`): the router's OpenAI-compat layer silently DROPPED `tools`/`tool_choice` and never mapped `tool_calls`/`functionCall`/`role:"tool"`, so the Triage/Brief agents' sheet-tool declarations never reached Gemini and flash-lite answered 200-with-nothing (the Agents SDK was blameless — with no functions visible, an agent told "use only sheet data" just returns empty; reproduced byte-for-byte with the engine's exact Triage prompt, with vs without `tools`). Fixed in the router as **v0.4.0** (full request/response/SSE function-calling translation + Gemini 3 `thoughtSignature` memoization so signed calls survive the replay — router repo `918c27a`, dev-log §1.21, 112/112 tests). Bumped `gemini-free-router` **^0.3.0 → ^0.4.0** (`package.json` + lock; under 0.x semver `^0.3.0` cannot admit 0.4.0); `scripts/test_router_integration.py` → `ALL CHECKS PASSED` on 0.4.0. Live SDK round-trip through the router (read → `update_row` → final text from sheet data) verified pre-bump.
+
 ---
 
 ## 2026-10-12 — Site #2 spec, tenancy, Postgres cutover 3a/3b, operator console
