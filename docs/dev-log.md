@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-15 — In-post images stop wearing the house thumbnail look: own prompt, style rotation, clean QA lane
+
+**Commits:** `60bdedb`
+
+**What** — Every AI-generated in-post image reused the featured house template (cinematic 3D, navy-cyan, character-led), so body images across posts read as the same look. Body images now have their own genre end to end: `_image_plan(attempt, slot)` never typesets in-post (retries escalate the model, not typography); a new `_INPOST_IMAGE_PROMPT_TEMPLATE` + `_build_inpost_prompt` pick one of six looks (editorial-3d, cinematic-photo, flat-vector, isometric, macro, duotone-poster) deterministically per section topic — same pick on retries/re-runs, different posts vary; zero text via the hard closing rule; and `lib/image_vision` judges a new `clean` lane for in-post (text-free, uncluttered, no garbled shapes; `IMAGE_CLEAN_THRESHOLD=0.6`, env-tunable) instead of the house-style lane, which featured still uses unchanged. VLM framing, judge fallbacks, `validate_thumbnail`, `revision_guidance`, the `qa` block (now carries slot/clean/style_pick) and both tool docstrings are slot-aware; the stock-first gate and the featured path are untouched.
+
+**Verified** — suite 417 passed / 1 skipped (8 new tests: plan, prompt isolation, deterministic style pick, clean-vs-style lanes, in-post guidance, end-to-end `_generate_image`). Live: 5 real generations (~$0.034, ~3.1k of the 10k daily neurons) — textless held on every attempt; the clean lane caught klein-4b baking/garbling text twice (0.04 / 0.08, once rendering "OWVAISABOLH.HON.DEV") and passed clean attempts at 0.86–0.95; two topics produced two distinct looks, consistent within each topic's retries (prompt caching → flat-vector, vector databases → duotone-poster). The mid-prompt "default to no people" did NOT stick (4/4 early attempts had a human element — once hands with extra fingers), so the no-people rule moved into a final closing block per this repo's own "last-instruction-wins" lesson; the last sample came back a pure abstract node network, no people, no text.
+
+**Notes** — One topic sample scored `matches_blog` 0.62, a hair under the 0.65 topic floor (in a full run that escalates to 9b). Both image thresholds stay env-tunable if live posts show the topic lane running hot; stock already passes most sections, so the AI fallback is a quality bar, not a quota.
+
+---
+
 ## 2026-10-15 — jev-1.14 adopted for text; live probe proved native images need TypeSafe's direct API
 
 **Commits:** `5618352`
