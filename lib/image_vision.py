@@ -13,7 +13,8 @@ references/vision-bridge.md) — Jev state is text-only, so:
     Image path  -->  VLM  -->  {description, text_seen, style_notes, issues}
                                           |
                                           v
-                              Jev Noul matches_blog + matches_style
+              slot=featured: matches_blog + matches_style (house style)
+              slot=inpost:   matches_blog + clean (body image; text-free)
                                           |
                                           v
                         pass (>= thresholds) / regenerate with feedback
@@ -137,34 +138,58 @@ def _vlm_request(model: str, data_uri: str, prompt: str) -> Optional[Dict[str, A
     return None
 
 
-_VLM_PROMPT_TEMPLATE = """You are QA for a blog's hero thumbnail. Look at this image and report what is ACTUALLY visible.
+_VLM_PROMPT_TEMPLATE = """You are QA for an image on a blog. Look at this image and report what is ACTUALLY visible.
 
-Article title: {title}
-Article summary: {summary}
+Image role: {role}
+Title (article or section): {title}
+Summary/context: {summary}
 
 Return ONLY a JSON object, no prose, no markdown fence:
 {{
   "description": "3-5 sentences describing the actual scene: subjects, composition, setting, mood.",
-  "topic_connection": "1-2 sentences: how this image connects to the article topic, or 'no clear connection' if it does not.",
+  "topic_connection": "1-2 sentences: how this image connects to the title above, or 'no clear connection' if it does not.",
   "text_seen": "Every legible on-image word exactly as spelled, or 'none'.",
   "style_notes": "1-2 sentences on art style and palette: 3D render / photo / flat vector / watercolor / line art, and the dominant colors.",
-  "issues": ["specific problems: misspelled or garbled text, distorted faces/hands, clutter, watermark, off-topic subject, flat stock-photo look, oversaturated neon, not 16:9"]
+  "issues": ["specific problems: {issue_examples}"]
 }}
 
 Rules: describe only what you can see. If nothing is legible, text_seen is 'none'. Never invent detail."""
 
+_VLM_ROLE_FEATURED = (
+    "the article's hero thumbnail (featured image; judged against the site's "
+    "house cinematic style)"
+)
+_VLM_ROLE_INPOST = (
+    "an in-article body image that illustrates one section (NOT the hero "
+    "thumbnail; any clean art style is acceptable)"
+)
+_VLM_ISSUES_FEATURED = (
+    "misspelled or garbled text, distorted faces/hands, clutter, watermark, "
+    "off-topic subject, flat stock-photo look, oversaturated neon, not 16:9"
+)
+_VLM_ISSUES_INPOST = (
+    "any legible text (body images must be text-free), garbled word-like "
+    "shapes, distorted faces/hands, clutter, watermark, off-topic subject, "
+    "unreadable composition"
+)
+
 
 def describe_image_vlm(
-    image_path: str, article_title: str, article_summary: str
+    image_path: str, article_title: str, article_summary: str, slot: str = "featured"
 ) -> Dict[str, Any]:
     """Caption a local image with a vision model. Returns a dict with
     description/topic_connection/text_seen/style_notes/issues, plus
-    `model`, `fallback` and optionally `error`. Never raises."""
+    `model`, `fallback` and optionally `error`. Never raises.
+
+    `slot` picks the QA framing: "featured" (hero thumbnail; house style is
+    judged) or "inpost" (body image; any clean style passes, text does not)."""
     data_uri = _image_data_uri(image_path)
     if not data_uri:
         return {"error": "unreadable_image", "fallback": True, "issues": []}
 
     prompt = _VLM_PROMPT_TEMPLATE.format(
+        role=_VLM_ROLE_INPOST if slot == "inpost" else _VLM_ROLE_FEATURED,
+        issue_examples=_VLM_ISSUES_INPOST if slot == "inpost" else _VLM_ISSUES_FEATURED,
         title=(article_title or "").strip() or "(untitled)",
         summary=(article_summary or "").strip() or "(no summary)",
     )
@@ -204,6 +229,11 @@ def describe_image_vlm(
 # ---------------------------------------------------------------------------
 IMAGE_MATCH_THRESHOLD = float(os.environ.get("IMAGE_MATCH_THRESHOLD") or "0.65")
 IMAGE_STYLE_THRESHOLD = float(os.environ.get("IMAGE_STYLE_THRESHOLD") or "0.6")
+# In-post second lane: how clean/text-free the body image is. Style is NOT
+# judged for body images (variety is wanted there and the site look would
+# make every post's images identical); baked-in text and garbled artifacts
+# are disqualifying.
+IMAGE_CLEAN_THRESHOLD = float(os.environ.get("IMAGE_CLEAN_THRESHOLD") or "0.6")
 
 _JEV_STYLE_INSTRUCTIONS = (
     "Does `image.style_notes` + `image.description` match the owaisabdullah.dev house "
@@ -221,13 +251,27 @@ _JEV_TOPIC_INSTRUCTIONS = (
     "`image.topic_connection`, not from the title alone."
 )
 
+_JEV_CLEAN_INSTRUCTIONS = (
+    "Is the image clean and safe to publish as a body image inside the article? "
+    "Penalize: any legible baked-in text (words, letters, numbers, UI copy, "
+    "watermarks, word-shaped logos) -- body images must be text-free; garbled or "
+    "misspelled word-like shapes; distorted faces or hands; obvious rendering "
+    "glitches; cluttered, unreadable compositions. Do NOT penalize the art style "
+    "itself: a clean photo, 3D render, vector, isometric or macro look are all "
+    "acceptable for body images."
+)
+
 
 def judge_image_fit(
     article_title: str,
     article_summary: str,
     image_report: Dict[str, Any],
+    slot: str = "featured",
 ) -> Dict[str, Any]:
-    """Jev Noul batched gate: matches_blog + matches_style in one call.
+    """Jev Noul batched gate: matches_blog + one slot-specific second lane
+    in one call. slot="featured" judges matches_style (house thumbnail);
+    slot="inpost" judges `clean` instead (text-free, uncluttered -- style is
+    deliberately free for body images, which is where image variety lives).
 
     Fail-open: JevError/timeout returns fallback=True with passed=True so a
     Jev outage never costs image generations. Never raises.
@@ -244,30 +288,36 @@ def judge_image_fit(
             "style_notes": (image_report.get("style_notes") or "")[:600],
         },
     }
-    questions = {
-        "matches_blog": {"type": "noul", "instructions": _JEV_TOPIC_INSTRUCTIONS},
-        "matches_style": {"type": "noul", "instructions": _JEV_STYLE_INSTRUCTIONS},
-    }
+
+    def _fallback(error: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "matches_blog": 1.0,
+            "passed": True,
+            "fallback": True,
+            "slot": slot,
+            "error": error,
+        }
+        out["clean" if slot == "inpost" else "matches_style"] = 1.0
+        return out
+
+    if slot == "inpost":
+        questions = {
+            "matches_blog": {"type": "noul", "instructions": _JEV_TOPIC_INSTRUCTIONS},
+            "clean": {"type": "noul", "instructions": _JEV_CLEAN_INSTRUCTIONS},
+        }
+    else:
+        questions = {
+            "matches_blog": {"type": "noul", "instructions": _JEV_TOPIC_INSTRUCTIONS},
+            "matches_style": {"type": "noul", "instructions": _JEV_STYLE_INSTRUCTIONS},
+        }
     try:
         resp = call_jev_sync(state, questions)
     except JevError as e:
         logger.warning(f"judge_image_fit Jev fallback (assume pass): {e}")
-        return {
-            "matches_blog": 1.0,
-            "matches_style": 1.0,
-            "passed": True,
-            "fallback": True,
-            "error": str(e),
-        }
+        return _fallback(str(e))
     except Exception as e:
         logger.warning(f"judge_image_fit unexpected fallback (assume pass): {e}")
-        return {
-            "matches_blog": 1.0,
-            "matches_style": 1.0,
-            "passed": True,
-            "fallback": True,
-            "error": str(e),
-        }
+        return _fallback(str(e))
 
     def _noul(key: str, default: float = 0.0) -> float:
         ans = resp.answers.get(key)
@@ -283,6 +333,20 @@ def judge_image_fit(
             return default
 
     matches_blog = _noul("matches_blog")
+    if slot == "inpost":
+        clean = _noul("clean")
+        passed = matches_blog >= IMAGE_MATCH_THRESHOLD and clean >= IMAGE_CLEAN_THRESHOLD
+        return {
+            "matches_blog": round(matches_blog, 4),
+            "clean": round(clean, 4),
+            "threshold_blog": IMAGE_MATCH_THRESHOLD,
+            "threshold_clean": IMAGE_CLEAN_THRESHOLD,
+            "passed": bool(passed),
+            "fallback": False,
+            "slot": slot,
+            "usage": resp.usage.model_dump(),
+            "model": resp.model,
+        }
     matches_style = _noul("matches_style")
     passed = matches_blog >= IMAGE_MATCH_THRESHOLD and matches_style >= IMAGE_STYLE_THRESHOLD
     return {
@@ -292,42 +356,53 @@ def judge_image_fit(
         "threshold_style": IMAGE_STYLE_THRESHOLD,
         "passed": bool(passed),
         "fallback": False,
+        "slot": slot,
         "usage": resp.usage.model_dump(),
         "model": resp.model,
     }
 
 
 def validate_thumbnail(
-    image_path: str, article_title: str, article_summary: str
+    image_path: str, article_title: str, article_summary: str, slot: str = "featured"
 ) -> Dict[str, Any]:
     """Full check: VLM describes the pixels, Jev decides if it fits.
 
-    Returns {passed, matches_blog, matches_style, vlm, issues, fallback}.
-    Fail-open on any infrastructure problem (never blocks publish).
-    Never raises.
+    `slot` picks the second Jev lane: "featured" -> matches_style (house
+    thumbnail style), "inpost" -> clean (body images must be text-free and
+    uncluttered; style is free by design). Name kept for compatibility --
+    despite the name it validates both slots.
+
+    Returns {passed, matches_blog, matches_style|clean, vlm, issues,
+    fallback}. Fail-open on any infrastructure problem (never blocks
+    publish). Never raises.
     """
     started = time.perf_counter()
     try:
-        report = describe_image_vlm(image_path, article_title, article_summary)
+        report = describe_image_vlm(image_path, article_title, article_summary, slot=slot)
         if report.get("fallback"):
             # No vision -> we cannot judge -> do not spend neurons retrying.
             return {
                 "passed": True,
                 "matches_blog": None,
                 "matches_style": None,
+                "clean": None,
+                "slot": slot,
                 "vlm": report,
                 "issues": [],
                 "fallback": True,
                 "reason": "vlm_unavailable",
             }
 
-        verdict = judge_image_fit(article_title, article_summary, report)
+        verdict = judge_image_fit(article_title, article_summary, report, slot=slot)
         return {
             "passed": bool(verdict["passed"]),
             "matches_blog": verdict.get("matches_blog"),
             "matches_style": verdict.get("matches_style"),
+            "clean": verdict.get("clean"),
             "threshold_blog": verdict.get("threshold_blog"),
             "threshold_style": verdict.get("threshold_style"),
+            "threshold_clean": verdict.get("threshold_clean"),
+            "slot": slot,
             "vlm": {k: v for k, v in report.items() if k != "error"},
             "issues": report.get("issues") or [],
             "text_seen": report.get("text_seen"),
@@ -341,14 +416,21 @@ def validate_thumbnail(
             "passed": True,
             "matches_blog": None,
             "matches_style": None,
+            "clean": None,
+            "slot": slot,
             "issues": [],
             "fallback": True,
             "error": str(e),
         }
 
 
-def revision_guidance(verdict: Dict[str, Any]) -> str:
-    """Build the 'do not repeat these problems' block for the next attempt."""
+def revision_guidance(verdict: Dict[str, Any], slot: str = "featured") -> str:
+    """Build the 'do not repeat these problems' block for the next attempt.
+
+    Slot-aware: featured problems push back toward the house style; in-post
+    problems push toward text-free cleanliness only -- body images are
+    allowed any clean style and must never be told to return to the house
+    thumbnail look."""
     parts: List[str] = []
     issues = [i for i in (verdict.get("issues") or []) if isinstance(i, str) and i.strip()]
     if issues:
@@ -372,12 +454,28 @@ def revision_guidance(verdict: Dict[str, Any]) -> str:
             "electric blue/cyan light and violet, magenta or amber accents; one clear "
             "focal point; no flat stock-photo or watercolor look."
         )
+    clean = verdict.get("clean")
+    if clean is not None and float(clean) < IMAGE_CLEAN_THRESHOLD:
+        notes = (verdict.get("vlm") or {}).get("style_notes") or ""
+        parts.append(
+            "- The previous image was not clean enough for an article body"
+            + (f' (previous: "{notes[:200]}")' if notes else "")
+            + ". Keep it text-free, uncluttered, one clear subject, no distorted "
+            "shapes or glitches."
+        )
     text_seen = (verdict.get("text_seen") or "").strip().lower()
     if text_seen and text_seen not in ("none", "no", "n/a", "none."):
-        parts.append(
-            f"- Previous on-image text read as \"{verdict.get('text_seen')}\". "
-            "Either render no text at all, or render exactly the words given, spelled correctly."
-        )
+        if slot == "inpost":
+            parts.append(
+                f"- Previous on-image text read as \"{verdict.get('text_seen')}\". "
+                "Body images must contain NO text at all -- remove every word, "
+                "letter, number and watermark."
+            )
+        else:
+            parts.append(
+                f"- Previous on-image text read as \"{verdict.get('text_seen')}\". "
+                "Either render no text at all, or render exactly the words given, spelled correctly."
+            )
     if not parts:
         parts.append("- Improve overall composition, focal clarity and palette contrast.")
     return "\n".join(parts)

@@ -138,7 +138,7 @@ contextual_image_insertion_agent = Agent(
     2. **Identify Image Opportunities**: Find positions where images would enhance understanding or engagement
     3. **Extract Key Concepts**: For each opportunity, extract 3-5 key concepts from surrounding content
     4. **Frame the Section Topic**: Formulate a short topic phrase + one-sentence summary for the section (this drives the image decision)
-    5. **Select a Gated Image**: Call `select_inpost_image_tool(topic, section_summary, alt_text)` for each slot. It fetches a free Pexels candidate, a VLM looks at the actual pixels and Jev scores topic relevancy 0-100; >= 90 returns the stock image, below 90 it generates an on-brand AI image instead. You never bypass this gate and never call a raw stock fetch.
+    5. **Select a Gated Image**: Call `select_inpost_image_tool(topic, section_summary, alt_text)` for each slot. It fetches a free Pexels candidate, a VLM looks at the actual pixels and Jev scores topic relevancy 0-100; >= 90 returns the stock image, below 90 it generates a textless AI body image instead (varied per-section style, no forced characters). You never bypass this gate and never call a raw stock fetch.
     6. **Screenshots only when they genuinely apply**: run `capture_screenshot_tool` per the rules below, then `evaluate_image_quality` (>= 7.0) before inserting. Screenshot quality evaluation is NOT for the gated slot images -- `select_inpost_image_tool` already ran its own VLM relevancy gate.
     7. **Insert Images Strategically**: Place approved images at optimal positions in the content using PROPER MARKDOWN SYNTAX; alt text = the section summary you passed to the gate (or the tool's returned alt_text)
     
@@ -190,7 +190,7 @@ contextual_image_insertion_agent = Agent(
     ## Image Selection Process:
     1. **Frame the Section Topic**: one short topic phrase plus a one-sentence summary
     2. **Call select_inpost_image_tool**: pass topic, section_summary (doubles as alt text), and optionally explicit alt_text
-    3. **Read the `gate` block**: `decision=stock_accepted` means the free Pexels image passed the VLM relevancy gate (>= 90/100); `decision=ai_generated` means it was below threshold (or stock was unavailable) and an on-brand AI image was generated for this slot
+    3. **Read the `gate` block**: `decision=stock_accepted` means the free Pexels image passed the VLM relevancy gate (>= 90/100); `decision=ai_generated` means it was below threshold (or stock was unavailable) and a textless AI body image was generated for this slot (section-suitable style -- not the featured house look)
     4. **Handle errors**: an `error` result means both the stock gate AND generation failed -- skip the image for that section and record it in images_skipped; NEVER insert an unvetted or placeholder image
     5. **IMPORTANT**: NEVER use example URLs like "https://example.com/image-url.jpg"
 

@@ -2,6 +2,7 @@ from agents import function_tool
 import os
 import re
 import base64
+import hashlib
 import requests
 import json
 from slugify import slugify
@@ -534,7 +535,8 @@ def get_stock_image_tool(keyword: str):
 CLOUDFLARE_IMAGE_MODEL = os.environ.get("CLOUDFLARE_IMAGE_MODEL") or "@cf/black-forest-labs/flux-2-klein-4b"
 
 # Router: first attempt is textless on the cheap model; only when that fails
-# QA does the loop escalate to the text-capable model WITH a headline.
+# QA does the loop escalate to the text-capable model WITH a headline
+# (featured slot; the in-post slot never typesets on any attempt).
 # Measured 2026-10-04: klein-4b garbles text 3/3, klein-9b and flux-2-dev
 # spell "SPEC-DRIVEN WORKFLOW" correctly. Costs per 1280x720 image:
 #   klein-4b ~110 n (~90/day)   klein-9b ~1364 n (~7/day)
@@ -592,13 +594,16 @@ def _mark_image_quota(detail: str) -> bool:
     )
     return True
 
-# Jev gate: VLM assessment passes only if BOTH the blog-topic match AND the
-# house-style match clear these floors. Below either floor, regenerate with
-# the previous image attached as reference plus the VLM's stated mismatches.
+# Jev gate: VLM assessment passes only if the blog-topic match AND the
+# slot's second lane both clear their floors -- house-style for featured
+# thumbnails, text-free cleanliness for in-post body images. Below either
+# floor, regenerate with the previous image attached as reference plus the
+# VLM's stated mismatches.
 # Thresholds live in lib/image_vision.py (single source of truth); re-exported
 # here because tools.py is where callers already look for image knobs.
 IMAGE_MATCH_THRESHOLD = image_vision.IMAGE_MATCH_THRESHOLD
 IMAGE_STYLE_THRESHOLD = image_vision.IMAGE_STYLE_THRESHOLD
+IMAGE_CLEAN_THRESHOLD = image_vision.IMAGE_CLEAN_THRESHOLD
 
 # Human-readable source labels written into the generated_posts "Image
 # Source" column. The AI label embeds the model id verbatim so "which model
@@ -631,13 +636,24 @@ def _image_cost_usd(model: Optional[str]) -> float:
     return IMAGE_COST_USD.get(model, IMAGE_COST_DEFAULT_USD)
 
 
-def _image_plan(attempt: int) -> tuple:
+def _image_plan(attempt: int, slot: str = "featured") -> tuple:
     """Which model + typography this attempt should use.
 
+    Featured (hero thumbnail):
     Router off: every attempt uses the configured model with a headline.
     Router on: attempt 1 is the cheap model with zero text (it cannot
     misspell what it never renders); attempt 2+ escalate to IMAGE_TEXT_MODEL
-    with a headline."""
+    with a headline.
+
+    In-post (body image): text_mode is ALWAYS "none". A baked headline in
+    the article body duplicates the section heading and is exactly the
+    garbled-word surface the router exists to avoid. With the router on,
+    attempt 2+ still escalate the model (a stronger model draws cleaner
+    scenes), but never the typography."""
+    if slot == "inpost":
+        if not IMAGE_ROUTER or attempt <= 1:
+            return CLOUDFLARE_IMAGE_MODEL, "none"
+        return IMAGE_TEXT_MODEL, "none"
     if not IMAGE_ROUTER:
         return CLOUDFLARE_IMAGE_MODEL, "headline"
     if attempt <= 1:
@@ -953,6 +969,16 @@ _HEADLINE_CLOSING_RULE = '''**FINAL RULE - this overrides every instruction abov
 - No subtitle, no body copy, no UI text, no prices or numbers, no credits.
 - Any surface that would normally hold a logo or URL stays blank or abstract.'''.replace("owaisabdullah.dev", SITE_HOST)
 
+# In-post addendum on top of the no-text rule: the klein models reliably add
+# a lone silhouette/character even when the prompt says "default to no
+# people" mid-prompt (observed live 2026-10-15: 4 of 4 in-post attempts
+# contained a human element). Mirrored at the very END, because
+# last-instruction-wins is what these models obey -- same fix as the
+# no-text rule above.
+_INPOST_CLOSING_RULE = _NO_TEXT_CLOSING_RULE + '''
+
+**ALSO THE FINAL RULE - no people.** This image contains no people, no characters, no faces, no hands, no crowds and no human silhouettes -- show only the objects, environment, materials or process that carries the idea. The only exception is a section that is explicitly about people.'''
+
 # Cap on an agent-supplied scene concept so a model that tries to write a
 # whole replacement prompt cannot blow past the flux-2 prompt limits.
 _SCENE_CONCEPT_MAX_CHARS = 600
@@ -1004,6 +1030,125 @@ def _build_house_prompt(
     return prompt
 
 
+# ---------------------------------------------------------------------------
+# In-post (body) image prompt. Deliberately a DIFFERENT template from the
+# house thumbnail: body images illustrate one section inside an article, and
+# reusing the featured template made every body image the same navy-cyan 3D
+# character scene as everything else on the site (the variety complaint).
+# The body template: zero text on every attempt (the section heading already
+# carries the words), characters avoided by default, and one of six looks is
+# picked deterministically per section so consecutive images are visibly
+# different while retries of the same image stay coherent.
+# ---------------------------------------------------------------------------
+_INPOST_STYLE_PICKS = (
+    (
+        "editorial-3d",
+        "a polished 3D editorial render with soft studio lighting, gentle "
+        "depth of field and tactile matte materials",
+        "one hero object filling the middle of the frame, clean background, "
+        "clear depth separation",
+    ),
+    (
+        "cinematic-photo",
+        "a realistic cinematic photograph with natural light, honest textures "
+        "and shallow depth of field",
+        "a wide or three-quarter shot of a real-world instance of the "
+        "subject, strong leading lines",
+    ),
+    (
+        "flat-vector",
+        "a minimal flat vector illustration with bold geometric shapes, a "
+        "limited palette and confident linework",
+        "a simple centered arrangement with generous negative space and no "
+        "detail smaller than the eye can read",
+    ),
+    (
+        "isometric",
+        "a clean isometric 3D diorama of a miniature world that maps the "
+        "idea in one glance",
+        "the diorama floating as a cutaway block or platform, everything "
+        "readable from one angle",
+    ),
+    (
+        "macro",
+        "an extreme macro close-up of the single object or material that "
+        "carries the idea, with dramatic rim lighting and crisp texture",
+        "the subject filling the whole frame, out-of-focus background, every "
+        "surface detail sharp",
+    ),
+    (
+        "duotone-poster",
+        "a two-tone duotone graphic in deep navy plus one bright accent, "
+        "with strong silhouettes and poster-like clarity",
+        "a bold graphic composition with large shapes and heavy contrast, "
+        "one focal shape",
+    ),
+)
+
+
+def _pick_inpost_style(seed_text: str) -> tuple:
+    """Deterministic per-section style pick (name, style direction, composition
+    direction).
+
+    Same seed -> same pick, so retries and re-runs of one image stay coherent
+    while different sections and posts get different looks. Hash-based (not
+    random) so tests can assert it and logged runs are reproducible."""
+    seed = hashlib.sha256((seed_text or "").encode("utf-8")).digest()
+    return _INPOST_STYLE_PICKS[int.from_bytes(seed[:4], "big") % len(_INPOST_STYLE_PICKS)]
+
+
+_INPOST_IMAGE_PROMPT_TEMPLATE = '''Create one clean editorial illustration for a technical blog article published on owaisabdullah.dev. The site name is context for the brand only -- never typeset it, never show it as a logo, badge or watermark.
+
+**What this image is:** an in-article body image that illustrates ONE section of the post. It is NOT a hero thumbnail -- it should not advertise, and it should not repeat the article's featured-image look. It illustrates the idea; it never explains it in words.
+
+**Art direction for this image (already chosen -- follow it exactly):** [INSERT STYLE DIRECTION]
+
+**Format and composition**
+- Landscape 16:9 aspect ratio.
+- Compose for a text column inside a long article: one clear subject, readable at a glance, purposeful empty space.
+- [INSERT COMPOSITION DIRECTION]
+- Keep the scene uncluttered: no collages, no walls of icons, no floating dashboards.
+
+**Characters**
+- Default to NO people and NO mascot characters. Prefer objects, environments, processes, materials or abstract metaphors that carry the idea.
+- Only include a human figure when the section is genuinely about people, and then keep it simple and distant: a silhouette or a wide shot -- never a close-up face or hands (they render distorted), never a posed stock-photo model.
+- Never reuse a robot, mascot or character across images.
+
+**Color and lighting**
+- Deep navy, midnight blue or charcoal foundations with one strong accent: electric blue/cyan, violet, magenta or warm amber.
+- Natural contrast and believable lighting; avoid oversaturated neon and plastic-looking CGI.
+
+**Avoid**
+- ALL text: no words, letters, numbers, labels, captions, UI copy, watermarks, logos or word-shaped decorations.
+- Generic stock-photo people, person-at-a-desk scenes, floating UI dashboards, forced characters, cluttered scenes, cheap clip-art, irrelevant decorative technology.
+
+**Section topic:** [INSERT TITLE]
+
+**Section context:** [INSERT URL OR SUMMARY]'''.replace("owaisabdullah.dev", SITE_HOST)
+
+
+def _build_inpost_prompt(title: str, summary: str, scene_concept: str = None) -> str:
+    """Fill the in-post template: picks the per-section style, injects the
+    section topic/context, appends the agent's scene concept, and closes with
+    the hard no-text rule (same closing rule the featured textless pass uses
+    -- last-instruction-wins is what these models obey)."""
+    _, style_dir, composition_dir = _pick_inpost_style(title or summary)
+    prompt = _INPOST_IMAGE_PROMPT_TEMPLATE
+    prompt = prompt.replace("[INSERT STYLE DIRECTION]", style_dir)
+    prompt = prompt.replace("[INSERT COMPOSITION DIRECTION]", composition_dir)
+    prompt = prompt.replace(_TITLE_SLOT, (title or "").strip() or "[Section topic unavailable]")
+    prompt = prompt.replace(_SUMMARY_SLOT, (summary or "").strip() or "[Section context unavailable]")
+
+    concept = (scene_concept or "").strip()
+    if concept:
+        if len(concept) > _SCENE_CONCEPT_MAX_CHARS:
+            concept = concept[:_SCENE_CONCEPT_MAX_CHARS].rstrip() + "..."
+        prompt += f"\n\n**Scene idea for this section:** {concept}"
+
+    prompt += "\n\n" + _INPOST_CLOSING_RULE
+    return prompt
+
+
 def _file_to_b64(path: str) -> Optional[str]:
     try:
         with open(path, "rb") as fh:
@@ -1019,11 +1164,14 @@ def _rank_image_verdict(verdict: Dict[str, Any]) -> float:
     so we always keep something."""
     blog = verdict.get("matches_blog")
     style = verdict.get("matches_style")
+    clean = verdict.get("clean")
     score = 0.0
     if isinstance(blog, (int, float)):
         score += float(blog)
     if isinstance(style, (int, float)):
         score += float(style)
+    if isinstance(clean, (int, float)):
+        score += float(clean)
     if verdict.get("passed"):
         score += 1000.0
     elif verdict.get("fallback") and blog is None:
@@ -1037,8 +1185,10 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None,
     """Generates a blog image using Cloudflare Workers AI
     (genuinely free, no credit card, no per-key credential fragility).
 
-    The image is ALWAYS built from owaisabdullah.dev's house cinematic
-    thumbnail prompt -- you do not write the image prompt yourself. Pass:
+    You do not write the image prompt yourself; the tool builds it. Featured
+    images use the site's house cinematic thumbnail prompt. In-post body
+    images use a separate textless body-image prompt (no forced character,
+    one of six styles picked per section) -- see `slot`. Pass:
 
     - keyword: the post's topic/keyword (also used for alt text)
     - title: the post's article title (fills the house prompt's title slot)
@@ -1047,25 +1197,33 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None,
       scene you want for THIS post (e.g. "two gears meshing, one cracked and
       one new, showing legacy code being replaced"). It is appended as a
       scene concept; it never replaces the house style.
-    - slot: "featured" (default, hero thumbnail) or "inpost" (body image) --
-      only labels the image_logs cost/audit row.
+    - slot: "featured" (default, hero thumbnail -- house cinematic style,
+      headline typography allowed) or "inpost" (body image -- textless, no
+      forced character, per-section style pick). The slot selects the prompt
+      template, typography mode and QA lanes, and labels the image_logs
+      audit row.
 
     Each attempt is checked by a VLM (which actually looks at the pixels)
     plus Jev, which decides whether the image matches the article topic AND
-    the house style. If either check misses its threshold the image is
-    regenerated with the previous attempt attached as a reference and the
-    VLM's specific complaints written into the prompt -- up to
-    IMAGE_MAX_REVISIONS attempts. The best attempt is always returned.
+    the slot's second lane -- house style for featured thumbnails, text-free
+    cleanliness (no baked/garbled text, no clutter) for in-post body images.
+    If either check misses its threshold the image is regenerated with the
+    previous attempt attached as a reference and the VLM's specific
+    complaints written into the prompt -- up to IMAGE_MAX_REVISIONS attempts.
+    The best attempt is always returned.
 
     A model router runs inside the loop (IMAGE_ROUTER, on by default):
     attempt 1 uses the cheap model (flux-2-klein-4b, ~110 Neurons) with
     ZERO on-image text, because that model garbles baked-in words. Only if
     it fails QA does the loop escalate to IMAGE_TEXT_MODEL
     (flux-2-klein-9b, ~1364 Neurons) WITH a headline, which spells
-    correctly. Set IMAGE_ROUTER=0 to pin everything to CLOUDFLARE_IMAGE_MODEL.
+    correctly. In-post images never typeset on any attempt -- they escalate
+    the model only (their QA lane forbids text entirely). Set IMAGE_ROUTER=0
+    to pin everything to CLOUDFLARE_IMAGE_MODEL.
 
     Returns a dict with image_url/alt_text/source plus a `qa` block
-    {passed, matches_blog, matches_style, attempts, model, router, issues}.
+    {passed, matches_blog, matches_style (featured) or clean (in-post),
+    attempts, model, router, issues}.
     A non-passing `qa.passed` is NOT an error -- an image is returned if any
     attempt succeeded. On total failure, returns an error dict: featured
     images do NOT fall back to stock (brand control) -- the caller publishes
@@ -1080,8 +1238,9 @@ def _generate_image(keyword: str, title: Optional[str] = None,
                     slot: str = "featured") -> Dict[str, Any]:
     """Plain-function body of generate_image_tool for internal callers
     (e.g. _select_inpost_image, which must not call the decorated tool).
-    See the tool docstring for the contract; `slot` labels the audit rows
-    (featured/inpost) and is returned in the result dict."""
+    See the tool docstring for the contract; `slot` (featured/inpost) picks
+    the prompt template, typography mode and QA lane, labels the audit rows,
+    and is returned in the result dict."""
     best: Optional[Dict[str, Any]] = None
     best_verdict: Dict[str, Any] = {}
     best_rank = -1.0
@@ -1115,20 +1274,24 @@ def _generate_image(keyword: str, title: Optional[str] = None,
             return {"error": "Image provider quota exhausted - skipping generation "
                              "(circuit breaker; retry after cooldown)",
                     "quota": True, "slot": slot}
-        model, text_mode = _image_plan(attempt)
+        model, text_mode = _image_plan(attempt, slot)
         router_plan.append(f"a{attempt}={model.rsplit('/', 1)[-1]}/{text_mode}")
-        base_prompt = _build_house_prompt(
-            title, summary, custom_prompt, text_mode=text_mode
-        )
+        if slot == "inpost":
+            base_prompt = _build_inpost_prompt(title, summary, custom_prompt)
+        else:
+            base_prompt = _build_house_prompt(
+                title, summary, custom_prompt, text_mode=text_mode
+            )
         if attempt == 1 and len(base_prompt) > 6000:
             logger.warning(
-                f"Thumbnail prompt is {len(base_prompt)} chars; flux-2 prompt limits are unpublished "
-                f"and flux-1-schnell caps at 2048. If generation fails, trim _HOUSE_IMAGE_PROMPT_TEMPLATE."
+                f"Image prompt is {len(base_prompt)} chars ({slot}); flux-2 prompt limits are "
+                f"unpublished and flux-1-schnell caps at 2048. If generation fails, trim the "
+                f"image prompt template."
             )
 
         # Escalating to a different model means starting clean: a textless
-        # 4b image is the wrong edit source for 9b's headline pass, and the
-        # two models do not share an img2img latent space.
+        # 4b image is the wrong edit source for 9b's pass, and the two
+        # models do not share an img2img latent space.
         switching = previous_model is not None and model != previous_model
         if switching:
             reference_b64 = None
@@ -1154,7 +1317,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
         attempts = attempt
         image_path = result["image_url"]
 
-        verdict = image_vision.validate_thumbnail(image_path, title, summary)
+        verdict = image_vision.validate_thumbnail(image_path, title, summary, slot=slot)
         rank = _rank_image_verdict(verdict)
         qa_trace.append(
             {
@@ -1164,6 +1327,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
                 "passed": verdict.get("passed"),
                 "matches_blog": verdict.get("matches_blog"),
                 "matches_style": verdict.get("matches_style"),
+                "clean": verdict.get("clean"),
                 "issues": (verdict.get("issues") or [])[:5],
                 "vlm": (verdict.get("vlm") or {}).get("model"),
                 "fallback": verdict.get("fallback"),
@@ -1174,7 +1338,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
             f"Image QA attempt {attempt}/{IMAGE_MAX_REVISIONS} ({model.rsplit('/', 1)[-1]}, "
             f"text={text_mode}): passed={verdict.get('passed')} "
             f"matches_blog={verdict.get('matches_blog')} matches_style={verdict.get('matches_style')} "
-            f"issues={len(verdict.get('issues') or [])}"
+            f"clean={verdict.get('clean')} issues={len(verdict.get('issues') or [])}"
         )
 
         if rank > best_rank:
@@ -1193,7 +1357,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
         next_reference = _file_to_b64(image_path)
         if not next_reference:
             break
-        guidance = image_vision.revision_guidance(verdict)
+        guidance = image_vision.revision_guidance(verdict, slot=slot)
         revision_suffix = (
             f"\n\n**Revision required (attempt {attempt + 1} of {IMAGE_MAX_REVISIONS}). "
             f"The previous image attached as a reference did not pass QA:**\n{guidance}\n\n"
@@ -1220,10 +1384,14 @@ def _generate_image(keyword: str, title: Optional[str] = None,
     # attempts would only burn neuron quota. Report it for observability.
     qa = {
         "passed": bool(best_verdict.get("passed")),
+        "slot": slot,
         "matches_blog": best_verdict.get("matches_blog"),
         "matches_style": best_verdict.get("matches_style"),
+        "clean": best_verdict.get("clean"),
         "threshold_blog": image_vision.IMAGE_MATCH_THRESHOLD,
         "threshold_style": image_vision.IMAGE_STYLE_THRESHOLD,
+        "threshold_clean": image_vision.IMAGE_CLEAN_THRESHOLD,
+        "style_pick": _pick_inpost_style(title or summary)[0] if slot == "inpost" else None,
         "attempts": attempts,
         "max_revisions": IMAGE_MAX_REVISIONS,
         "model": best_model,
@@ -1250,7 +1418,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
         time.time() - loop_started,
         detail=(
             f"attempts={attempts}/{IMAGE_MAX_REVISIONS} router={','.join(router_plan)} "
-            f"blog={qa['matches_blog']} style={qa['matches_style']} "
+            f"blog={qa['matches_blog']} style={qa['matches_style']} clean={qa['clean']} "
             f"issues={'; '.join(str(i) for i in (qa['issues'] or [])[:3])}"
         ),
         cost_usd=best.get("cost_usd", 0.0),
@@ -1416,8 +1584,11 @@ def select_inpost_image_tool(topic: str, section_summary: str = "",
        relevancy 0-100 (style/stock-ness are ignored -- relevancy only).
     3. Score >= 90 returns the stock image (evaluation_score = score/10,
        relevancy_score = score, source=Pexels).
-    4. Score < 90, or stock unavailable/undownloadable, generates an
-       AI image instead with the house style prompt (slot=inpost).
+    4. Score < 90, or stock unavailable/undownloadable, generates a
+       textless AI body image instead (slot=inpost): no forced character,
+       a per-section style pick, zero on-image text. It is judged on topic
+       fit + text-free cleanliness -- the house-thumbnail style gate does
+       not apply to body images.
     5. If BOTH fail, returns an error dict -- report it and continue
        WITHOUT an image for that section; never insert an unvetted image.
 

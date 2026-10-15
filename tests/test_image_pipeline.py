@@ -335,3 +335,156 @@ def test_preparation_agent_drops_stock_fallback():
     txt = preparation_agent.instructions
     assert "get_stock_image_tool" not in txt
     assert "no stock fallback" in txt
+
+
+# ---------------------------------------------------------------------------
+# In-post image variety (2026-10-15): slot-aware plan/prompt + clean gate
+# ---------------------------------------------------------------------------
+class _Usage:
+    def model_dump(self):
+        return {"input_tokens": 1}
+
+
+class _RespMap:
+    """Jev response double answering arbitrary question keys."""
+
+    def __init__(self, values, model="jev-test"):
+        self.answers = {k: {"noul": v} for k, v in values.items()}
+        self.model = model
+        self.usage = _Usage()
+
+
+def test_image_plan_slot_aware(monkeypatch):
+    monkeypatch.setattr(tools, "IMAGE_ROUTER", True)
+    assert tools._image_plan(1, "featured")[1] == "none"
+    assert tools._image_plan(2, "featured")[1] == "headline"
+    for attempt in (1, 2, 3):
+        assert tools._image_plan(attempt, "inpost")[1] == "none"
+    monkeypatch.setattr(tools, "IMAGE_ROUTER", False)
+    assert tools._image_plan(1, "featured")[1] == "headline"
+    assert tools._image_plan(1, "inpost")[1] == "none"
+
+
+def test_inpost_prompt_is_not_the_house_template():
+    topic = "vector databases"
+    summary = "how embeddings get stored and searched"
+    prompt = tools._build_inpost_prompt(topic, summary)
+    assert "Cinematic 3D tech storytelling" not in prompt   # house identity marker
+    assert "must contain ZERO text" in prompt               # hard no-text closing rule
+    assert topic in prompt
+    assert summary in prompt
+    _, style_dir, composition_dir = tools._pick_inpost_style(topic)
+    assert style_dir in prompt
+    assert composition_dir in prompt
+    # The house template itself is untouched: featured still gets the house look.
+    house = tools._build_house_prompt(topic, summary, None, text_mode="none")
+    assert "Cinematic 3D tech storytelling" in house
+
+
+def test_inpost_style_pick_deterministic_and_varies():
+    assert tools._pick_inpost_style("vector databases") == tools._pick_inpost_style("vector databases")
+    names = {tools._pick_inpost_style(f"topic {i}")[0] for i in range(24)}
+    assert len(names) >= 2
+
+
+def _patch_vlm_slot(monkeypatch, fallback=False):
+    seen = {}
+
+    def fake(path, title="", summary="", slot="featured"):
+        seen["slot"] = slot
+        return {
+            "description": "a flat vector diagram of storage buckets",
+            "topic_connection": "directly depicts the section topic",
+            "text_seen": "none",
+            "style_notes": "flat vector, navy and cyan",
+            "issues": [],
+            "model": "vlm-test",
+            "fallback": fallback,
+        }
+
+    monkeypatch.setattr(image_vision, "describe_image_vlm", fake)
+    return seen
+
+
+def test_judge_image_fit_inpost_asks_clean_not_style(monkeypatch):
+    captured = {}
+
+    def fake_jev(state, questions):
+        captured["questions"] = questions
+        return _RespMap({"matches_blog": 0.9, "clean": 0.8})
+
+    monkeypatch.setattr(image_vision, "call_jev_sync", fake_jev)
+    out = image_vision.judge_image_fit("topic", "ctx", {}, slot="inpost")
+    assert set(captured["questions"]) == {"matches_blog", "clean"}
+    assert out["passed"] is True
+    assert out["clean"] == 0.8
+    assert "matches_style" not in out
+
+
+def test_judge_image_fit_featured_keeps_style_lane(monkeypatch):
+    captured = {}
+
+    def fake_jev(state, questions):
+        captured["questions"] = questions
+        return _RespMap({"matches_blog": 0.9, "matches_style": 0.8})
+
+    monkeypatch.setattr(image_vision, "call_jev_sync", fake_jev)
+    out = image_vision.judge_image_fit("topic", "ctx", {}, slot="featured")
+    assert set(captured["questions"]) == {"matches_blog", "matches_style"}
+    assert out["passed"] is True
+    assert out["matches_style"] == 0.8
+    assert "clean" not in out
+
+
+def test_validate_inpost_uses_clean_lane(monkeypatch):
+    seen = _patch_vlm_slot(monkeypatch)
+    monkeypatch.setattr(
+        image_vision, "call_jev_sync",
+        lambda state, q: _RespMap({"matches_blog": 0.9, "clean": 0.2}),
+    )
+    out = image_vision.validate_thumbnail("x.jpg", "topic", "ctx", slot="inpost")
+    assert seen["slot"] == "inpost"
+    assert out["slot"] == "inpost"
+    assert out["clean"] == 0.2
+    assert out["passed"] is False
+    assert out["threshold_clean"] == image_vision.IMAGE_CLEAN_THRESHOLD
+
+
+def test_revision_guidance_inpost_bans_text_keeps_style_free():
+    verdict = {"clean": 0.2, "text_seen": "SCALE UP", "vlm": {"style_notes": "flat vector"}}
+    txt = image_vision.revision_guidance(verdict, slot="inpost")
+    assert "NO text at all" in txt
+    assert "cinematic 3d" not in txt.lower()
+    featured = {"matches_style": 0.2, "vlm": {"style_notes": "watercolor"}}
+    ftxt = image_vision.revision_guidance(featured)
+    assert "cinematic 3D" in ftxt
+
+
+def test_generate_image_inpost_uses_inpost_prompt_and_clean_gate(tmp_path, monkeypatch):
+    _stub_logs(monkeypatch)
+    monkeypatch.setattr(tools, "IMAGE_ROUTER", True)
+    img = _write_image(tmp_path / "gen.jpg", "JPEG")
+    seen = {}
+
+    def fake_gen(prompt, keyword, reference_b64=None, model=None, slot="featured"):
+        seen["prompt"] = prompt
+        seen["slot"] = slot
+        return {"image_url": img, "model": model, "cost_usd": 0.0}
+
+    monkeypatch.setattr(tools, "_generate_image_cloudflare", fake_gen)
+
+    def fake_validate(path, title, summary, slot="featured"):
+        seen["validate_slot"] = slot
+        return {"passed": True, "matches_blog": 0.9, "clean": 0.9,
+                "issues": [], "fallback": False}
+
+    monkeypatch.setattr(image_vision, "validate_thumbnail", fake_validate)
+
+    out = tools._generate_image("embeddings", "vector search", "section ctx", None, "inpost")
+    assert seen["slot"] == "inpost"
+    assert seen["validate_slot"] == "inpost"
+    assert "must contain ZERO text" in seen["prompt"]
+    assert "Cinematic 3D tech storytelling" not in seen["prompt"]
+    assert out["slot"] == "inpost"
+    assert out["qa"]["clean"] == 0.9
+    assert out["qa"]["style_pick"] in {p[0] for p in tools._INPOST_STYLE_PICKS}
