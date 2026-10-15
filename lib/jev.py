@@ -23,7 +23,7 @@ rather than TypeSafe SDK — correct for this Python codebase per Tavily/Context
 Mirrors TS pattern `lib/ai/jev.ts:66` (`callJev` with JEV_TIMEOUT_MS=1500, JevChoiceAnswerSchema, usage.input_tokens).
 
 Auth: reuses existing OPENROUTER_API_KEY (custom_runner.py:126, discord_bot/bot.py:86) — no new env var.
-Model: typesafe/jev-1.13 pinned (not alias ~typesafe/jev-latest) once thresholds are tuned.
+Model: typesafe/jev-1.14 pinned (not the jev-preview / ~typesafe/jev-latest aliases). Live probe 2026-10-15: text decisions work over this OpenRouter route; native image `assets` do NOT (silently dropped -- answers come back blind, invalid base64 still 200s, no image tokens) -- images need the direct TypeSafe API + TYPESAFE_API_KEY (docs.typesafe.ai/images).
 
 Alternative SDK path (one-line switch if preferred):
     from typesafe_sdk import TypeSafeClient
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants — mirrors references/api-reference.md:129 + assets/templates/blog-pipeline.ts:8
 # ---------------------------------------------------------------------------
-JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
+JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.14")
 JEV_ENDPOINT = os.environ.get("JEV_ENDPOINT", "https://openrouter.ai/api/alpha/decisions")
 JEV_TIMEOUT_MS = int(os.environ.get("JEV_TIMEOUT_MS", "5000"))
 # Truncate state to ~28K tokens before send (Jev window 32K) — patterns.md:122
@@ -179,7 +179,7 @@ async def call_jev(
     Args:
         state: string | object | array — structured program state, prefer structured over concatenated paragraph.
         questions: mapping name -> {type, instructions, criteria?} — Choice/Noul/Score. All evaluated in parallel.
-        model: override JEV_MODEL (default typesafe/jev-1.13 pinned)
+        model: override JEV_MODEL (default typesafe/jev-1.14 pinned)
         timeout_ms: override JEV_TIMEOUT_MS (default 1500)
         max_retries: retries on 408/429/5xx with Retry-After respect (default 2)
 

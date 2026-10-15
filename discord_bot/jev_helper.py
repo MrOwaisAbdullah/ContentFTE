@@ -21,7 +21,7 @@ import requests
 
 logger = logging.getLogger("jev_helper")
 
-JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
+JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.14")
 JEV_ENDPOINT = os.environ.get("JEV_ENDPOINT", "https://openrouter.ai/api/alpha/decisions")
 JEV_TIMEOUT_MS = int(os.environ.get("JEV_TIMEOUT_MS", "5000"))
 RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
