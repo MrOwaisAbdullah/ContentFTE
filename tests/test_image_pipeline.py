@@ -406,19 +406,30 @@ def _patch_vlm_slot(monkeypatch, fallback=False):
     return seen
 
 
-def test_judge_image_fit_inpost_asks_clean_not_style(monkeypatch):
+def test_judge_image_fit_inpost_lanes(monkeypatch):
     captured = {}
 
     def fake_jev(state, questions):
         captured["questions"] = questions
-        return _RespMap({"matches_blog": 0.9, "clean": 0.8})
+        return _RespMap({"matches_blog": 0.9, "clean": 0.8, "theme_fit": 0.7})
 
     monkeypatch.setattr(image_vision, "call_jev_sync", fake_jev)
     out = image_vision.judge_image_fit("topic", "ctx", {}, slot="inpost")
-    assert set(captured["questions"]) == {"matches_blog", "clean"}
+    assert set(captured["questions"]) == {"matches_blog", "clean", "theme_fit"}
     assert out["passed"] is True
     assert out["clean"] == 0.8
+    assert out["theme_fit"] == 0.7
+    assert out["threshold_theme"] == image_vision.IMAGE_THEME_THRESHOLD
     assert "matches_style" not in out
+
+
+def test_judge_image_fit_inpost_theme_lane_can_fail(monkeypatch):
+    monkeypatch.setattr(
+        image_vision, "call_jev_sync",
+        lambda state, q: _RespMap({"matches_blog": 0.9, "clean": 0.9, "theme_fit": 0.3}),
+    )
+    out = image_vision.judge_image_fit("topic", "ctx", {}, slot="inpost")
+    assert out["passed"] is False
 
 
 def test_judge_image_fit_featured_keeps_style_lane(monkeypatch):
@@ -440,14 +451,16 @@ def test_validate_inpost_uses_clean_lane(monkeypatch):
     seen = _patch_vlm_slot(monkeypatch)
     monkeypatch.setattr(
         image_vision, "call_jev_sync",
-        lambda state, q: _RespMap({"matches_blog": 0.9, "clean": 0.2}),
+        lambda state, q: _RespMap({"matches_blog": 0.9, "clean": 0.2, "theme_fit": 0.8}),
     )
     out = image_vision.validate_thumbnail("x.jpg", "topic", "ctx", slot="inpost")
     assert seen["slot"] == "inpost"
     assert out["slot"] == "inpost"
     assert out["clean"] == 0.2
+    assert out["theme_fit"] == 0.8
     assert out["passed"] is False
     assert out["threshold_clean"] == image_vision.IMAGE_CLEAN_THRESHOLD
+    assert out["threshold_theme"] == image_vision.IMAGE_THEME_THRESHOLD
 
 
 def test_revision_guidance_inpost_bans_text_keeps_style_free():
@@ -460,11 +473,28 @@ def test_revision_guidance_inpost_bans_text_keeps_style_free():
     assert "cinematic 3D" in ftxt
 
 
+def test_revision_guidance_inpost_theme_drift():
+    verdict = {"theme_fit": 0.2, "vlm": {"style_notes": "pastel clip-art"}}
+    txt = image_vision.revision_guidance(verdict, slot="inpost")
+    assert "visual world" in txt
+    assert "concept art" not in txt.lower()
+
+
 def test_generate_image_inpost_uses_inpost_prompt_and_clean_gate(tmp_path, monkeypatch):
     _stub_logs(monkeypatch)
     monkeypatch.setattr(tools, "IMAGE_ROUTER", True)
     img = _write_image(tmp_path / "gen.jpg", "JPEG")
     seen = {}
+
+    order = [p[0] for p in tools._INPOST_STYLE_PICKS]
+    monkeypatch.setattr(
+        image_vision, "choose_inpost_style",
+        lambda title, summary, candidates: {
+            "order": order,
+            "scores": {n: 0.5 for n in order},
+            "fallback": False,
+        },
+    )
 
     def fake_gen(prompt, keyword, reference_b64=None, model=None, slot="featured"):
         seen["prompt"] = prompt
@@ -475,7 +505,7 @@ def test_generate_image_inpost_uses_inpost_prompt_and_clean_gate(tmp_path, monke
 
     def fake_validate(path, title, summary, slot="featured"):
         seen["validate_slot"] = slot
-        return {"passed": True, "matches_blog": 0.9, "clean": 0.9,
+        return {"passed": True, "matches_blog": 0.9, "clean": 0.9, "theme_fit": 0.9,
                 "issues": [], "fallback": False}
 
     monkeypatch.setattr(image_vision, "validate_thumbnail", fake_validate)
@@ -485,6 +515,118 @@ def test_generate_image_inpost_uses_inpost_prompt_and_clean_gate(tmp_path, monke
     assert seen["validate_slot"] == "inpost"
     assert "must contain ZERO text" in seen["prompt"]
     assert "Cinematic 3D tech storytelling" not in seen["prompt"]
+    # Jev's top-ranked look is the one actually prompted.
+    assert tools._INPOST_STYLE_PICKS[0][1] in seen["prompt"]
     assert out["slot"] == "inpost"
     assert out["qa"]["clean"] == 0.9
-    assert out["qa"]["style_pick"] in {p[0] for p in tools._INPOST_STYLE_PICKS}
+    assert out["qa"]["theme_fit"] == 0.9
+    assert out["qa"]["style_pick"] == order[0]
+    assert out["qa"]["style_source"] == "jev"
+
+
+def test_generate_image_inpost_falls_back_to_hash_style(tmp_path, monkeypatch):
+    _stub_logs(monkeypatch)
+    monkeypatch.setattr(tools, "IMAGE_ROUTER", True)
+    img = _write_image(tmp_path / "gen.jpg", "JPEG")
+    seen = {}
+
+    monkeypatch.setattr(
+        image_vision, "choose_inpost_style",
+        lambda title, summary, candidates: {"order": [], "scores": {}, "fallback": True},
+    )
+
+    def fake_gen(prompt, keyword, reference_b64=None, model=None, slot="featured"):
+        seen["prompt"] = prompt
+        return {"image_url": img, "model": model, "cost_usd": 0.0}
+
+    monkeypatch.setattr(tools, "_generate_image_cloudflare", fake_gen)
+    monkeypatch.setattr(
+        image_vision, "validate_thumbnail",
+        lambda path, title, summary, slot="featured": {
+            "passed": True, "matches_blog": 0.9, "clean": 0.9, "theme_fit": 0.9,
+            "issues": [], "fallback": False,
+        },
+    )
+
+    out = tools._generate_image("embeddings", "vector search", "section ctx", None, "inpost")
+    hash_pick = tools._pick_inpost_style("vector search")
+    assert hash_pick[1] in seen["prompt"]
+    assert out["qa"]["style_source"] == "fallback_hash"
+    assert out["qa"]["style_pick"] == hash_pick[0]
+
+
+def test_choose_inpost_style_ranks_candidates(monkeypatch):
+    candidates = [(p[0], p[1]) for p in tools._INPOST_STYLE_PICKS]
+    values = {f"style_{i}": 0.1 for i in range(len(candidates))}
+    values["style_2"] = 0.9
+    values["style_0"] = 0.7
+    seen = {}
+
+    def fake_jev(state, questions):
+        seen["keys"] = set(questions)
+        seen["state"] = state
+        return _RespMap(values)
+
+    monkeypatch.setattr(image_vision, "call_jev_sync", fake_jev)
+    out = image_vision.choose_inpost_style("vector databases", "ctx", candidates)
+    assert out["fallback"] is False
+    assert out["order"][0] == candidates[2][0]
+    assert out["order"][1] == candidates[0][0]
+    assert len(out["order"]) == len(candidates)
+    assert out["scores"][candidates[2][0]] == 0.9
+    assert seen["keys"] == set(values)
+    assert seen["state"]["section"]["title"] == "vector databases"
+
+
+def test_choose_inpost_style_fail_open(monkeypatch):
+    def boom(state, questions):
+        raise image_vision.JevError("offline")
+
+    monkeypatch.setattr(image_vision, "call_jev_sync", boom)
+    out = image_vision.choose_inpost_style("t", "s", [("editorial-3d", "dir")])
+    assert out["fallback"] is True
+    assert out["order"] == []
+
+
+def test_generate_image_inpost_rotates_style_on_theme_failure(tmp_path, monkeypatch):
+    _stub_logs(monkeypatch)
+    monkeypatch.setattr(tools, "IMAGE_ROUTER", True)
+    img = _write_image(tmp_path / "gen.jpg", "JPEG")
+    prompts = []
+    verdicts = []
+
+    order = [p[0] for p in tools._INPOST_STYLE_PICKS]
+    monkeypatch.setattr(
+        image_vision, "choose_inpost_style",
+        lambda title, summary, candidates: {
+            "order": order,
+            "scores": {n: 0.5 for n in order},
+            "fallback": False,
+        },
+    )
+
+    def fake_gen(prompt, keyword, reference_b64=None, model=None, slot="featured"):
+        prompts.append(prompt)
+        return {"image_url": img, "model": model, "cost_usd": 0.0}
+
+    monkeypatch.setattr(tools, "_generate_image_cloudflare", fake_gen)
+
+    def fake_validate(path, title, summary, slot="featured"):
+        if not verdicts:
+            v = {"passed": False, "matches_blog": 0.9, "clean": 0.9, "theme_fit": 0.2,
+                 "issues": [], "fallback": False}
+        else:
+            v = {"passed": True, "matches_blog": 0.9, "clean": 0.9, "theme_fit": 0.9,
+                 "issues": [], "fallback": False}
+        verdicts.append(v)
+        return v
+
+    monkeypatch.setattr(image_vision, "validate_thumbnail", fake_validate)
+
+    out = tools._generate_image("embeddings", "vector search", "section ctx", None, "inpost")
+    assert len(prompts) == 2
+    # Attempt 2 is a fresh look, not an edit of the failing one.
+    assert tools._INPOST_STYLE_PICKS[1][1] in prompts[1]
+    assert "Revision required" not in prompts[1]
+    assert out["qa"]["style_pick"] == tools._INPOST_STYLE_PICKS[1][0]
+    assert out["qa"]["passed"] is True

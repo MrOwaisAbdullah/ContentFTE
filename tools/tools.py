@@ -595,15 +595,17 @@ def _mark_image_quota(detail: str) -> bool:
     return True
 
 # Jev gate: VLM assessment passes only if the blog-topic match AND the
-# slot's second lane both clear their floors -- house-style for featured
-# thumbnails, text-free cleanliness for in-post body images. Below either
-# floor, regenerate with the previous image attached as reference plus the
-# VLM's stated mismatches.
+# slot's extra lanes both clear their floors -- house-style for featured
+# thumbnails; text-free cleanliness + theme fit for in-post body images.
+# Below a floor, regenerate with the previous image attached as reference
+# plus the VLM's stated mismatches (in-post: a theme-lane miss promotes the
+# next Jev-ranked look instead).
 # Thresholds live in lib/image_vision.py (single source of truth); re-exported
 # here because tools.py is where callers already look for image knobs.
 IMAGE_MATCH_THRESHOLD = image_vision.IMAGE_MATCH_THRESHOLD
 IMAGE_STYLE_THRESHOLD = image_vision.IMAGE_STYLE_THRESHOLD
 IMAGE_CLEAN_THRESHOLD = image_vision.IMAGE_CLEAN_THRESHOLD
+IMAGE_THEME_THRESHOLD = image_vision.IMAGE_THEME_THRESHOLD
 
 # Human-readable source labels written into the generated_posts "Image
 # Source" column. The AI label embeds the model id verbatim so "which model
@@ -1036,68 +1038,83 @@ def _build_house_prompt(
 # reusing the featured template made every body image the same navy-cyan 3D
 # character scene as everything else on the site (the variety complaint).
 # The body template: zero text on every attempt (the section heading already
-# carries the words), characters avoided by default, and one of six looks is
-# picked deterministically per section so consecutive images are visibly
-# different while retries of the same image stay coherent.
+# carries the words), characters avoided by default, and one of six
+# theme-matched looks per section. WHICH look is a decision, not a rotation:
+# lib.image_vision.choose_inpost_style() has Jev rank every candidate
+# against the section before generating (the VLM then verifies from the
+# pixels that the look fits; if it does not, the next-ranked look is tried).
+# The hash pick below is only the fail-open fallback when Jev is unreachable.
 # ---------------------------------------------------------------------------
+# Every direction stays inside the site's visual world (deep navy + electric
+# blue/cyan, violet/magenta/amber accents, premium cinematic finish) -- the
+# variety is in medium, scale and composition, never in leaving the theme.
 _INPOST_STYLE_PICKS = (
     (
         "editorial-3d",
-        "a polished 3D editorial render with soft studio lighting, gentle "
-        "depth of field and tactile matte materials",
-        "one hero object filling the middle of the frame, clean background, "
-        "clear depth separation",
+        "a polished 3D editorial render on a deep-navy backdrop: one hero "
+        "object in tactile matte materials, soft studio lighting, cyan rim "
+        "light with one violet or amber accent",
+        "the object centered with clean gradient negative space, strong "
+        "depth separation, nothing competing with it",
     ),
     (
         "cinematic-photo",
-        "a realistic cinematic photograph with natural light, honest textures "
-        "and shallow depth of field",
+        "a realistic cinematic photograph with moody premium lighting: deep "
+        "shadows, practical cyan or amber light, honest textures, editorial "
+        "finish",
         "a wide or three-quarter shot of a real-world instance of the "
-        "subject, strong leading lines",
+        "subject, strong leading lines, shallow depth of field",
     ),
     (
-        "flat-vector",
-        "a minimal flat vector illustration with bold geometric shapes, a "
-        "limited palette and confident linework",
-        "a simple centered arrangement with generous negative space and no "
-        "detail smaller than the eye can read",
+        "technical-blueprint",
+        "a precise technical blueprint aesthetic over deep navy: luminous "
+        "cyan linework, glowing nodes and a fine grid, like an elegant "
+        "engineering schematic -- abstract marks only, never readable labels",
+        "one system diagrammed as a single clean layer at the center, "
+        "generous dark space around it",
     ),
     (
-        "isometric",
-        "a clean isometric 3D diorama of a miniature world that maps the "
-        "idea in one glance",
-        "the diorama floating as a cutaway block or platform, everything "
-        "readable from one angle",
+        "isometric-diorama",
+        "a clean isometric 3D diorama of a miniature tech scene floating in "
+        "deep-navy space: glowing cyan pathways and edges, violet or amber "
+        "accents, soft studio gloss",
+        "the diorama as one cutaway platform or block, everything readable "
+        "from a single angle",
     ),
     (
-        "macro",
-        "an extreme macro close-up of the single object or material that "
-        "carries the idea, with dramatic rim lighting and crisp texture",
-        "the subject filling the whole frame, out-of-focus background, every "
-        "surface detail sharp",
+        "cinematic-macro",
+        "an extreme macro close-up with cinematic lighting: deep navy "
+        "shadows, cyan and amber rim light, shallow depth of field, every "
+        "surface detail crisp",
+        "the object or material filling the whole frame against an "
+        "out-of-focus navy background",
     ),
     (
-        "duotone-poster",
-        "a two-tone duotone graphic in deep navy plus one bright accent, "
-        "with strong silhouettes and poster-like clarity",
-        "a bold graphic composition with large shapes and heavy contrast, "
-        "one focal shape",
+        "glow-graphic",
+        "a luminous graphics composition: a deep-navy field with glowing "
+        "cyan and violet geometric forms, strong silhouettes, poster-like "
+        "clarity",
+        "large bold shapes with heavy contrast and one clear focal form",
     ),
 )
 
 
 def _pick_inpost_style(seed_text: str) -> tuple:
-    """Deterministic per-section style pick (name, style direction, composition
+    """Deterministic style pick (name, style direction, composition
     direction).
 
-    Same seed -> same pick, so retries and re-runs of one image stay coherent
-    while different sections and posts get different looks. Hash-based (not
-    random) so tests can assert it and logged runs are reproducible."""
+    FAIL-OPEN FALLBACK ONLY: the real pick is Jev's ranking via
+    image_vision.choose_inpost_style(). This hash keeps behavior sane when
+    Jev is unreachable -- same seed -> same pick, so retries and re-runs of
+    one image stay coherent. Hash-based (not random) so tests can assert it
+    and logged runs are reproducible."""
     seed = hashlib.sha256((seed_text or "").encode("utf-8")).digest()
     return _INPOST_STYLE_PICKS[int.from_bytes(seed[:4], "big") % len(_INPOST_STYLE_PICKS)]
 
 
 _INPOST_IMAGE_PROMPT_TEMPLATE = '''Create one clean editorial illustration for a technical blog article published on owaisabdullah.dev. The site name is context for the brand only -- never typeset it, never show it as a logo, badge or watermark.
+
+**Site visual world (every image lives in it):** cinematic tech storytelling -- deep navy, electric blue/cyan, with violet, magenta or amber accents and a premium, reflective finish. The medium and composition vary per image, but the palette, polish and mood must always feel native to this world.
 
 **What this image is:** an in-article body image that illustrates ONE section of the post. It is NOT a hero thumbnail -- it should not advertise, and it should not repeat the article's featured-image look. It illustrates the idea; it never explains it in words.
 
@@ -1127,12 +1144,18 @@ _INPOST_IMAGE_PROMPT_TEMPLATE = '''Create one clean editorial illustration for a
 **Section context:** [INSERT URL OR SUMMARY]'''.replace("owaisabdullah.dev", SITE_HOST)
 
 
-def _build_inpost_prompt(title: str, summary: str, scene_concept: str = None) -> str:
-    """Fill the in-post template: picks the per-section style, injects the
-    section topic/context, appends the agent's scene concept, and closes with
-    the hard no-text rule (same closing rule the featured textless pass uses
-    -- last-instruction-wins is what these models obey)."""
-    _, style_dir, composition_dir = _pick_inpost_style(title or summary)
+def _build_inpost_prompt(
+    title: str, summary: str, scene_concept: str = None, style: tuple = None
+) -> str:
+    """Fill the in-post template: injects the chosen style's directions, the
+    section topic/context and the agent's scene concept, then closes with the
+    hard no-text/no-people rules (last-instruction-wins is what these models
+    obey).
+
+    `style` is the Jev-ranked (name, style direction, composition direction)
+    tuple for this attempt -- the caller passes the current pick (possibly a
+    rotated runner-up on retry). Omitted -> deterministic hash fallback."""
+    _, style_dir, composition_dir = style or _pick_inpost_style(title or summary)
     prompt = _INPOST_IMAGE_PROMPT_TEMPLATE
     prompt = prompt.replace("[INSERT STYLE DIRECTION]", style_dir)
     prompt = prompt.replace("[INSERT COMPOSITION DIRECTION]", composition_dir)
@@ -1147,6 +1170,35 @@ def _build_inpost_prompt(title: str, summary: str, scene_concept: str = None) ->
 
     prompt += "\n\n" + _INPOST_CLOSING_RULE
     return prompt
+
+
+def _resolve_inpost_styles(title: str, summary: str) -> tuple:
+    """Best-first in-post style candidates + how they were chosen.
+
+    Primary pick: Jev ranks every theme-matched direction against the
+    section (lib.image_vision.choose_inpost_style). Returns
+    (styles, source, scores):
+      styles -- non-empty list of (name, style direction, composition
+                direction), best first; the tail doubles as the retry plan.
+      source -- "jev" or "fallback_hash" (Jev unreachable).
+      scores -- {name: noul} from the ranking ({} on fallback).
+    Never raises."""
+    candidates = [(name, direction) for name, direction, _c in _INPOST_STYLE_PICKS]
+    try:
+        picked = image_vision.choose_inpost_style(title, summary, candidates) or {}
+    except Exception as e:  # choose_inpost_style never raises; belt and braces
+        logger.warning(f"choose_inpost_style raised: {e}")
+        picked = {}
+    by_name = {t[0]: t for t in _INPOST_STYLE_PICKS}
+    ordered = [by_name[n] for n in (picked.get("order") or []) if n in by_name]
+    if not ordered:
+        fallback = _pick_inpost_style(title or summary)
+        ordered = [fallback] + [t for t in _INPOST_STYLE_PICKS if t != fallback]
+        return ordered, "fallback_hash", {}
+    # Defensively append any candidate Jev did not score.
+    seen = {t[0] for t in ordered}
+    ordered += [t for t in _INPOST_STYLE_PICKS if t[0] not in seen]
+    return ordered, "jev", picked.get("scores") or {}
 
 
 def _file_to_b64(path: str) -> Optional[str]:
@@ -1165,6 +1217,7 @@ def _rank_image_verdict(verdict: Dict[str, Any]) -> float:
     blog = verdict.get("matches_blog")
     style = verdict.get("matches_style")
     clean = verdict.get("clean")
+    theme = verdict.get("theme_fit")
     score = 0.0
     if isinstance(blog, (int, float)):
         score += float(blog)
@@ -1172,6 +1225,8 @@ def _rank_image_verdict(verdict: Dict[str, Any]) -> float:
         score += float(style)
     if isinstance(clean, (int, float)):
         score += float(clean)
+    if isinstance(theme, (int, float)):
+        score += float(theme)
     if verdict.get("passed"):
         score += 1000.0
     elif verdict.get("fallback") and blog is None:
@@ -1188,7 +1243,7 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None,
     You do not write the image prompt yourself; the tool builds it. Featured
     images use the site's house cinematic thumbnail prompt. In-post body
     images use a separate textless body-image prompt (no forced character,
-    one of six styles picked per section) -- see `slot`. Pass:
+    site-theme-matched look ranked by Jev for the section) -- see `slot`. Pass:
 
     - keyword: the post's topic/keyword (also used for alt text)
     - title: the post's article title (fills the house prompt's title slot)
@@ -1199,18 +1254,21 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None,
       scene concept; it never replaces the house style.
     - slot: "featured" (default, hero thumbnail -- house cinematic style,
       headline typography allowed) or "inpost" (body image -- textless, no
-      forced character, per-section style pick). The slot selects the prompt
-      template, typography mode and QA lanes, and labels the image_logs
-      audit row.
+      forced character, Jev-ranked site-theme look). The slot selects the
+      prompt template, typography mode and QA lanes, and labels the
+      image_logs audit row.
 
     Each attempt is checked by a VLM (which actually looks at the pixels)
     plus Jev, which decides whether the image matches the article topic AND
-    the slot's second lane -- house style for featured thumbnails, text-free
-    cleanliness (no baked/garbled text, no clutter) for in-post body images.
-    If either check misses its threshold the image is regenerated with the
-    previous attempt attached as a reference and the VLM's specific
-    complaints written into the prompt -- up to IMAGE_MAX_REVISIONS attempts.
-    The best attempt is always returned.
+    the slot's extra lanes -- house style for featured thumbnails; text-free
+    cleanliness plus theme fit (looks native to the site's visual world) for
+    in-post body images. The in-post look itself is also a decision: before
+    generating, Jev ranks every theme-matched art direction against the
+    section, and a theme-lane failure promotes the next-ranked look instead
+    of repeating one the VLM just rejected. If a check misses its threshold
+    the image is regenerated with the previous attempt attached as a
+    reference and the VLM's specific complaints written into the prompt --
+    up to IMAGE_MAX_REVISIONS attempts. The best attempt is always returned.
 
     A model router runs inside the loop (IMAGE_ROUTER, on by default):
     attempt 1 uses the cheap model (flux-2-klein-4b, ~110 Neurons) with
@@ -1222,8 +1280,9 @@ def generate_image_tool(keyword: str, title: str = None, summary: str = None,
     to pin everything to CLOUDFLARE_IMAGE_MODEL.
 
     Returns a dict with image_url/alt_text/source plus a `qa` block
-    {passed, matches_blog, matches_style (featured) or clean (in-post),
-    attempts, model, router, issues}.
+    {passed, matches_blog, matches_style (featured) or clean + theme_fit
+    (in-post), style_pick/style_source/style_scores (in-post: which look Jev
+    ranked and chose), attempts, model, router, issues}.
     A non-passing `qa.passed` is NOT an error -- an image is returned if any
     attempt succeeded. On total failure, returns an error dict: featured
     images do NOT fall back to stock (brand control) -- the caller publishes
@@ -1251,6 +1310,18 @@ def _generate_image(keyword: str, title: Optional[str] = None,
     qa_trace: List[Dict[str, Any]] = []
     router_plan: List[str] = []
 
+    # In-post look: a Jev decision, not a rotation. choose_inpost_style()
+    # ranks every theme-matched direction against the section; the ranked
+    # order doubles as the retry plan -- a theme-lane failure promotes the
+    # runner-up instead of re-prompting a look the VLM just rejected.
+    inpost_styles: List[tuple] = []
+    style_source: Optional[str] = None
+    style_scores: Dict[str, Any] = {}
+    style_idx = 0
+    best_style: Optional[str] = None
+    if slot == "inpost":
+        inpost_styles, style_source, style_scores = _resolve_inpost_styles(title, summary)
+
     # Freepik was removed as a provider here (persistent 401 -- an invalid/
     # expired key that was never rotated -- and a one-time trial credit
     # rather than an ongoing free tier to begin with). Cloudflare Workers AI
@@ -1276,8 +1347,11 @@ def _generate_image(keyword: str, title: Optional[str] = None,
                     "quota": True, "slot": slot}
         model, text_mode = _image_plan(attempt, slot)
         router_plan.append(f"a{attempt}={model.rsplit('/', 1)[-1]}/{text_mode}")
+        active_style = inpost_styles[style_idx] if inpost_styles else None
         if slot == "inpost":
-            base_prompt = _build_inpost_prompt(title, summary, custom_prompt)
+            base_prompt = _build_inpost_prompt(
+                title, summary, custom_prompt, style=active_style
+            )
         else:
             base_prompt = _build_house_prompt(
                 title, summary, custom_prompt, text_mode=text_mode
@@ -1328,6 +1402,8 @@ def _generate_image(keyword: str, title: Optional[str] = None,
                 "matches_blog": verdict.get("matches_blog"),
                 "matches_style": verdict.get("matches_style"),
                 "clean": verdict.get("clean"),
+                "theme_fit": verdict.get("theme_fit"),
+                "style": active_style[0] if active_style else None,
                 "issues": (verdict.get("issues") or [])[:5],
                 "vlm": (verdict.get("vlm") or {}).get("model"),
                 "fallback": verdict.get("fallback"),
@@ -1338,7 +1414,9 @@ def _generate_image(keyword: str, title: Optional[str] = None,
             f"Image QA attempt {attempt}/{IMAGE_MAX_REVISIONS} ({model.rsplit('/', 1)[-1]}, "
             f"text={text_mode}): passed={verdict.get('passed')} "
             f"matches_blog={verdict.get('matches_blog')} matches_style={verdict.get('matches_style')} "
-            f"clean={verdict.get('clean')} issues={len(verdict.get('issues') or [])}"
+            f"clean={verdict.get('clean')} theme={verdict.get('theme_fit')} "
+            f"style={active_style[0] if active_style else '-'} "
+            f"issues={len(verdict.get('issues') or [])}"
         )
 
         if rank > best_rank:
@@ -1349,9 +1427,25 @@ def _generate_image(keyword: str, title: Optional[str] = None,
                 except OSError:
                     pass
             best, best_verdict, best_rank = result, verdict, rank
+            best_style = active_style[0] if active_style else None
 
         if verdict.get("passed"):
             break
+
+        # Theme-lane failure means THIS LOOK is the problem: promote the next
+        # Jev-ranked style (the VLM's verdict + Jev's ranking picking the
+        # style together) instead of re-prompting a look already rejected.
+        # A new style is not an edit of the old image, so start clean.
+        if (
+            slot == "inpost"
+            and verdict.get("theme_fit") is not None
+            and float(verdict["theme_fit"]) < image_vision.IMAGE_THEME_THRESHOLD
+            and style_idx + 1 < len(inpost_styles)
+        ):
+            style_idx += 1
+            reference_b64 = None
+            revision_suffix = ""
+            continue
 
         # Reject this attempt: use it as the edit reference for the next one.
         next_reference = _file_to_b64(image_path)
@@ -1388,10 +1482,14 @@ def _generate_image(keyword: str, title: Optional[str] = None,
         "matches_blog": best_verdict.get("matches_blog"),
         "matches_style": best_verdict.get("matches_style"),
         "clean": best_verdict.get("clean"),
+        "theme_fit": best_verdict.get("theme_fit"),
         "threshold_blog": image_vision.IMAGE_MATCH_THRESHOLD,
         "threshold_style": image_vision.IMAGE_STYLE_THRESHOLD,
         "threshold_clean": image_vision.IMAGE_CLEAN_THRESHOLD,
-        "style_pick": _pick_inpost_style(title or summary)[0] if slot == "inpost" else None,
+        "threshold_theme": image_vision.IMAGE_THEME_THRESHOLD,
+        "style_pick": best_style,
+        "style_source": style_source,
+        "style_scores": style_scores,
         "attempts": attempts,
         "max_revisions": IMAGE_MAX_REVISIONS,
         "model": best_model,
@@ -1419,6 +1517,7 @@ def _generate_image(keyword: str, title: Optional[str] = None,
         detail=(
             f"attempts={attempts}/{IMAGE_MAX_REVISIONS} router={','.join(router_plan)} "
             f"blog={qa['matches_blog']} style={qa['matches_style']} clean={qa['clean']} "
+            f"theme={qa['theme_fit']} style_pick={qa['style_pick']} "
             f"issues={'; '.join(str(i) for i in (qa['issues'] or [])[:3])}"
         ),
         cost_usd=best.get("cost_usd", 0.0),
@@ -1455,7 +1554,8 @@ def _select_inpost_image(
     Pexels candidate -> download -> VLM + Jev topic-relevancy on a 0-100
     scale: >= 90 (IMAGE_STOCK_RELEVANCY_THRESHOLD) keeps the free stock
     image; below 90, or stock unavailable/undownloadable, it generates with
-    the house AI model instead. If both fail it returns an error dict --
+    the in-post AI lane instead (textless, no forced character, a Jev-ranked
+    site-theme look). If both fail it returns an error dict --
     the caller then skips the image entirely (spec 5.9's ultimate fallback,
     "publish without an image + flag"); it never substitutes an unvetted
     image.
@@ -1541,7 +1641,7 @@ def _select_inpost_image(
                     stock_error=(stock or {}).get("error", "no candidate") if isinstance(stock, dict) else "no candidate")
         _log_gate("stock_unavailable", str(gate.get("stock_error") or "no candidate")[:200])
 
-    # Stock rejected/unavailable -> AI generation with the house prompt.
+    # Stock rejected/unavailable -> in-post AI lane (textless, Jev-ranked look).
     try:
         ai = generate_fn(
             keyword=topic, title=topic, summary=section_summary,
@@ -1586,9 +1686,11 @@ def select_inpost_image_tool(topic: str, section_summary: str = "",
        relevancy_score = score, source=Pexels).
     4. Score < 90, or stock unavailable/undownloadable, generates a
        textless AI body image instead (slot=inpost): no forced character,
-       a per-section style pick, zero on-image text. It is judged on topic
-       fit + text-free cleanliness -- the house-thumbnail style gate does
-       not apply to body images.
+       zero on-image text, and a look Jev picks for this section from
+       theme-matched directions. It is judged on topic fit + text-free
+       cleanliness + theme fit; a bad look is retried with the next-ranked
+       direction -- the house-thumbnail style gate never applies to body
+       images.
     5. If BOTH fail, returns an error dict -- report it and continue
        WITHOUT an image for that section; never insert an unvetted image.
 

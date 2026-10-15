@@ -14,12 +14,15 @@ references/vision-bridge.md) — Jev state is text-only, so:
                                           |
                                           v
               slot=featured: matches_blog + matches_style (house style)
-              slot=inpost:   matches_blog + clean (body image; text-free)
+              slot=inpost:   matches_blog + clean + theme_fit (body image).
+                             The look itself is ALSO a Jev decision: see
+                             choose_inpost_style() below, which ranks the
+                             candidate art directions before generation.
                                           |
                                           v
                         pass (>= thresholds) / regenerate with feedback
 
-Jev is the decision lane (bounded: two Noul probabilities), the VLM is the
+Jev is the decision lane (bounded Noul probabilities), the VLM is the
 generation lane (open-ended description). Never send pixels to Jev.
 
 Fail-open, per the skill's Fallback section: a verification gate that is
@@ -229,11 +232,15 @@ def describe_image_vlm(
 # ---------------------------------------------------------------------------
 IMAGE_MATCH_THRESHOLD = float(os.environ.get("IMAGE_MATCH_THRESHOLD") or "0.65")
 IMAGE_STYLE_THRESHOLD = float(os.environ.get("IMAGE_STYLE_THRESHOLD") or "0.6")
-# In-post second lane: how clean/text-free the body image is. Style is NOT
-# judged for body images (variety is wanted there and the site look would
-# make every post's images identical); baked-in text and garbled artifacts
-# are disqualifying.
+# In-post lane 2: how clean/text-free the body image is. Baked-in text and
+# garbled artifacts are disqualifying whoever painted them.
 IMAGE_CLEAN_THRESHOLD = float(os.environ.get("IMAGE_CLEAN_THRESHOLD") or "0.6")
+# In-post lane 3: how well the actual pixels sit in the site's visual world
+# (deep navy + cyan/violet/amber, premium tech) -- judged loosely so any
+# clean medium can pass, tight enough to bounce clip-art / generic looks.
+# This lane judges the EXECUTION of whichever style was attempted; WHICH
+# style to attempt is Jev's choose_inpost_style() ranking below.
+IMAGE_THEME_THRESHOLD = float(os.environ.get("IMAGE_THEME_THRESHOLD") or "0.55")
 
 _JEV_STYLE_INSTRUCTIONS = (
     "Does `image.style_notes` + `image.description` match the owaisabdullah.dev house "
@@ -261,6 +268,31 @@ _JEV_CLEAN_INSTRUCTIONS = (
     "acceptable for body images."
 )
 
+_JEV_INPOST_THEME_INSTRUCTIONS = (
+    "Does this image belong on the site -- a premium technical blog whose visual "
+    "world is cinematic tech storytelling: deep navy, electric blue/cyan, and "
+    "violet, magenta or amber accents? Judge theme fit, not novelty: a clean "
+    "photo, 3D render, isometric diorama, blueprint or macro look can all belong "
+    "when the palette, polish and mood read as part of that world. Penalize looks "
+    "that clash with it: clip-art vibes, unrelated pastels, oversaturated neon, "
+    "generic corporate imagery, cheap template looks. Body images must NOT copy "
+    "the hero thumbnail, so do not reward sameness with the featured style."
+)
+
+# Style-pick lane: one Noul per candidate direction, ranked by Jev instead of
+# a blind hash rotation. The section text is the state; each question carries
+# one candidate's art direction.
+_JEV_STYLE_PICK_INSTRUCTIONS = (
+    "Would this art direction be a strong choice for an in-article illustration "
+    "of the section below, on a premium technical blog? Art direction: {style}. "
+    "The site's visual world is cinematic tech storytelling: deep navy, electric "
+    "blue/cyan, with violet, magenta or amber accents and a premium finish. "
+    "Score high when the direction would carry this section's idea vividly and "
+    "feel native to that world; score low when it would clash with the theme, "
+    "look generic or cheap, or struggle to carry the idea. Judge the direction "
+    "itself, not the section's topic."
+)
+
 
 def judge_image_fit(
     article_title: str,
@@ -268,10 +300,11 @@ def judge_image_fit(
     image_report: Dict[str, Any],
     slot: str = "featured",
 ) -> Dict[str, Any]:
-    """Jev Noul batched gate: matches_blog + one slot-specific second lane
-    in one call. slot="featured" judges matches_style (house thumbnail);
-    slot="inpost" judges `clean` instead (text-free, uncluttered -- style is
-    deliberately free for body images, which is where image variety lives).
+    """Jev Noul batched gate, one call. slot="featured": matches_blog +
+    matches_style (house thumbnail). slot="inpost": matches_blog + clean
+    (text-free, uncluttered) + theme_fit (belongs to the site's visual
+    world). Which in-post style gets ATTEMPTED is picked by
+    choose_inpost_style() below; this gate judges the pixels that came back.
 
     Fail-open: JevError/timeout returns fallback=True with passed=True so a
     Jev outage never costs image generations. Never raises.
@@ -297,13 +330,18 @@ def judge_image_fit(
             "slot": slot,
             "error": error,
         }
-        out["clean" if slot == "inpost" else "matches_style"] = 1.0
+        if slot == "inpost":
+            out["clean"] = 1.0
+            out["theme_fit"] = 1.0
+        else:
+            out["matches_style"] = 1.0
         return out
 
     if slot == "inpost":
         questions = {
             "matches_blog": {"type": "noul", "instructions": _JEV_TOPIC_INSTRUCTIONS},
             "clean": {"type": "noul", "instructions": _JEV_CLEAN_INSTRUCTIONS},
+            "theme_fit": {"type": "noul", "instructions": _JEV_INPOST_THEME_INSTRUCTIONS},
         }
     else:
         questions = {
@@ -335,12 +373,19 @@ def judge_image_fit(
     matches_blog = _noul("matches_blog")
     if slot == "inpost":
         clean = _noul("clean")
-        passed = matches_blog >= IMAGE_MATCH_THRESHOLD and clean >= IMAGE_CLEAN_THRESHOLD
+        theme_fit = _noul("theme_fit")
+        passed = (
+            matches_blog >= IMAGE_MATCH_THRESHOLD
+            and clean >= IMAGE_CLEAN_THRESHOLD
+            and theme_fit >= IMAGE_THEME_THRESHOLD
+        )
         return {
             "matches_blog": round(matches_blog, 4),
             "clean": round(clean, 4),
+            "theme_fit": round(theme_fit, 4),
             "threshold_blog": IMAGE_MATCH_THRESHOLD,
             "threshold_clean": IMAGE_CLEAN_THRESHOLD,
+            "threshold_theme": IMAGE_THEME_THRESHOLD,
             "passed": bool(passed),
             "fallback": False,
             "slot": slot,
@@ -362,19 +407,93 @@ def judge_image_fit(
     }
 
 
+def choose_inpost_style(
+    article_title: str,
+    article_summary: str,
+    candidates: List[tuple],
+) -> Dict[str, Any]:
+    """Jev style pick for an in-post image: one Noul per candidate art
+    direction, ranked best-first. The look is chosen by the same decision
+    stack that judges the finished pixels -- not a blind rotation.
+
+    `candidates` is [(name, style_direction), ...] (the
+    tools._INPOST_STYLE_PICKS shape). Returns {order: [names best-first],
+    scores: {name: noul}, fallback: bool} plus model/usage when judged.
+
+    Fail-open: Jev down -> fallback=True with an empty order; the caller
+    falls back to its deterministic hash pick. Never raises.
+    """
+    if not candidates:
+        return {"order": [], "scores": {}, "fallback": True, "error": "no_candidates"}
+    state = {
+        "section": {
+            "title": (article_title or "").strip(),
+            "summary": (article_summary or "").strip(),
+        },
+    }
+    index_to_name = {}
+    questions = {}
+    for idx, (name, direction) in enumerate(candidates):
+        key = f"style_{idx}"
+        index_to_name[key] = name
+        questions[key] = {
+            "type": "noul",
+            "instructions": _JEV_STYLE_PICK_INSTRUCTIONS.format(style=direction),
+        }
+    try:
+        resp = call_jev_sync(state, questions)
+    except JevError as e:
+        logger.warning(f"choose_inpost_style Jev fallback: {e}")
+        return {"order": [], "scores": {}, "fallback": True, "error": str(e)}
+    except Exception as e:
+        logger.warning(f"choose_inpost_style unexpected fallback: {e}")
+        return {"order": [], "scores": {}, "fallback": True, "error": str(e)}
+
+    answers = getattr(resp, "answers", None) or {}
+    scores: Dict[str, float] = {}
+    for key, name in index_to_name.items():
+        ans = answers.get(key)
+        if isinstance(ans, dict):
+            val = ans.get("noul")
+        else:
+            val = getattr(ans, "noul", None) if ans is not None else None
+        try:
+            scores[name] = round(float(val), 4) if val is not None else 0.0
+        except (TypeError, ValueError):
+            scores[name] = 0.0
+    if not any(scores.values()):
+        return {"order": [], "scores": scores, "fallback": True, "error": "no_nouls"}
+
+    out: Dict[str, Any] = {
+        "order": sorted(scores, key=lambda n: scores[n], reverse=True),
+        "scores": scores,
+        "fallback": False,
+        "model": getattr(resp, "model", None),
+    }
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        try:
+            out["usage"] = usage.model_dump()
+        except Exception:  # noqa: BLE001 -- telemetry only, never block the pick
+            pass
+    return out
+
+
 def validate_thumbnail(
     image_path: str, article_title: str, article_summary: str, slot: str = "featured"
 ) -> Dict[str, Any]:
     """Full check: VLM describes the pixels, Jev decides if it fits.
 
-    `slot` picks the second Jev lane: "featured" -> matches_style (house
-    thumbnail style), "inpost" -> clean (body images must be text-free and
-    uncluttered; style is free by design). Name kept for compatibility --
-    despite the name it validates both slots.
+    `slot` picks the extra Jev lanes: "featured" -> matches_style (house
+    thumbnail style); "inpost" -> clean (text-free, uncluttered) + theme_fit
+    (belongs to the site's visual world -- any clean medium may pass, a
+    clip-art/generic look fails). Which in-post look was ATTEMPTED is Jev's
+    choose_inpost_style() pick; this gate judges the pixels that came back.
+    Name kept for compatibility -- despite the name it validates both slots.
 
-    Returns {passed, matches_blog, matches_style|clean, vlm, issues,
-    fallback}. Fail-open on any infrastructure problem (never blocks
-    publish). Never raises.
+    Returns {passed, matches_blog, matches_style|clean+theme_fit, vlm,
+    issues, fallback}. Fail-open on any infrastructure problem (never
+    blocks publish). Never raises.
     """
     started = time.perf_counter()
     try:
@@ -386,6 +505,7 @@ def validate_thumbnail(
                 "matches_blog": None,
                 "matches_style": None,
                 "clean": None,
+                "theme_fit": None,
                 "slot": slot,
                 "vlm": report,
                 "issues": [],
@@ -399,9 +519,11 @@ def validate_thumbnail(
             "matches_blog": verdict.get("matches_blog"),
             "matches_style": verdict.get("matches_style"),
             "clean": verdict.get("clean"),
+            "theme_fit": verdict.get("theme_fit"),
             "threshold_blog": verdict.get("threshold_blog"),
             "threshold_style": verdict.get("threshold_style"),
             "threshold_clean": verdict.get("threshold_clean"),
+            "threshold_theme": verdict.get("threshold_theme"),
             "slot": slot,
             "vlm": {k: v for k, v in report.items() if k != "error"},
             "issues": report.get("issues") or [],
@@ -417,6 +539,7 @@ def validate_thumbnail(
             "matches_blog": None,
             "matches_style": None,
             "clean": None,
+            "theme_fit": None,
             "slot": slot,
             "issues": [],
             "fallback": True,
@@ -428,9 +551,9 @@ def revision_guidance(verdict: Dict[str, Any], slot: str = "featured") -> str:
     """Build the 'do not repeat these problems' block for the next attempt.
 
     Slot-aware: featured problems push back toward the house style; in-post
-    problems push toward text-free cleanliness only -- body images are
-    allowed any clean style and must never be told to return to the house
-    thumbnail look."""
+    problems push toward text-free cleanliness and back into the site's
+    visual world -- body images may use any clean, theme-fitting medium and
+    must never be told to return to the house thumbnail look."""
     parts: List[str] = []
     issues = [i for i in (verdict.get("issues") or []) if isinstance(i, str) and i.strip()]
     if issues:
@@ -462,6 +585,16 @@ def revision_guidance(verdict: Dict[str, Any], slot: str = "featured") -> str:
             + (f' (previous: "{notes[:200]}")' if notes else "")
             + ". Keep it text-free, uncluttered, one clear subject, no distorted "
             "shapes or glitches."
+        )
+    theme = verdict.get("theme_fit")
+    if theme is not None and float(theme) < IMAGE_THEME_THRESHOLD:
+        notes = (verdict.get("vlm") or {}).get("style_notes") or ""
+        parts.append(
+            "- The look drifted away from the site's visual world"
+            + (f' (previous: "{notes[:200]}")' if notes else "")
+            + ". Follow the art-direction block above exactly: deep navy with "
+            "electric blue/cyan and violet, magenta or amber accents, premium "
+            "cinematic finish; no clip-art or generic corporate look."
         )
     text_seen = (verdict.get("text_seen") or "").strip().lower()
     if text_seen and text_seen not in ("none", "no", "n/a", "none."):
