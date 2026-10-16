@@ -2,7 +2,7 @@
 import { engine, QueueView, SiteList } from "@/lib/engine";
 import { createArticleAction } from "@/actions/articles";
 import { Alert, Empty, PageHeader, Pill, fmtDate, fmtScore } from "@/lib/ui";
-import { PendingButton, SiteSwitcher } from "@/lib/interactive";
+import { PendingButton } from "@/lib/interactive";
 
 export const dynamic = "force-dynamic";
 
@@ -35,14 +35,6 @@ export default async function KeywordsPage({
       <PageHeader
         title={`Keywords — ledger sheet ${slug ? `· ${slug}` : ""}`}
         sub="the workbook's keyword ledger, engine-side"
-        right={
-          <SiteSwitcher
-            sites={sites.sites}
-            current={slug}
-            basePath="/articles/keywords"
-            keep={status ? { status } : {}}
-          />
-        }
       />
 
       {err ? <Alert tone="error">{err}</Alert> : null}

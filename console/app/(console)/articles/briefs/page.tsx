@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { engine, BriefsView, SiteList } from "@/lib/engine";
 import { Alert, Empty, PageHeader, Pill } from "@/lib/ui";
-import { SiteSwitcher } from "@/lib/interactive";
 import { ScrollText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +30,6 @@ export default async function BriefsPage({
       <PageHeader
         title={`Briefs — content_briefs sheet ${slug ? `· ${slug}` : ""}`}
         sub="only rows that carry a brief · next briefable stays on the dashboard"
-        right={<SiteSwitcher sites={sites.sites} current={slug} basePath="/articles/briefs" />}
       />
 
       {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}

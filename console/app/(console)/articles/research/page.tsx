@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { engine, ResearchView, SiteList } from "@/lib/engine";
 import { Alert, Empty, PageHeader, Pill } from "@/lib/ui";
-import { SiteSwitcher } from "@/lib/interactive";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +31,6 @@ export default async function ResearchPage({
       <PageHeader
         title={`Research — research_data sheet ${slug ? `· ${slug}` : ""}`}
         sub="findings pulled from the ledger before briefing"
-        right={<SiteSwitcher sites={sites.sites} current={slug} basePath="/articles/research" />}
       />
 
       {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
