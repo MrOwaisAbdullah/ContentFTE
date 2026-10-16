@@ -31,6 +31,8 @@ Endpoints:
     PATCH /sdk/v1/articles/{id}/content   -> operator edit of content_md (console)
     POST /sdk/v1/run/{stage}              -> trigger a pipeline stage in the
                                               background (console; 409 on overlap)
+    GET  /sdk/v1/stages                   -> stage history (stage.run audit rows)
+                                              + live running set (console)
     GET  /sdk/v1/sites/{slug}/llms.txt    -> site llms.txt (§5.8 GEO) from published articles
     GET  /sdk/v1/wp/posts/{id}            -> read a WP post back (raw content + SEO meta)
     GET  /sdk/v1/elementor/available      -> Elementor REST meta probe (status body)
@@ -48,8 +50,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
@@ -59,6 +63,8 @@ from pydantic import BaseModel
 import sdk.service as service
 
 router = APIRouter(prefix="/sdk/v1", tags=["sdk"])
+
+logger = logging.getLogger("sdk.server")
 
 _idempotency: dict[str, dict] = {}
 
@@ -352,6 +358,19 @@ _running_stages: set[str] = set()
 _run_lock = threading.Lock()
 
 
+@router.get("/stages")
+def get_stages(limit: int = 200,
+               x_site_key: str | None = Header(default=None)) -> dict:
+    """Stage history + live running set (console Wave 5, read-only).
+
+    History = newest `stage.run` audit rows (one per finished run, written by
+    the run route); running = this engine process's in-flight stages."""
+    _check_site_key(x_site_key)
+    with _run_lock:
+        running = sorted(_running_stages)
+    return _resolve(service.list_stages(running=running, limit=limit))
+
+
 @router.post("/run/{stage}", status_code=202)
 def run_stage(stage: str, background_tasks: BackgroundTasks,
               x_site_key: str | None = Header(default=None)) -> dict:
@@ -376,9 +395,22 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
         _running_stages.add(stage)
 
     def _invoke() -> None:
+        started = datetime.now(timezone.utc)
+        t0 = time.monotonic()
+        ok, detail = True, ""
         try:
             asyncio.run(handlers[stage]())
+        except Exception as e:
+            ok, detail = False, f"{type(e).__name__}: {e}"
+            raise
         finally:
+            try:
+                service.record_stage_run(
+                    stage, ok=ok, detail=detail,
+                    duration_ms=int((time.monotonic() - t0) * 1000),
+                    started_at=started)
+            except Exception:  # telemetry must never mask the stage outcome
+                logger.exception("stage.run record failed for %r", stage)
             with _run_lock:
                 _running_stages.discard(stage)
 

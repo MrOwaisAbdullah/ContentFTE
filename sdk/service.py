@@ -82,7 +82,9 @@ def list_sites() -> dict:
     s = get_session()
     try:
         sites = [{"id": r.id, "slug": r.slug, "name": r.name, "site_type": r.site_type,
-                  "base_url": r.base_url, "publish_mode": r.publish_mode}
+                  "base_url": r.base_url, "publish_mode": r.publish_mode,
+                  "settings": r.settings or {}, "has_key": bool(r.api_key),
+                  "created_at": _iso(r.created_at)}
                  for r in s.execute(select(Site)).scalars()]
         return {"sites": sites, "count": len(sites)}
     finally:
@@ -351,6 +353,66 @@ def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
                               "created_at": _iso(c.created_at)})
         return {"audit": audit, "costs": costs, "kind": k,
                 "count": len(audit) + len(costs)}
+    finally:
+        s.close()
+
+
+def record_stage_run(stage: str, *, ok: bool, detail: str = "",
+                     duration_ms: int = 0,
+                     started_at: datetime | None = None) -> None:
+    """One `stage.run` audit row per finished stage run (console Wave 5).
+
+    Written by the run route's background task — telemetry only: the caller
+    treats a recording failure as non-fatal (it must never mask the stage
+    outcome), and scheduled CI runs (`scripts/run_stage.py` on Actions)
+    write this in their own environment, not here."""
+    init_db()
+    s = get_session()
+    try:
+        s.add(AuditLog(action="stage.run", payload={
+            "stage": stage,
+            "ok": bool(ok),
+            "detail": str(detail or "")[:400],
+            "duration_ms": max(0, int(duration_ms or 0)),
+            "started_at": _iso(started_at) or "",
+        }))
+        s.commit()
+    finally:
+        s.close()
+
+
+def list_stages(running: list[str] | None = None, limit: int = 200) -> dict:
+    """Read-only stages view for the console (Wave 5).
+
+    Newest `stage.run` audit rows first (completed runs only — one row per
+    finished run), a per-stage last-run rollup, and the caller-supplied live
+    running set (process-local: whatever this engine instance has in
+    flight right now)."""
+    init_db()
+    s = get_session()
+    try:
+        limit = max(1, min(int(limit or 200), 500))
+        rows = s.execute(
+            select(AuditLog).where(AuditLog.action == "stage.run")
+            .order_by(AuditLog.id.desc()).limit(limit)
+        ).scalars()
+        history = []
+        for r in rows:
+            p = r.payload or {}
+            history.append({
+                "id": r.id,
+                "stage": str(p.get("stage", "")),
+                "ok": bool(p.get("ok", False)),
+                "detail": str(p.get("detail", "")),
+                "duration_ms": int(p.get("duration_ms") or 0),
+                "started_at": str(p.get("started_at", "")),
+                "finished_at": _iso(r.created_at),
+            })
+        last: dict[str, dict] = {}
+        for h in history:
+            last.setdefault(h["stage"], h)
+        return {"running": sorted(running or []), "last": last,
+                "history": history, "count": len(history)}
     finally:
         s.close()
 

@@ -189,6 +189,101 @@ def test_run_stage_route_accept_unknown_and_overlap(monkeypatch):
     assert "stub_stage" not in server._running_stages
 
 
+def test_run_stage_records_history_and_stages_route(monkeypatch):
+    """A finished console run lands as one stage.run row; GET /stages serves
+    the last-run rollup + history."""
+    from scripts import run_stage as run_stage_mod
+
+    async def _stub():
+        return None
+
+    monkeypatch.setattr(run_stage_mod, "STAGE_HANDLERS", {"stub_stage": _stub})
+    client = _client()
+
+    accepted = client.post("/sdk/v1/run/stub_stage")
+    assert accepted.status_code == 202
+
+    view = client.get("/sdk/v1/stages").json()
+    assert view["running"] == []  # drained before the response returned
+    assert view["count"] == 1
+    run = view["history"][0]
+    assert run["stage"] == "stub_stage" and run["ok"] is True
+    assert run["started_at"] and run["finished_at"]
+    assert run["duration_ms"] >= 0
+    assert view["last"]["stub_stage"]["id"] == run["id"]
+
+
+def test_run_stage_route_records_failure_detail(monkeypatch):
+    from scripts import run_stage as run_stage_mod
+
+    async def _boom():
+        raise RuntimeError("stage exploded")
+
+    monkeypatch.setattr(run_stage_mod, "STAGE_HANDLERS", {"stub_stage": _boom})
+    client = _client()
+
+    with pytest.raises(RuntimeError):
+        client.post("/sdk/v1/run/stub_stage")
+
+    view = client.get("/sdk/v1/stages").json()
+    run = view["last"]["stub_stage"]
+    assert run["ok"] is False
+    assert "stage exploded" in run["detail"]
+    assert view["running"] == []
+
+
+def test_stages_route_passes_live_running_set():
+    import sdk.server as server
+
+    client = _client()
+    with server._run_lock:
+        server._running_stages.add("decay")
+    try:
+        view = client.get("/sdk/v1/stages").json()
+        assert view["running"] == ["decay"]
+        assert view["history"] == [] and view["last"] == {} and view["count"] == 0
+    finally:
+        with server._run_lock:
+            server._running_stages.discard("decay")
+
+
+def test_stage_run_records_failure_detail_direct():
+    from sdk import service
+
+    service.record_stage_run("content", ok=False,
+                             detail="RuntimeError: model said no", duration_ms=8100)
+    view = service.list_stages(running=["content"])
+    assert view["running"] == ["content"]
+    run = view["last"]["content"]
+    assert run["ok"] is False
+    assert "model said no" in run["detail"]
+    assert run["duration_ms"] == 8100
+
+
+def test_list_sites_adds_settings_and_key_presence():
+    from sqlalchemy import select
+
+    from lib.db import Site, get_session
+    from sdk import service
+
+    service.upsert_site("keyed-site", name="Keyed", site_type="custom",
+                        base_url="https://keyed.example")
+    s = get_session()
+    try:
+        site = s.execute(select(Site).where(Site.slug == "keyed-site")).scalars().first()
+        site.api_key = "sekret-value"
+        site.settings = {"locale": "en"}
+        s.commit()
+    finally:
+        s.close()
+
+    row = next(r for r in service.list_sites()["sites"] if r["slug"] == "keyed-site")
+    assert row["settings"] == {"locale": "en"}
+    assert row["has_key"] is True
+    assert "publish_mode" in row and "created_at" in row
+    assert "sekret" not in str(row)  # the key itself never leaves the engine
+
+
 def _seed_research_and_brief(site_slug: str):
     """Mirror a research row + its brief into the ledger snapshot."""
     from lib.store import mirror_brief, mirror_keyword
