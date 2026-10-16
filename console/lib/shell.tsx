@@ -5,8 +5,8 @@
 // dot, instance switcher, sign out). The `?site=` URL param is the single
 // site-context contract: the topbar switcher sets it on the current path and
 // sidebar links carry it along, so the selection is sticky across pages.
-// Not-yet-built destinations (Insights lands in Wave 4) render disabled
-// with a "soon" chip — the IA stays stable.
+// Destinations that land in a later wave render disabled with a "soon"
+// chip (none remain after Wave 4) — the IA stays stable.
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -70,7 +70,7 @@ const SECTIONS: { title?: string; items: NavItem[] }[] = [
     title: "Ops",
     items: [
       { href: "/logs", label: "Logs", icon: FileClock },
-      { href: "/insights", label: "Insights", icon: BarChart3, soon: true },
+      { href: "/insights", label: "Insights", icon: BarChart3 },
       { href: "/stages", label: "Stages", icon: Workflow },
     ],
   },

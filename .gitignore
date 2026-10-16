@@ -151,7 +151,7 @@ Thumbs.db
 .envrc
 
 # Logs
-logs/
+/logs/
 *.log
 
 # Temporary files
