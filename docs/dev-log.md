@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-16 — Console Wave 0: the design layer lands (tokens, pills, pending/confirm feedback, empty states, site switchers)
+
+**Commits:** `359ba84`
+
+**What** — First execution wave of `docs/console-dashboard-plan.md`, pure console-side (zero engine files touched). The design system from plan §3 is now real: **tokens** via Tailwind v4 `@theme` in `console/app/globals.css` (dark-only — page `#020617`, card `#0B1220`, surface `#141D2F`, line `#1E293B`, accent teal `#2DD4BF`/`#14B8A6`, gold `#F59E0B` reserved for approved/cost/publish, danger `#EF4444`, a three-step ink ramp) surfaced as utilities (`bg-card`, `text-ink-dim`, `border-line`…); **Inter + JetBrains Mono** via `next/font` on the root layout; **lucide-react** (the single new dependency) for nav icons, alerts and empty states. Three new shared modules: `console/lib/ui.tsx` (`PageHeader`, `SectionCard`, **`Pill`** — the F4 status scale drafted=slate / briefed=sky / generated=violet / approved=gold / needs_review=rose / published=emerald, dot + label so color never carries meaning alone; `Alert`; `Empty` with CTA; button recipes; `fmtCost`/`fmtScore`/`fmtDate`; `checkTier`), `console/lib/interactive.tsx` (`PendingButton` on `useFormStatus` with optional confirm dialog, `SiteSwitcher`, `NavLinks` active-state via `usePathname`), `console/lib/toast.tsx` (dependency-free `Toaster` — aria-live polite, auto-dismiss, event-based `toast()` API; groundwork per the plan, Wave 1 wires action results in and the `?err=` banners retire). Every one of the 13 routes restyled; behavior fixes riding along: **`$0.0000` → `—`** everywhere (F4) and dead "no score" strings; **site health is tiered** instead of one red label — engine `critical` = fail (rose), connection/probe breaks = watch (amber `robots.txt unreachable`), config hints (missing WP env, EMPTY queue) = info (slate), with per-site healthy/watch/fail badges; **pending state on every mutation button** and confirms on anything that spends credits or writes externally (generate, stage images, publish draft, 8 non-neutral stage runs, instance remove); **approval screen gets real actions** — gold Approve button, rendered scores as rows, FAQs as a Q/A list, summary in a box, raw JSON collapsed behind a `<details>`; **per-site switchers** on Keywords/Research/Briefs (fed by the real sites list); empty states with CTAs on content/keywords/research/briefs/logs/sites; needs_review rose / approved gold fixed via `Pill`.
+
+**Verified** — `npx next build` clean twice (typecheck + 13 routes; one fix along the way — `CircleInfo` isn't a lucide export, it's `Info`). Live read-only visual pass: engine `:8123` + console `:3001` served from the production build against the real `contentfte.db` (4 sites / 5 articles / 80 audit rows), 7 screenshots (dashboard incl. tiered health, content list, keywords with switcher, article detail briefed + published, stages, logs) — no Run/Publish/destructive clicks; both servers stopped afterwards, ports verified free. Python suite untouched (zero engine files changed; last run 423 passed / 1 skipped). No TASKS.md rows (dated tracker).
+
+**Next** — Wave 1: sidebar shell + topbar (breadcrumb, site switcher, ⌘K placeholder, health dot, instance switcher), Overview KPI strip, responsive collapse; then Wave 2 (Approvals: article-detail preview/diff + publish queue), Wave 3 (Media gallery — needs the additive image-serving route in `sdk/service.py` + `sdk/server.py`).
+
+---
+
 ## 2026-10-16 — Console dashboard audit + wave plan: approval UX is the weakest surface, the image pipeline is invisible
 
 **Commits:** `14d0bbe`
