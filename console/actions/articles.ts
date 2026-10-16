@@ -48,31 +48,42 @@ export async function approveArticleAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));
   const approved = formData.get("approved") === "1";
+  // The detail screen's "Send to review" carries a note; audit rows keep it.
+  const note = String(formData.get("note") || "").trim() || "console";
   try {
     await engine(`/articles/${id}/approve`, {
       method: "POST",
-      json: { approved, note: "console" },
+      json: { approved, note },
     });
   } catch (e) {
     redirect(back(id, errorOf(e)));
   }
   revalidatePath("/");
   revalidatePath("/articles");
+  revalidatePath("/approvals");
   revalidatePath(back(id));
   redirect(back(id));
 }
+
+/* Publishing from the Publish queue returns to the queue; anything else
+   lands back on the article detail. Allowlist — never an open redirect. */
+const PUBLISH_RETURN = new Set(["/approvals", "/publish"]);
 
 export async function publishArticleAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));
   const mode = String(formData.get("mode") || "draft");
+  const from = String(formData.get("from") || "");
+  const queued = PUBLISH_RETURN.has(from);
   try {
     await engine(`/articles/${id}/publish`, { method: "POST", json: { mode } });
   } catch (e) {
-    redirect(back(id, errorOf(e)));
+    redirect(queued ? `${from}?err=${encodeURIComponent(errorOf(e))}` : back(id, errorOf(e)));
   }
   revalidatePath("/");
   revalidatePath("/articles");
+  revalidatePath("/publish");
+  if (queued) redirect(from);
   redirect(back(id));
 }
 

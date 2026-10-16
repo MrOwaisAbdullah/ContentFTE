@@ -37,3 +37,64 @@ body {
   outline: 2px solid rgba(45, 212, 191, 0.6);
   outline-offset: 1px;
 }
+
+/* Rendered-markdown preview (article detail → Content tab preview, plan §5).
+   Hand-rolled against the token layer — no typography plugin. */
+.prose-console {
+  @apply text-sm leading-7 text-ink-dim;
+}
+.prose-console > * + * {
+  margin-top: 1.1em;
+}
+.prose-console h1,
+.prose-console h2 {
+  @apply mt-7 text-lg font-semibold text-ink first:mt-0;
+}
+.prose-console h3 {
+  @apply mt-6 text-base font-semibold text-ink;
+}
+.prose-console h4 {
+  @apply mt-5 text-sm font-semibold text-ink;
+}
+.prose-console a {
+  @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+}
+.prose-console strong {
+  @apply font-semibold text-ink;
+}
+.prose-console ul {
+  @apply list-disc space-y-1 pl-5;
+}
+.prose-console ol {
+  @apply list-decimal space-y-1 pl-5;
+}
+.prose-console li::marker {
+  @apply text-ink-faint;
+}
+.prose-console blockquote {
+  @apply border-l-2 border-accent/50 pl-4 italic;
+}
+.prose-console code {
+  @apply rounded border border-line bg-surface px-1 py-0.5 font-mono text-xs text-accent;
+}
+.prose-console pre {
+  @apply overflow-x-auto rounded-lg border border-line bg-page p-3 text-xs leading-6;
+}
+.prose-console pre code {
+  @apply border-0 bg-transparent p-0 text-ink-dim;
+}
+.prose-console hr {
+  @apply border-line;
+}
+.prose-console table {
+  @apply w-full border-collapse text-left text-xs;
+}
+.prose-console th {
+  @apply border-b border-line px-2 py-1.5 font-medium text-ink;
+}
+.prose-console td {
+  @apply border-b border-line/60 px-2 py-1.5;
+}
+.prose-console img {
+  @apply max-w-full rounded-lg border border-line;
+}

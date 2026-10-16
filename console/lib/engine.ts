@@ -199,4 +199,37 @@ export interface ArticleDetail {
   markdown?: string;
   html?: string;
   meta?: Record<string, unknown>;
+  /* Delivery-payload fields (custom_site.build_delivery_payload) that ride
+     along on GET /articles/{id}/content — the SEO & meta tab's data. */
+  url?: string;
+  excerpt?: string;
+  date_published?: string | null;
+  date_modified?: string | null;
+  seo?: {
+    title?: string;
+    description?: string;
+    focus_keyword?: string;
+    tldr?: string;
+  };
+  schema?: {
+    article?: Record<string, unknown> | null;
+    faq?: Record<string, unknown> | null;
+  };
+}
+
+/** GET /wp/posts/{id} — live post readback (WordPress context=edit raw
+    content). Used by the article detail "live post vs local" pane. */
+export interface WpPostReadback {
+  id: number;
+  slug: string;
+  status: string;
+  title: string;
+  content_raw: string;
+  excerpt: string;
+  url: string;
+  modified: string;
+  featured_media: number;
+  categories: number[];
+  tags: number[];
+  meta: Record<string, unknown>;
 }

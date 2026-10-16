@@ -52,8 +52,8 @@ const SECTIONS: { title?: string; items: NavItem[] }[] = [
   {
     items: [
       { href: "/", label: "Overview", icon: LayoutDashboard },
-      { href: "/approvals", label: "Approvals", icon: ClipboardCheck, soon: true, badge: true },
-      { href: "/publish", label: "Publish queue", icon: Send, soon: true },
+      { href: "/approvals", label: "Approvals", icon: ClipboardCheck, badge: true },
+      { href: "/publish", label: "Publish queue", icon: Send },
     ],
   },
   {
@@ -188,6 +188,11 @@ function SidebarNav({ approvalsCount, onNavigate }: { approvalsCount: number; on
                   >
                     <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-accent" : ""}`} aria-hidden />
                     {item.label}
+                    {item.badge && approvalsCount > 0 ? (
+                      <span className="ml-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] leading-none text-gold">
+                        {approvalsCount}
+                      </span>
+                    ) : null}
                   </Link>
                 </li>
               );

@@ -20,14 +20,18 @@ export function SectionCard({
   right,
   children,
   className = "",
+  id,
 }: {
   title?: string;
   right?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Anchor target (checklist rows link to their evidence) — scroll-margined
+      for the sticky topbar. */
+  id?: string;
 }) {
   return (
-    <section className={`rounded-xl border border-line bg-card p-5 ${className}`}>
+    <section id={id} className={`scroll-mt-24 rounded-xl border border-line bg-card p-5 ${className}`}>
       {title ? (
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-ink-dim">{title}</h2>
@@ -146,6 +150,15 @@ export function fmtScore(v: number | null | undefined, digits = 1): string {
 
 export function fmtDate(v: string | null | undefined): string {
   return v ? String(v).slice(0, 10) : "—";
+}
+
+/* audit_log action hues (Logs + article Activity tab) so rows scan (plan F4). */
+export function actionColor(action: string): string {
+  if (action.startsWith("usage.")) return "text-amber-300";
+  if (action.startsWith("article.publish") || action.startsWith("publish")) return "text-emerald-300";
+  if (action.startsWith("article.approve")) return "text-gold";
+  if (action.startsWith("article.needs_review")) return "text-rose-300";
+  return "text-sky-300";
 }
 
 /* Health findings tiering (plan finding F4): engine `critical` checks are
