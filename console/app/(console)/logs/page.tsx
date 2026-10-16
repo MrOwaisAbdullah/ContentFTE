@@ -16,6 +16,7 @@ const KINDS: { key: string; label: string }[] = [
   { key: "usage", label: "usage (model+image)" },
   { key: "publish", label: "publish" },
   { key: "article", label: "article" },
+  { key: "stage", label: "stages" },
   { key: "cost", label: "cost ledger" },
 ];
 

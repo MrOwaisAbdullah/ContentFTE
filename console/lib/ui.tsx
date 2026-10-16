@@ -152,9 +152,28 @@ export function fmtDate(v: string | null | undefined): string {
   return v ? String(v).slice(0, 10) : "—";
 }
 
+/* Relative "when" for run history / last-run badges (console Wave 5).
+   Engine timestamps: ISO with offset when aware, but SQLite round-trips
+   `created_at` as naive — and the engine stores UTC — so pin naive strings. */
+export function fmtAgo(v: string | null | undefined): string {
+  if (!v) return "—";
+  const raw = String(v).replace(" ", "T");
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(raw) ? raw : `${raw}Z`);
+  if (!Number.isFinite(t)) return "—";
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 /* audit_log action hues (Logs + article Activity tab) so rows scan (plan F4). */
 export function actionColor(action: string): string {
   if (action.startsWith("usage.")) return "text-amber-300";
+  if (action.startsWith("stage.")) return "text-violet-300";
   if (action.startsWith("article.publish") || action.startsWith("publish")) return "text-emerald-300";
   if (action.startsWith("article.approve")) return "text-gold";
   if (action.startsWith("article.needs_review")) return "text-rose-300";

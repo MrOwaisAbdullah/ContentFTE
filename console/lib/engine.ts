@@ -50,10 +50,32 @@ export interface SiteInfo {
   site_type: string;
   base_url: string;
   publish_mode?: string;
+  settings?: Record<string, unknown>;
+  has_key?: boolean;
+  created_at?: string | null;
 }
 
 export interface SiteList {
   sites: SiteInfo[];
+  count: number;
+}
+
+/** GET /stages — one finished `stage.run` audit row (console Wave 5). */
+export interface StageRun {
+  id: number;
+  stage: string;
+  ok: boolean;
+  detail: string;
+  duration_ms: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** GET /stages — history + last-run rollup + live running set. */
+export interface StagesView {
+  running: string[];
+  last: Record<string, StageRun>;
+  history: StageRun[];
   count: number;
 }
 

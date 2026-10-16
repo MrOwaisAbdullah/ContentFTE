@@ -1,8 +1,9 @@
-import { engine, type SiteList } from "@/lib/engine";
+import Link from "next/link";
+import { engine, type SiteHealth, type SiteList } from "@/lib/engine";
 import { currentInstance } from "@/lib/instances";
 import { requireSession } from "@/lib/session";
 import { createSiteAction } from "@/actions/instances";
-import { Alert, Empty, PageHeader } from "@/lib/ui";
+import { Alert, Empty, PageHeader, checkTier } from "@/lib/ui";
 import { PendingButton } from "@/lib/interactive";
 import { Globe } from "lucide-react";
 
@@ -25,11 +26,21 @@ export default async function SitesPage({
     loadErr = e instanceof Error ? e.message : String(e);
   }
 
+  /* Health badges mirror the overview tiering (critical > warn > healthy). */
+  let health: (SiteHealth | null)[] = [];
+  if (sites) {
+    health = await Promise.all(
+      sites.sites.map((s) =>
+        engine<SiteHealth>(`/sites/${encodeURIComponent(s.slug)}/health`).catch(() => null),
+      ),
+    );
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
         title="Sites"
-        sub={`instance ${inst.name} (${inst.baseUrl}) — create or inspect site rows on this instance`}
+        sub={`instance ${inst.name} (${inst.baseUrl}) — open a slug for detail, health and read-only settings; create or upsert below`}
       />
 
       {created ? <Alert tone="success">Site "{created}" created.</Alert> : null}
@@ -45,18 +56,66 @@ export default async function SitesPage({
                 <th className="px-4 py-2.5">Slug</th>
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">Publish</th>
+                <th className="px-4 py-2.5">Health</th>
                 <th className="px-4 py-2.5">Base URL</th>
               </tr>
             </thead>
             <tbody>
-              {sites.sites.map((s) => (
-                <tr key={s.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
-                  <td className="px-4 py-2.5 font-mono text-xs text-accent">{s.slug}</td>
-                  <td className="px-4 py-2.5 text-ink-dim">{s.name}</td>
-                  <td className="px-4 py-2.5 text-xs text-ink-dim">{s.site_type}</td>
-                  <td className="px-4 py-2.5 text-xs text-ink-faint">{s.base_url}</td>
-                </tr>
-              ))}
+              {sites.sites.map((s, i) => {
+                const h = health[i];
+                const tier = !h
+                  ? "unreachable"
+                  : h.critical.length > 0
+                    ? "fail"
+                    : h.checks.some((c) => checkTier(c) === "warn")
+                      ? "watch"
+                      : "healthy";
+                const tierCls =
+                  tier === "healthy"
+                    ? "text-emerald-300"
+                    : tier === "watch"
+                      ? "text-amber-300"
+                      : tier === "fail"
+                        ? "text-rose-300"
+                        : "text-ink-faint";
+                const dotCls =
+                  tier === "healthy"
+                    ? "bg-emerald-400"
+                    : tier === "watch"
+                      ? "bg-amber-400"
+                      : tier === "fail"
+                        ? "bg-danger"
+                        : "bg-ink-faint";
+                return (
+                  <tr key={s.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
+                    <td className="px-4 py-2.5 font-mono text-xs">
+                      <Link
+                        href={`/sites/${encodeURIComponent(s.slug)}`}
+                        className="text-accent hover:underline"
+                      >
+                        {s.slug}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-ink-dim">{s.name}</td>
+                    <td className="px-4 py-2.5 text-xs text-ink-dim">{s.site_type}</td>
+                    <td className="px-4 py-2.5 text-xs">
+                      <span className={s.publish_mode === "auto" ? "text-gold" : "text-ink-faint"}>
+                        {s.publish_mode || "draft"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      <span className={`flex items-center gap-1.5 ${tierCls}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} aria-hidden />
+                        {tier}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-ink-faint">
+                      {s.base_url || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

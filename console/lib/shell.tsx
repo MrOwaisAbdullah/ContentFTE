@@ -124,6 +124,10 @@ function breadcrumb(pathname: string): { parent?: string; label: string } {
     if (/^\d+$/.test(first)) return { parent: "Content pipeline", label: `Article #${first}` };
     return { parent: "Content", label: BREADCRUMB_ARTICLE_TAB[first] ?? "Content" };
   }
+  if (pathname.startsWith("/sites/")) {
+    const slug = decodeURIComponent(pathname.slice("/sites/".length).split("/")[0] ?? "");
+    if (slug) return { parent: "Sites", label: slug };
+  }
   const first = pathname.split("/")[1] ?? "";
   return { label: BREADCRUMB_TOP[first] ?? first };
 }
