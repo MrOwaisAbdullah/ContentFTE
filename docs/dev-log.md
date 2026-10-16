@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-16 — Console dashboard audit + wave plan: approval UX is the weakest surface, the image pipeline is invisible
+
+**Commits:** `14d0bbe`
+
+**What** — A plan doc, not code: `docs/console-dashboard-plan.md`. The console (`console/`, Next.js 15) was audited as a whole — full code read plus a live visual pass (engine `:8123` + console `:3001` against the real `contentfte.db`, all 12 routes screenhotted at 1440×900; screenshots kept out of the repo). Findings F1–F8 are written down: no design system and no icons; **the approval flow is one blind click** (raw markdown textarea, no rendered preview/diff/evidence checklist, scores + FAQs dumped as raw JSON); the image pipeline's `meta.images` (`style_pick`/`style_source`, match/clean/theme scores, `0a2be99`/`60bdedb`) renders nowhere; `$0.0000`/dead-column noise; no pending/feedback states on server actions; no per-site switcher on Keywords/Research/Briefs; bare empty states; no responsive handling. The plan keeps everything the console already does (auth, four sheets-parity tabs, stages, sites/instances/provision) and adds: design tokens (`@theme`, dark navy + teal accent + reserved gold), a status-pill scale, sidebar IA (Overview / Approvals / Publish queue / Content / Media / Insights / Logs / Sites / Instances / Provision / Stages), an article-detail blueprint with Preview⟷Edit, approve checklist, SEO-render tab and a Media tab carrying the Jev badges, and six execution waves — Waves 0–1 are pure console-side (zero engine risk and land first), Wave 2 (approvals) needs no engine changes, Wave 3 adds one static image-serving route + optional per-image replace op, Wave 4 adds `/logs` offset. Phase-2 gate respected: no billing/tenancy/public-dashboard/User accounts.
+
+**Verified** — audit is observation, not change: engine + console booted locally, every route shot against live DB data (4 sites / 5 articles / 80 audit rows), both servers stopped afterwards; ports verified free. Zero Python or console-code changes in this commit (docs-only), so the suite is unaffected (last run 423 passed / 1 skipped).
+
+**Next** — execution begins: Wave 0 (tokens/fonts/icons/pills/pending states/empty states/site switchers), then Wave 1 (sidebar shell + Overview KPIs). Each wave its own commit(s) + dev-log entry.
+
+---
+
 ## 2026-10-15 — New gemini-router skill: the integration is now teachable (the old guides were still v0.2.0)
 
 **Commits:** `53e7187`
