@@ -174,6 +174,9 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
                 # Quality Score + Summary columns, still no html/markdown.
                 "quality": (a.scores or {}).get("quality"),
                 "summary": (a.meta or {}).get("summary", ""),
+                # console Media page: which articles have art, so it can
+                # detail-fetch only those (still no image rows in the list).
+                "images": len((a.meta or {}).get("images") or []),
             })
         return {"articles": articles, "count": len(articles), "total": total,
                 "limit": limit, "offset": offset}
@@ -619,6 +622,9 @@ def _stage_images_for(art: ArticleModel, meta: dict, *,
             row["source"] = str(res["source"])[:120]
         if isinstance(res.get("cost_usd"), (int, float)):
             row["cost_usd"] = float(res["cost_usd"])
+        if isinstance(res.get("qa"), dict):
+            # Jev style pick + VLM lanes — the Wave-3 Media tab reads these.
+            row["qa"] = res["qa"]
         rows.append(row)
         out["featured"] = True
     elif isinstance(res, dict) and (res.get("error") or res.get("skipped")):
@@ -654,6 +660,9 @@ def _stage_images_for(art: ArticleModel, meta: dict, *,
                    staged or src, "alt": alt_ip, "after_h2": sec["index"]}
             if isinstance(r2.get("cost_usd"), (int, float)):
                 row["cost_usd"] = float(r2["cost_usd"])
+            if isinstance(r2.get("qa"), dict):
+                # Jev style pick + VLM lanes — the Wave-3 Media tab reads these.
+                row["qa"] = r2["qa"]
             rows.append(row)
             out["inpost"] += 1
         else:
@@ -1480,6 +1489,52 @@ def get_images(article_id: int) -> dict:
         return data
     images = (data.get("meta") or {}).get("images", [])
     return {"images": images, "count": len(images)}
+
+
+_IMAGE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".webp": "image/webp", ".gif": "image/gif",
+}
+
+
+def get_article_image(article_id: int, name: str) -> dict:
+    """Resolve one staged `meta.images` file for static serving (Wave 3).
+
+    The article's own `meta.images` rows are the complete allowlist: `name`
+    is matched against each row's basename, so a request can never reach a
+    file the article doesn't reference (and path traversal is a non-starter).
+    Remote-only rows (`url`, no local `path`) are not servable — the console
+    renders those from their source URL directly."""
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run list_articles first")
+        asked = str(name or "").strip()
+        if (not asked or "/" in asked or "\\" in asked
+                or os.path.basename(asked) != asked or asked in (".", "..")):
+            return _err("invalid image name", "pass the file name only")
+        rows = (art.meta or {}).get("images") or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            p = str(row.get("path") or "")
+            if not p or os.path.basename(p) != asked:
+                continue
+            if not os.path.isfile(p):
+                return _err(f"image '{asked}' is no longer on disk",
+                            "re-run stage-images to refresh meta.images")
+            media_type = _IMAGE_MEDIA_TYPES.get(os.path.splitext(p)[1].lower())
+            if media_type is None:
+                return _err(f"'{asked}' is not a servable image type",
+                            "jpg/png/webp/gif only")
+            return {"path": p, "media_type": media_type,
+                    "bytes": os.path.getsize(p)}
+        return _err(f"image '{asked}' not found on article {article_id}",
+                    "GET /articles/{id}/content for meta.images")
+    finally:
+        s.close()
 
 
 def site_health(site_slug: str, *, http_get=None) -> dict:

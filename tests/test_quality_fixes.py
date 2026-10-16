@@ -340,12 +340,16 @@ def test_stage_images_persists_section_aware_rows(monkeypatch, tmp_path):
     def fake_generate(**kwargs):
         generated.append(kwargs)
         return {"image_url": str(featured_src), "alt_text": "featured alt",
-                "cost_usd": 0.0012, "source": "test"}
+                "cost_usd": 0.0012, "source": "test",
+                "qa": {"style_pick": "editorial-3d", "style_source": "jev",
+                       "passed": True}}
 
     def fake_select_inpost(**kwargs):
         generated.append(kwargs)
         return {"image_url": str(inpost_src), "cost_usd": 0.0012,
-                "alt_text": kwargs.get("alt_text")}
+                "alt_text": kwargs.get("alt_text"),
+                "qa": {"style_pick": "technical-blueprint",
+                       "style_source": "jev", "passed": True}}
 
     monkeypatch.setattr(tools_mod, "_generate_image", fake_generate)
     monkeypatch.setattr(tools_mod, "_select_inpost_image", fake_select_inpost)
@@ -372,6 +376,10 @@ def test_stage_images_persists_section_aware_rows(monkeypatch, tmp_path):
         inpost = [r for r in rows if r["slot"] == "inpost"][0]
         assert inpost["after_h2"] == 2          # second section, inline
         assert os.path.isfile(inpost["path"])   # copied to staging dir
+        # Wave 3: the qa block (Jev style pick + VLM lanes) rides into the row
+        assert rows[0]["qa"]["style_source"] == "jev"
+        assert rows[0]["qa"]["style_pick"] == "editorial-3d"
+        assert inpost["qa"]["style_pick"] == "technical-blueprint"
         assert row.meta["image_staging"]["reason"] == "manual"
         assert row.meta.get("image_costs_recorded") is True
         audited = s.execute(select(AuditLog).where(

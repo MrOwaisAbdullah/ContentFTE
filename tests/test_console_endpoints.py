@@ -403,3 +403,50 @@ def test_sites_route_update_keeps_site_type_when_omitted():
     assert row["name"] == "Two"
     assert row["site_type"] == "wordpress"
     assert row["base_url"] == "http://wp.test"
+
+
+def test_article_images_route_serves_allowlisted_file(tmp_path):
+    """Wave 3: GET /articles/{id}/images/{name} + the list `images` count.
+
+    The article's meta.images rows are the complete allowlist: only a file
+    whose basename is referenced can be served — no directory scans, no
+    traversal. Remote-only rows are not servable (console uses their url)."""
+    from lib.db import Article as ArticleModel, get_session
+    from sdk import service
+
+    src = tmp_path / "article7_featured.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\nfake-pixels")
+    ghost = tmp_path / "ghost.png"
+    ghost.write_bytes(b"not listed in meta.images")
+
+    service.upsert_site("media-site", name="Media")
+    aid = service.submit_article("media-site", keyword="media route kw")["id"]
+    s = get_session()
+    try:
+        row = s.get(ArticleModel, aid)
+        meta = dict(row.meta or {})
+        meta["images"] = [{"slot": "featured", "path": str(src), "alt": "alt",
+                           "qa": {"style_pick": "editorial-3d",
+                                  "style_source": "jev"}}]
+        row.meta = meta
+        s.commit()
+    finally:
+        s.close()
+
+    client = _client()
+    ok = client.get(f"/sdk/v1/articles/{aid}/images/{src.name}")
+    assert ok.status_code == 200
+    assert ok.content == src.read_bytes()
+    assert ok.headers["content-type"].startswith("image/png")
+
+    # allowlist: a real file that no meta.images row references is 404
+    assert client.get(f"/sdk/v1/articles/{aid}/images/{ghost.name}").status_code == 404
+    # traversal, unknown name, unknown article -> 404
+    assert client.get(f"/sdk/v1/articles/{aid}/images/..%2F{src.name}").status_code == 404
+    assert client.get(f"/sdk/v1/articles/{aid}/images/nope.png").status_code == 404
+    assert client.get("/sdk/v1/articles/99999/images/x.png").status_code == 404
+
+    # list rows carry the images count (console Media page skips detail
+    # fetches for articles without art)
+    listed = client.get("/sdk/v1/articles?site_slug=media-site").json()
+    assert listed["articles"][0]["images"] == 1

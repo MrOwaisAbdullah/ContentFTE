@@ -17,6 +17,8 @@ Endpoints:
                                              (decay path; custom sites re-pull)
     GET  /sdk/v1/articles/{id}/content    -> unified delivery payload
                                               (html + markdown + meta + JSON-LD)
+    GET  /sdk/v1/articles/{id}/images/{name} -> static-serve one staged
+                                              meta.images file (row-name allowlist)
     GET  /sdk/v1/sites                    -> list sites
     POST /sdk/v1/sites                    -> create / update a site
     GET  /sdk/v1/sites/{slug}/health      -> site health
@@ -50,6 +52,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import sdk.service as service
@@ -226,6 +229,21 @@ def stage_images(article_id: int, x_site_key: str | None = Header(default=None))
 def get_content(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.get_article(article_id, include_content=True))
+
+
+@router.get("/articles/{article_id}/images/{name}")
+def get_article_image(article_id: int, name: str,
+                      x_site_key: str | None = Header(default=None)) -> FileResponse:
+    """Static-serve one staged meta.images file (console Media gallery).
+
+    Allowlisted by the article's own meta.images rows; the console proxies
+    these bytes to the browser so the page never needs the X-Site-Key."""
+    _check_site_key(x_site_key)
+    result = service.get_article_image(article_id, name)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return FileResponse(result["path"], media_type=result["media_type"],
+                        headers={"Cache-Control": "private, max-age=60"})
 
 
 @router.get("/sites")
