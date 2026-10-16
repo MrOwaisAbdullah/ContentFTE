@@ -2,6 +2,9 @@ import { engine, type SiteList } from "@/lib/engine";
 import { currentInstance } from "@/lib/instances";
 import { requireSession } from "@/lib/session";
 import { createSiteAction } from "@/actions/instances";
+import { Alert, Empty, PageHeader } from "@/lib/ui";
+import { PendingButton } from "@/lib/interactive";
+import { Globe } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -24,101 +27,93 @@ export default async function SitesPage({
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-lg font-semibold text-white">Sites</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Instance <span className="text-slate-200">{inst.name}</span> ({inst.baseUrl}) — create or
-          inspect site rows on this instance.
-        </p>
-      </div>
+      <PageHeader
+        title="Sites"
+        sub={`instance ${inst.name} (${inst.baseUrl}) — create or inspect site rows on this instance`}
+      />
 
-      {created && (
-        <p className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
-          Site &quot;{created}&quot; created.
-        </p>
-      )}
-      {updated && (
-        <p className="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-300">
-          Site &quot;{updated}&quot; updated.
-        </p>
-      )}
-      {err && (
-        <p className="rounded border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">
-          {err}
-        </p>
-      )}
-      {loadErr && (
-        <p className="rounded border border-amber-800 bg-amber-950/40 px-3 py-2 text-sm text-amber-300">
-          Could not load sites: {loadErr}
-        </p>
-      )}
+      {created ? <Alert tone="success">Site "{created}" created.</Alert> : null}
+      {updated ? <Alert tone="info">Site "{updated}" updated.</Alert> : null}
+      {err ? <Alert tone="error">{err}</Alert> : null}
+      {loadErr ? <Alert tone="warn">Could not load sites: {loadErr}</Alert> : null}
 
-      {sites && sites.sites.length > 0 && (
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-slate-500">
-            <tr className="border-b border-slate-800">
-              <th className="py-2 pr-4">Slug</th>
-              <th className="py-2 pr-4">Name</th>
-              <th className="py-2 pr-4">Type</th>
-              <th className="py-2">Base URL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sites.sites.map((s) => (
-              <tr key={s.id} className="border-b border-slate-900 text-slate-300">
-                <td className="py-2 pr-4 font-mono text-xs text-sky-300">{s.slug}</td>
-                <td className="py-2 pr-4">{s.name}</td>
-                <td className="py-2 pr-4">{s.site_type}</td>
-                <td className="py-2 text-xs text-slate-400">{s.base_url}</td>
+      {sites && sites.sites.length > 0 ? (
+        <div className="overflow-x-auto rounded-xl border border-line bg-card">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-faint">
+              <tr>
+                <th className="px-4 py-2.5">Slug</th>
+                <th className="px-4 py-2.5">Name</th>
+                <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">Base URL</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sites.sites.map((s) => (
+                <tr key={s.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
+                  <td className="px-4 py-2.5 font-mono text-xs text-accent">{s.slug}</td>
+                  <td className="px-4 py-2.5 text-ink-dim">{s.name}</td>
+                  <td className="px-4 py-2.5 text-xs text-ink-dim">{s.site_type}</td>
+                  <td className="px-4 py-2.5 text-xs text-ink-faint">{s.base_url}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty
+          icon={Globe}
+          title="No sites on this instance"
+          hint="Create the first site below — keyword ledger, briefs and articles are always site-scoped."
+        />
       )}
 
-      <section className="rounded border border-slate-800 bg-slate-900/40 p-4">
-        <h2 className="text-sm font-semibold text-white">Create / upsert a site</h2>
+      <section className="rounded-xl border border-line bg-card p-5">
+        <h2 className="text-sm font-semibold text-ink">Create / upsert a site</h2>
         <form action={createSiteAction} className="mt-4 grid max-w-xl gap-3">
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Slug
             <input
               name="slug"
               required
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
               placeholder="my-second-blog"
             />
           </label>
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Name
             <input
               name="name"
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
               placeholder="My Second Blog"
             />
           </label>
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Type
             <select
               name="site_type"
               defaultValue="wordpress"
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink focus:border-accent"
             >
               <option value="wordpress">wordpress</option>
               <option value="custom">custom</option>
             </select>
           </label>
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Base URL
             <input
               name="base_url"
               required
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
               placeholder="https://example.com"
             />
           </label>
-          <button className="mt-1 w-fit rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500">
+          <PendingButton
+            pendingLabel="Saving…"
+            className="mt-1 w-fit rounded-md bg-accent-strong px-4 py-2 text-sm font-medium text-page transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
             Save site (existing slug updates)
-          </button>
+          </PendingButton>
         </form>
       </section>
     </div>

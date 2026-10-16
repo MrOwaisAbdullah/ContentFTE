@@ -1,6 +1,8 @@
 import { requireSession } from "@/lib/session";
 import { currentInstance, registry } from "@/lib/instances";
 import { removeInstanceAction, saveInstanceAction, switchInstanceAction } from "@/actions/instances";
+import { Alert, PageHeader } from "@/lib/ui";
+import { PendingButton } from "@/lib/interactive";
 
 export const dynamic = "force-dynamic";
 
@@ -16,75 +18,69 @@ export default async function InstancesPage({
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-lg font-semibold">Instances</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Every engine this console can manage. <span className="text-slate-200">env</span> entries
-          come from <code className="text-xs">CONSOLE_INSTANCES</code> (edit the env to change
-          them); <span className="text-slate-200">file</span> entries are stored in{" "}
-          <code className="text-xs">instances.json</code> and managed right here.
-        </p>
-      </div>
+      <PageHeader
+        title="Instances"
+        sub="every engine this console can manage"
+      />
+      <p className="-mt-4 text-sm text-ink-dim">
+        <span className="text-ink">env</span> entries come from{" "}
+        <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs">CONSOLE_INSTANCES</code>{" "}
+        (edit the env to change them); <span className="text-ink">file</span> entries are stored in{" "}
+        <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs">instances.json</code> and
+        managed right here.
+      </p>
 
-      {saved && (
-        <p className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
-          Instance &quot;{saved}&quot; saved.
-        </p>
-      )}
-      {removed && (
-        <p className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
-          Instance &quot;{removed}&quot; removed.
-        </p>
-      )}
-      {err && (
-        <p className="rounded border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">
-          {err}
-        </p>
-      )}
+      {saved ? <Alert tone="success">Instance "{saved}" saved.</Alert> : null}
+      {removed ? <Alert tone="success">Instance "{removed}" removed.</Alert> : null}
+      {err ? <Alert tone="error">{err}</Alert> : null}
 
-      <div className="overflow-x-auto rounded-lg border border-slate-800">
+      <div className="overflow-x-auto rounded-xl border border-line bg-card">
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-left text-xs text-slate-400">
+          <thead className="border-b border-line text-left text-xs text-ink-faint">
             <tr>
-              <th className="px-4 py-2">Name</th>
-              <th className="px-4 py-2">Base URL</th>
-              <th className="px-4 py-2">API key</th>
-              <th className="px-4 py-2">Origin</th>
-              <th className="px-4 py-2">Selected</th>
-              <th className="px-4 py-2" />
+              <th className="px-4 py-2.5">Name</th>
+              <th className="px-4 py-2.5">Base URL</th>
+              <th className="px-4 py-2.5">API key</th>
+              <th className="px-4 py-2.5">Origin</th>
+              <th className="px-4 py-2.5">Selected</th>
+              <th className="px-4 py-2.5" />
             </tr>
           </thead>
           <tbody>
             {instances.map((i) => (
-              <tr key={i.name} className="border-t border-slate-800/80">
-                <td className="px-4 py-2 font-medium text-slate-200">{i.name}</td>
-                <td className="px-4 py-2 text-xs text-slate-400">{i.baseUrl}</td>
-                <td className="px-4 py-2 text-xs text-slate-500">
-                  {i.apiKey ? "••• set" : "—"}
+              <tr key={i.name} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
+                <td className="px-4 py-2.5 font-medium text-ink">{i.name}</td>
+                <td className="px-4 py-2.5 font-mono text-xs text-ink-dim">{i.baseUrl}</td>
+                <td className="px-4 py-2.5 text-xs text-ink-faint">{i.apiKey ? "••• set" : "—"}</td>
+                <td className="px-4 py-2.5 text-xs">
+                  <span className={i.origin === "env" ? "text-amber-300" : "text-accent"}>{i.origin}</span>
                 </td>
-                <td className="px-4 py-2 text-xs">
-                  <span className={i.origin === "env" ? "text-amber-300" : "text-sky-300"}>
-                    {i.origin}
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-xs">
+                <td className="px-4 py-2.5 text-xs">
                   {i.name === current.name ? (
-                    <span className="text-emerald-400">active</span>
+                    <span className="text-emerald-300">active</span>
                   ) : (
                     <form action={switchInstanceAction} className="inline">
                       <input type="hidden" name="instance" value={i.name} />
-                      <button className="text-xs text-sky-400 hover:underline">switch →</button>
+                      <PendingButton className="text-xs text-accent hover:underline" pendingLabel="Switching…">
+                        switch →
+                      </PendingButton>
                     </form>
                   )}
                 </td>
-                <td className="px-4 py-2 text-right">
+                <td className="px-4 py-2.5 text-right">
                   {i.origin === "file" ? (
                     <form action={removeInstanceAction} className="inline">
                       <input type="hidden" name="name" value={i.name} />
-                      <button className="text-xs text-rose-400 hover:underline">remove</button>
+                      <PendingButton
+                        className="text-xs text-rose-300 hover:underline"
+                        confirmMessage={`Remove instance "${i.name}" from the console registry?`}
+                        pendingLabel="Removing…"
+                      >
+                        remove
+                      </PendingButton>
                     </form>
                   ) : (
-                    <span className="text-xs text-slate-600">env-locked</span>
+                    <span className="text-xs text-ink-faint/60">env-locked</span>
                   )}
                 </td>
               </tr>
@@ -93,42 +89,45 @@ export default async function InstancesPage({
         </table>
       </div>
 
-      <section className="rounded border border-slate-800 bg-slate-900/40 p-4">
-        <h2 className="text-sm font-semibold text-white">Add / edit a file instance</h2>
+      <section className="rounded-xl border border-line bg-card p-5">
+        <h2 className="text-sm font-semibold text-ink">Add / edit a file instance</h2>
         <form action={saveInstanceAction} className="mt-4 grid max-w-xl gap-3">
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Name (unique)
             <input
               name="name"
               required
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
               placeholder="site2"
             />
           </label>
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             Base URL (engine)
             <input
               name="base_url"
               required
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
               placeholder="http://127.0.0.1:8001"
             />
           </label>
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-ink-dim">
             API key (X-Site-Key / SDK_MASTER_KEY; blank if the engine has none)
             <input
               name="api_key"
               type="password"
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-sm text-slate-200"
+              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 font-mono text-sm text-ink focus:border-accent"
             />
           </label>
-          <button className="mt-1 w-fit rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500">
+          <PendingButton
+            pendingLabel="Saving…"
+            className="mt-1 w-fit rounded-md bg-accent-strong px-4 py-2 text-sm font-medium text-page transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
             Save instance
-          </button>
+          </PendingButton>
         </form>
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-3 text-xs text-ink-faint">
           Saving with an existing name overwrites that entry. After starting a second
-          engine, add it here and use the header switcher (or the row&apos;s switch link).
+          engine, add it here and use the header switcher (or the row's switch link).
         </p>
       </section>
     </div>

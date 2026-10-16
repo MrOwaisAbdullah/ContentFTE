@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { engine, ResearchView, SiteList } from "@/lib/engine";
+import { Alert, Empty, PageHeader, Pill } from "@/lib/ui";
+import { SiteSwitcher } from "@/lib/interactive";
 
 export const dynamic = "force-dynamic";
 
@@ -11,12 +13,11 @@ export default async function ResearchPage({
   const { site = "" } = await searchParams;
   let slug = site;
   let error = "";
+  let sites: SiteList = { sites: [], count: 0 };
   let data: ResearchView | null = null;
   try {
-    if (!slug) {
-      const sites = await engine<SiteList>("/sites");
-      slug = sites.sites[0]?.slug || "";
-    }
+    sites = await engine<SiteList>("/sites");
+    if (!slug) slug = sites.sites[0]?.slug || "";
     if (slug) {
       data = await engine<ResearchView>(
         `/sites/${encodeURIComponent(slug)}/research?limit=200`,
@@ -28,64 +29,63 @@ export default async function ResearchPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">
-          Research (research_data sheet) {slug ? `— ${slug}` : ""}
-        </h1>
-        <Link href="/stages" className="text-xs text-sky-400 hover:underline">
-          run research stage to fill →
-        </Link>
-      </div>
+      <PageHeader
+        title={`Research — research_data sheet ${slug ? `· ${slug}` : ""}`}
+        sub="findings pulled from the ledger before briefing"
+        right={<SiteSwitcher sites={sites.sites} current={slug} basePath="/articles/research" />}
+      />
 
-      {error ? (
-        <div className="rounded-md border border-red-900 bg-red-950/50 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      ) : null}
+      {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
 
       {!data || data.research.length === 0 ? (
-        <p className="text-sm text-slate-500">No research rows yet.</p>
+        <Empty
+          title="No research rows yet"
+          hint="Run the research stage — it turns ledger keywords into findings with intent, volume and summaries."
+          cta={{ href: "/stages", label: "Run stages" }}
+        />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-800">
+        <div className="overflow-x-auto rounded-xl border border-line bg-card">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900 text-left text-xs text-slate-400">
+            <thead className="border-b border-line text-left text-xs text-ink-faint">
               <tr>
-                <th className="px-4 py-2">Keyword / Topic</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Intent</th>
-                <th className="px-4 py-2 text-right">Volume</th>
-                <th className="px-4 py-2 text-right">Diff</th>
-                <th className="px-4 py-2">Generated</th>
-                <th className="px-4 py-2">Content Summary</th>
-                <th className="px-4 py-2">Secondary Keywords</th>
+                <th className="px-4 py-2.5">Keyword / Topic</th>
+                <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5">Intent</th>
+                <th className="px-4 py-2.5 text-right">Volume</th>
+                <th className="px-4 py-2.5 text-right">Diff</th>
+                <th className="px-4 py-2.5">Generated</th>
+                <th className="px-4 py-2.5">Content Summary</th>
+                <th className="px-4 py-2.5">Secondary Keywords</th>
               </tr>
             </thead>
             <tbody>
               {data.research.map((r) => (
-                <tr key={r.id} className="border-t border-slate-800/80">
-                  <td className="px-4 py-2">
-                    {r.subject || r.keyword}
+                <tr key={r.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
+                  <td className="px-4 py-2.5">
+                    <span className="font-medium">{r.subject || r.keyword}</span>
                     {r.subject && r.primary_keyword ? (
-                      <span className="block text-xs text-slate-500">
+                      <span className="block font-mono text-xs text-ink-faint">
                         targets: {r.primary_keyword}
                       </span>
                     ) : null}
                   </td>
-                  <td className="px-4 py-2 text-xs text-slate-400">{r.status}</td>
-                  <td className="px-4 py-2 text-xs text-slate-400">{r.intent}</td>
-                  <td className="px-4 py-2 text-right">{r.volume || "—"}</td>
-                  <td className="px-4 py-2 text-right">{r.difficulty || "—"}</td>
-                  <td className="px-4 py-2 text-xs">
+                  <td className="px-4 py-2.5">
+                    <Pill status={r.status} />
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-ink-dim">{r.intent}</td>
+                  <td className="px-4 py-2.5 text-right text-xs">{r.volume || "—"}</td>
+                  <td className="px-4 py-2.5 text-right text-xs">{r.difficulty || "—"}</td>
+                  <td className="px-4 py-2.5 text-xs">
                     {r.generated ? (
-                      <span className="text-emerald-400">yes</span>
+                      <span className="font-medium text-emerald-300">yes</span>
                     ) : (
-                      <span className="text-slate-500">no</span>
+                      <span className="text-ink-faint">no</span>
                     )}
                   </td>
-                  <td className="max-w-md truncate px-4 py-2 text-xs text-slate-400" title={r.summary}>
+                  <td className="max-w-md truncate px-4 py-2.5 text-xs text-ink-dim" title={r.summary}>
                     {r.summary || "—"}
                   </td>
-                  <td className="max-w-40 truncate px-4 py-2 text-xs text-slate-500" title={r.secondary_keywords}>
+                  <td className="max-w-40 truncate px-4 py-2.5 font-mono text-xs text-ink-faint" title={r.secondary_keywords}>
                     {r.secondary_keywords || "—"}
                   </td>
                 </tr>

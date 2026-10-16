@@ -13,7 +13,7 @@ const TABS = [
 export function ArticlesTabs() {
   const pathname = usePathname();
   return (
-    <nav className="flex gap-5 border-b border-slate-800 text-sm">
+    <nav className="flex gap-1 border-b border-line text-sm">
       {TABS.map((t) => {
         const active =
           t.href === "/articles"
@@ -23,10 +23,11 @@ export function ArticlesTabs() {
           <Link
             key={t.href}
             href={t.href}
-            className={`-mb-px border-b-2 pb-2 ${
+            aria-current={active ? "page" : undefined}
+            className={`-mb-px rounded-t-md border-b-2 px-3 pb-2 pt-1.5 transition-colors ${
               active
-                ? "border-sky-500 text-white"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-accent font-medium text-ink"
+                : "border-transparent text-ink-dim hover:text-ink"
             }`}
           >
             {t.label}

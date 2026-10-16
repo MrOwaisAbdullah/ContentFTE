@@ -1,5 +1,39 @@
 @import "tailwindcss";
 
+/* Console design tokens (docs/console-dashboard-plan.md §3): dark-only ops
+   console — near-black navy surfaces, teal interactive accent, gold reserved
+   for approved/cost/publish moments, rose for review/destructive. Named
+   colors here surface as Tailwind utilities (bg-page, text-ink, border-line…). */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  --color-page: #020617;
+  --color-card: #0b1220;
+  --color-surface: #141d2f;
+  --color-line: #1e293b;
+
+  --color-ink: #f8fafc;
+  --color-ink-dim: #94a3b8;
+  --color-ink-faint: #64748b;
+
+  --color-accent: #2dd4bf;
+  --color-accent-strong: #14b8a6;
+
+  --color-gold: #f59e0b;
+  --color-danger: #ef4444;
+}
+
 body {
-  @apply bg-slate-950 text-slate-100 antialiased;
+  @apply bg-page text-ink antialiased;
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+/* Consistent keyboard focus across the console without restyling each control. */
+:focus-visible {
+  outline: 2px solid rgba(45, 212, 191, 0.6);
+  outline-offset: 1px;
 }

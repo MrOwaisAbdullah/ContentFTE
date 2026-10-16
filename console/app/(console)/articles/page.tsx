@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { engine, ArticleList } from "@/lib/engine";
+import { Alert, Empty, PageHeader, Pill, fmtCost, fmtDate, fmtScore } from "@/lib/ui";
+import { FileText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -23,28 +25,24 @@ export default async function ArticlesPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Content (generated_posts + approved_unpublished)</h1>
-        <span className="text-xs text-slate-500">quality score + summary from the sheet columns</span>
-      </div>
+      <PageHeader
+        title="Content"
+        sub="generated_posts + approved_unpublished — quality score and summary from the sheet columns"
+      />
 
-      {err ? (
-        <div className="rounded-md border border-red-900 bg-red-950/50 px-4 py-3 text-sm text-red-300">
-          {err}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="rounded-md border border-red-900 bg-red-950/50 px-4 py-3 text-sm text-red-300">
-          Engine unreachable: {error}
-        </div>
-      ) : null}
+      {err ? <Alert tone="error">{err}</Alert> : null}
+      {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
 
       <div className="flex flex-wrap gap-2 text-xs">
         {STATUSES.map((s) => (
           <Link
             key={s || "all"}
             href={s ? `/articles?status=${s}` : "/articles"}
-            className={`rounded-full border px-3 py-1 ${status === s ? "border-sky-700 text-sky-300" : "border-slate-700 text-slate-400"}`}
+            className={`rounded-full border px-3 py-1 transition-colors ${
+              status === s
+                ? "border-accent/60 bg-accent/10 text-accent"
+                : "border-line bg-page text-ink-faint hover:border-ink-faint hover:text-ink"
+            }`}
           >
             {s || "all"}
           </Link>
@@ -52,59 +50,50 @@ export default async function ArticlesPage({
       </div>
 
       {!list || list.articles.length === 0 ? (
-        <p className="text-sm text-slate-500">No articles.</p>
+        <Empty
+          icon={FileText}
+          title={status ? `No ${status} articles` : "No articles yet"}
+          hint="Add a keyword on the ledger to create a briefed article, or run the content stage to fill the pipeline."
+          cta={{ href: "/articles/keywords", label: "Add a keyword" }}
+        />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-800">
+        <div className="overflow-x-auto rounded-xl border border-line bg-card">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900 text-left text-xs text-slate-400">
+            <thead className="border-b border-line text-left text-xs text-ink-faint">
               <tr>
-                <th className="px-4 py-2">Title</th>
-                <th className="px-4 py-2">Site</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2 text-right">Quality</th>
-                <th className="px-4 py-2">Summary</th>
-                <th className="px-4 py-2">Created</th>
-                <th className="px-4 py-2 text-right">Cost</th>
+                <th className="px-4 py-2.5">Title</th>
+                <th className="px-4 py-2.5">Site</th>
+                <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5 text-right">Quality</th>
+                <th className="px-4 py-2.5">Summary</th>
+                <th className="px-4 py-2.5">Created</th>
+                <th className="px-4 py-2.5 text-right">Cost</th>
               </tr>
             </thead>
             <tbody>
               {list.articles.map((a) => (
-                <tr key={a.id} className="border-t border-slate-800/80">
-                  <td className="px-4 py-2">
-                    <Link href={`/articles/${a.id}`} className="hover:text-sky-300">
+                <tr key={a.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
+                  <td className="max-w-xs truncate px-4 py-2.5">
+                    <Link href={`/articles/${a.id}`} className="font-medium hover:text-accent">
                       {a.title || `#${a.id}`}
                     </Link>
                   </td>
-                  <td className="px-4 py-2 text-xs text-slate-500">{a.site_slug}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`text-xs ${
-                        a.status === "published"
-                          ? "text-emerald-400"
-                          : a.status === "approved"
-                            ? "text-sky-400"
-                            : a.status === "needs_review"
-                              ? "text-amber-400"
-                              : "text-slate-400"
-                      }`}
-                    >
-                      {a.status}
-                    </span>
+                  <td className="px-4 py-2.5 font-mono text-xs text-ink-faint">{a.site_slug}</td>
+                  <td className="px-4 py-2.5">
+                    <Pill status={a.status} />
                   </td>
-                  <td className="px-4 py-2 text-right text-xs">
-                    {a.quality != null ? Number(a.quality).toFixed(1) : "—"}
+                  <td className="px-4 py-2.5 text-right font-mono text-xs text-ink-dim">
+                    {fmtScore(a.quality)}
                   </td>
                   <td
-                    className="max-w-sm truncate px-4 py-2 text-xs text-slate-400"
+                    className="max-w-sm truncate px-4 py-2.5 text-xs text-ink-dim"
                     title={a.summary}
                   >
                     {a.summary || "—"}
                   </td>
-                  <td className="px-4 py-2 text-xs text-slate-500">
-                    {a.created_at ? a.created_at.slice(0, 10) : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right text-xs text-slate-500">
-                    {a.cost_usd != null ? `$${Number(a.cost_usd).toFixed(4)}` : "—"}
+                  <td className="px-4 py-2.5 text-xs text-ink-faint">{fmtDate(a.created_at)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-xs text-ink-faint">
+                    {fmtCost(a.cost_usd)}
                   </td>
                 </tr>
               ))}
