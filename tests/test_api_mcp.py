@@ -201,7 +201,8 @@ def test_mcp_tools_registered_and_thin_over_service():
         # console-parity twins (spec-site2 §5 REST surface over MCP)
         "contentfte_queue", "contentfte_research", "contentfte_briefs",
         "contentfte_logs", "contentfte_approve_article",
-        "contentfte_update_content", "contentfte_run_stage",
+        "contentfte_update_content", "contentfte_patch_meta",
+        "contentfte_run_stage",
     }
     assert expected == names, f"tool name mismatch: {names ^ expected}"
 

@@ -1117,6 +1117,87 @@ def update_content(article_id: int, content_md: str, note: str = "",
         s.close()
 
 
+def patch_article_meta(article_id: int, fields: dict[str, str]) -> dict:
+    """Operator PATCH of allowed meta fields (title / slug / focus_keyword / summary / tldr).
+
+    - Only allowlisted keys are applied; every other meta key stays untouched.
+    - Every edit is appended to ``meta["edit_log"]`` and audit-logged.
+    - An ``approved`` article is reopened to ``generated`` so the approve gate
+      can re-run on the new fields; a ``published`` article keeps its status
+      (the live post changes on the next refresh).
+    - Returns the updated article dict (same shape as ``get_article`` without
+      ``include_content=True``).
+    """
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run list_articles first")
+        if not isinstance(fields, dict) or not fields:
+            return _err("fields dict must be non-empty", "send {title: '...', slug: '...'}")
+        meta = dict(art.meta or {})
+        brief = meta.setdefault("brief", {})
+        changed: list[str] = []
+        # --- title ---
+        if "title" in fields and str(fields["title"]).strip():
+            art.title = str(fields["title"]).strip()
+            changed.append("title")
+        # --- slug ---
+        if "slug" in fields and str(fields["slug"]).strip():
+            art.slug = str(fields["slug"]).strip() or ""
+            changed.append("slug")
+        # --- focus_keyword (stored as brief.keyword) ---
+        if "focus_keyword" in fields and str(fields["focus_keyword"]).strip():
+            brief["keyword"] = str(fields["focus_keyword"]).strip()
+            changed.append("focus_keyword")
+        # --- summary ---
+        if "summary" in fields and str(fields["summary"]).strip():
+            meta["summary"] = str(fields["summary"]).strip()
+            changed.append("summary")
+        # --- tldr ---
+        if "tldr" in fields and str(fields["tldr"]).strip():
+            meta["tldr"] = str(fields["tldr"]).strip()
+            changed.append("tldr")
+        if not changed:
+            return _err("no allowlisted fields supplied or all empty", "send at least one of title,slug,focus_keyword,summary,tldr")
+        # --- edit_log (mirrors update_content pattern) ---
+        meta.setdefault("edit_log", []).append({
+            "at": datetime.now(timezone.utc).isoformat(),
+            "note": "console meta edit via PATCH /sdk/v1/articles/{id}/meta",
+            "via": "api",
+            "fields": changed,
+        })
+        art.meta = meta  # assign-before-commit (JSON in-place mutation fix)
+        # --- audit ---
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.meta_edit",
+                       payload={"note": "console meta edit via PATCH", "fields": changed}))
+        # --- reopen approved ---
+        reopened = art.status == "approved"
+        if reopened:
+            art.status = "generated"
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.edit" if reopened else "article.meta_edit",
+                       payload={"note": "console meta edit via PATCH",
+                                "via": "api",
+                                "reopened": reopened,
+                                "chars": sum(len(str(fields.get(k, ""))) for k in changed)}))
+        s.commit()
+        # --- return updated article dict (same shape as get_article w/o content) ---
+        from sdk.service import _resolve_slug
+        data: dict[str, Any] = {"id": art.id, "site_id": art.site_id,
+                                "title": art.title, "slug": _resolve_slug(art),
+                                "status": art.status,
+                                "scores": art.scores or {},
+                                "cost_usd": art.cost_usd,
+                                "keyword_id": art.keyword_id,
+                                "meta": meta}
+        return data
+    finally:
+        s.close()
+
+
 def _str_list(raw: Any) -> list[str]:
     """Brief/meta list field -> [str, ...] (tolerates a single string)."""
     if isinstance(raw, str):

@@ -121,6 +121,35 @@ export async function stageImagesAction(formData: FormData) {
   redirect(back(id));
 }
 
+export async function patchMetaAction(formData: FormData) {
+  await requireSession();
+  const id = Number(formData.get("id"));
+  const title = String(formData.get("title") || "");
+  const slug = String(formData.get("slug") || "");
+  const focus_keyword = String(formData.get("focus_keyword") || "");
+  const summary = String(formData.get("summary") || "");
+  const tldr = String(formData.get("tldr") || "");
+  const fields: Record<string, string> = {};
+  if (title) fields.title = title;
+  if (slug) fields.slug = slug;
+  if (focus_keyword) fields.focus_keyword = focus_keyword;
+  if (summary) fields.summary = summary;
+  if (tldr) fields.tldr = tldr;
+  if (Object.keys(fields).length === 0) {
+    redirect(back(id, "no fields supplied"));
+  }
+  try {
+    await engine(`/sdk/v1/articles/${id}/meta`, {
+      method: "POST",
+      body: JSON.stringify(fields),
+    });
+  } catch (e) {
+    redirect(back(id, errorOf(e)));
+  }
+  revalidatePath("/");
+  revalidatePath("/articles");
+  redirect(back(id));
+}
 export async function patchContentAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));

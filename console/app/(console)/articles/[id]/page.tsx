@@ -751,9 +751,60 @@ export default async function ArticlePage({
               them in place needs a brief/meta patch op (later wave) — today: regenerate, or edit the content and
               refresh.
             </p>
-          </SectionCard>
+            <SectionCard title="Patch meta">
+              <form className="space-y-3" onSubmit={async (e: SubmitEvent) => {
+                e.preventDefault();
+                await patchMetaAction(new FormData(e.target));
+                revalidatePath("/");
+                revalidatePath("/articles");
+                redirect(back(id));
+              }}>
+                <input type="hidden" name="id" defaultValue={String(article.id)} />
+                <FieldRow label="Title">
+                  <input
+                    type="text"
+                    name="title"
+                    defaultValue={article.title || ""}
+                    className="flex-1 bg-input text-input"
+                  />
+                </FieldRow>
+                <FieldRow label="Slug">
+                  <input
+                    type="text"
+                    name="slug"
+                    defaultValue={article.slug || ""}
+                    className="flex-1 bg-input text-input"
+                  />
+                </FieldRow>
+                <FieldRow label="Focus keyphrase">
+                  <input
+                    type="text"
+                    name="focus_keyword"
+                    defaultValue={focus || keyword || ""}
+                    className="flex-1 bg-input text-input"
+                  />
+                </FieldRow>
+                <FieldRow label="Summary">
+                  <input
+                    type="text"
+                    name="summary"
+                    defaultValue={summary || ""}
+                    className="flex-1 bg-input text-input"
+                  />
+                </FieldRow>
+                <FieldRow label="TL;DR (AEO)">
+                  <input
+                    type="text"
+                    name="tldr"
+                    defaultValue={tldr || ""}
+                    className="flex-1 bg-input text-input"
+                  />
+                </FieldRow>
+                <button type="submit" className={BTN_PRIMARY}>Save changes</button>
+              </form>
+            </SectionCard>
 
-          <SectionCard title={`FAQs (${faqs.length})`} id="faqs">
+            <SectionCard title={`FAQs (${faqs.length})`} id="faqs">
             {faqs.length === 0 ? (
               <p className="text-sm text-ink-faint">No FAQs yet — they arrive with Generate (5–7 per the brief gate).</p>
             ) : (

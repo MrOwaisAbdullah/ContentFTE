@@ -354,6 +354,17 @@ def patch_content(article_id: int, body: ContentPatch,
                                            note=body.note))
 
 
+@router.patch("/articles/{article_id}/meta")
+def patch_meta(article_id: int, body: dict,
+               x_site_key: str | None = Header(default=None)) -> dict:
+    """Operator PATCH of allowed meta fields (title / slug / focus_keyword /
+    summary / tldr). Only allowlisted keys are applied; every other meta key
+    stays untouched. An approved article is reopened to generated so the approve
+    gate can re-run on the new fields; a published article keeps its status."""
+    _check_site_key(x_site_key)
+    return _resolve(service.patch_article_meta(article_id, body))
+
+
 _running_stages: set[str] = set()
 _run_lock = threading.Lock()
 

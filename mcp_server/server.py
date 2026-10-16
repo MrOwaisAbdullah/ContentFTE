@@ -734,6 +734,32 @@ async def approve_article(params: ApproveArticleInput) -> str:
 
 
 @mcp.tool(
+    name="contentfte_patch_meta",
+    annotations={"title": "Patch Article Meta", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def patch_meta_tool(params: dict) -> str:
+    """Patch allowed meta fields on an article (title / slug / focus_keyword /
+    summary / tldr). Only allowlisted keys are applied; every other meta key
+    stays untouched. An approved article is reopened to generated so the approve
+    gate can re-run on the new fields; a published article keeps its status.
+
+    This is the engine-level equivalent of making the SEO tab editable.
+
+    Args:
+        params (dict): article_id and allowlisted fields {title, slug,
+            focus_keyword, summary, tldr}.
+
+    Returns:
+        str: JSON {"id", "status", "title", "slug", "meta", "event":
+        "article.meta_edit"} or {"error", "next"}.
+    """
+    return _out(service.patch_article_meta(params.get("article_id", 0),
+                                           {k: v for k, v in params.items()
+                                            if k != "article_id"}))
+
+
+@mcp.tool(
     name="contentfte_update_content",
     annotations={"title": "Edit Article Content", "readOnlyHint": False,
                  "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
