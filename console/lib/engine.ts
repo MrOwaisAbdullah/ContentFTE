@@ -111,6 +111,9 @@ export interface ArticleListItem {
   cost_usd: number | null;
   quality?: number | null;
   summary?: string;
+  /** staged image count (meta.images) — the Media page detail-fetches only
+      articles with art; 0/undefined mean none. */
+  images?: number;
 }
 
 export interface ArticleList {

@@ -26,6 +26,7 @@ import {
 } from "@/lib/ui";
 import { PendingButton } from "@/lib/interactive";
 import { ContentWorkspace } from "@/lib/workspace";
+import { MediaCard, MediaImage } from "@/lib/media";
 import { Braces, CircleCheck, ExternalLink, FileClock, Info, TriangleAlert } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -275,6 +276,35 @@ function LivePostCard({
   );
 }
 
+/* ── media tab ─────────────────────────────────────────────────────────── */
+
+function MediaPanel({ articleId, images }: { articleId: number; images: MediaImage[] }) {
+  return (
+    <SectionCard title={`Media (${images.length})`}>
+      {images.length === 0 ? (
+        <p className="text-xs leading-5 text-ink-dim">
+          No art staged yet. Once a draft exists, <span className="text-ink">Stage images</span> (header
+          action — publishing also auto-stages) generates the featured thumbnail plus section-aware
+          inline art.
+        </p>
+      ) : (
+        <>
+          <p className="mb-3 text-xs leading-5 text-ink-faint">
+            Thumbnails stream through the console&apos;s engine proxy; badges come from each row&apos;s{" "}
+            <code className="font-mono text-[11px]">qa</code> block (Jev style pick + VLM lanes). Staged files
+            live in the engine staging dir.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {images.map((img, i) => (
+              <MediaCard key={`${img.slot || "img"}-${i}`} articleId={articleId} image={img} />
+            ))}
+          </div>
+        </>
+      )}
+    </SectionCard>
+  );
+}
+
 /* ── SEO & meta tab ────────────────────────────────────────────────────── */
 
 function SerpPreview({ article }: { article: ArticleDetail }) {
@@ -445,7 +475,7 @@ export default async function ArticlePage({
   const articleAudit = logs ? logs.audit.filter((a) => a.article_id === article!.id) : [];
   const articleCosts = logs ? logs.costs.filter((c) => c.article_id === article!.id) : [];
 
-  const activeTab = ["content", "seo", "activity"].includes(tab) ? tab : "content";
+  const activeTab = ["content", "seo", "media", "activity"].includes(tab) ? tab : "content";
 
   // Live readback only matters on the Content tab, only for published WP posts.
   let livePost: WpPostReadback | null = null;
@@ -493,10 +523,11 @@ export default async function ArticlePage({
       tier: images.length > 0 ? "pass" : article.status === "published" ? "info" : "warn",
       value:
         images.length > 0
-          ? `${images.length} staged — featured + inline art ready (Media tab lands in Wave 3)`
+          ? `${images.length} staged — featured + inline art ready`
           : article.status === "published"
             ? "None — published without staged inline art."
             : "None staged — Stage images before publishing (WP publish also auto-stages).",
+      href: images.length > 0 ? "?tab=media" : undefined,
     },
     {
       key: "faqs",
@@ -564,46 +595,32 @@ export default async function ArticlePage({
 
       {err ? <Alert tone="error">{err}</Alert> : null}
 
-      {/* tabs — plan §5: Content · SEO & meta · Media (Wave 3) · Activity */}
+      {/* tabs — plan §5: Content · SEO & meta · Media · Activity */}
       <nav aria-label="Article sections" className="flex flex-wrap items-center gap-1 border-b border-line">
         {[
           { key: "content", label: "Content" },
           { key: "seo", label: "SEO & meta" },
-          { key: "media", label: "Media", soon: true },
+          { key: "media", label: "Media" },
           { key: "activity", label: "Activity", count: articleAudit.length },
-        ].map((t) =>
-          t.soon ? (
-            <span
-              key={t.key}
-              aria-disabled="true"
-              title="Lands in the Media wave"
-              className="flex cursor-default items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm text-ink-faint/60"
-            >
-              {t.label}
-              <span className="rounded-full border border-line px-1.5 py-0.5 text-[9px] uppercase leading-none tracking-wide">
-                soon
+        ].map((t) => (
+          <Link
+            key={t.key}
+            href={`/articles/${article!.id}${t.key === "content" ? "" : `?tab=${t.key}`}`}
+            aria-current={activeTab === t.key ? "page" : undefined}
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors ${
+              activeTab === t.key
+                ? "border-accent font-medium text-ink"
+                : "border-transparent text-ink-faint hover:text-ink-dim"
+            }`}
+          >
+            {t.label}
+            {t.count ? (
+              <span className="rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-faint">
+                {t.count}
               </span>
-            </span>
-          ) : (
-            <Link
-              key={t.key}
-              href={`/articles/${article!.id}${t.key === "content" ? "" : `?tab=${t.key}`}`}
-              aria-current={activeTab === t.key ? "page" : undefined}
-              className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors ${
-                activeTab === t.key
-                  ? "border-accent font-medium text-ink"
-                  : "border-transparent text-ink-faint hover:text-ink-dim"
-              }`}
-            >
-              {t.label}
-              {t.count ? (
-                <span className="rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-faint">
-                  {t.count}
-                </span>
-              ) : null}
-            </Link>
-          ),
-        )}
+            ) : null}
+          </Link>
+        ))}
       </nav>
 
       {activeTab === "content" ? (
@@ -792,6 +809,7 @@ export default async function ArticlePage({
         </div>
       ) : null}
 
+      {activeTab === "media" ? <MediaPanel articleId={article.id} images={images as MediaImage[]} /> : null}
       {activeTab === "activity" ? <ActivityPanel audit={articleAudit} costs={articleCosts} /> : null}
     </div>
   );
