@@ -11,6 +11,18 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-16 — Console Wave 1: sidebar shell + topbar, a global site switcher, and Overview KPIs (the console becomes an app)
+
+**Commits:** `eda47fa`
+
+**What** — The chrome rewrite from `docs/console-dashboard-plan.md` §4, still zero engine changes. **Sidebar IA** (`console/lib/shell.tsx`, new): 240px fixed rail with sections — Overview / Approvals / Publish queue; **Content** (Content pipeline, Keyword ledger, Research, Briefs, Media); **Ops** (Logs, Insights, Stages); **Admin** (Sites, Instances, Provision). Destinations whose routes land in Waves 2–4 render disabled with a `soon` chip, so the IA is stable now and each wave flips one entry on; the Approvals entry already carries the work-queue badge when > 0. **Topbar**: breadcrumb (longest-match label map, e.g. `Content pipeline › Article #2`), **global site switcher**, ⌘K search placeholder, **engine health dot** (green/red from the layout's `/sites` probe), instance switcher, sign out. `(console)/layout.tsx` shrank to a best-effort data gatherer (`registry` + `/sites` + `/articles?limit=500` in parallel; a dead engine paints the dot red instead of failing the shell). **Site-context contract:** the `?site=` URL param is the single source — the topbar switcher rewrites it in place on the current path and sidebar links carry it along, so the selection is sticky across pages; Wave 0's per-page switchers on Keywords/Research/Briefs are superseded and removed (F6 is closed globally, not per-screen). **Overview** rebuilt to the §4 order: **KPI strip** (Needs your review = generated + needs_review · Briefable now = Σ `ledger.briefable` · Published = Σ `ledger.published` · **Cost this week** = cost rows since Monday UTC, gold) → **Needs your review** queue (top 6 with status pill + age + Review → link; a "Queue clear" check state when empty) → tiered site health → recent articles and keyword-ledger chips. **Responsive collapse**: below `lg` the rail becomes an overlay drawer (hamburger opens; backdrop click, nav click, or a route change closes — no Escape handler yet), the topbar wraps, and the articles tab strip scrolls horizontally.
+
+**Verified** — `next build` clean (typecheck + 13 routes). Live read-only pass, engine `:8123` + console `:3001` on the production build against the real `contentfte.db`: 6 screenshots — Overview at 1440 (KPI strip `0 / 0 / 4 / $0.0859` matching health sums, queue-clear state, tiered watch/healthy cards), Overview at 375px (hamburger + stacked KPIs, site switcher survives), the open mobile drawer, Keywords with the topbar (active "Keyword ledger" + accent icon, sections, `soon` chips), the **site-switch E2E** — selecting `Comparison Run` in the topbar rewrote the URL to `?site=comparison-run` and the ledger re-rendered for that site (3 drafted rows vs next-dogfood's 1), and article detail (`Content pipeline › Article #2` breadcrumb, Content pipeline active in the rail, published pill + rendered scores/FAQs intact). No Run/Publish/destructive clicks; both servers stopped afterwards, ports verified free. Python suite untouched — zero engine files changed.
+
+**Next** — Wave 2 (Approvals): build `/approvals` + `/publish` (flipping the two `soon` entries), and the §5 article-detail revamp — preview⟷edit toggle with rendered markdown, SEO & meta tab, approve checklist + reject-with-note. No engine changes needed (PATCH / approve / publish already exist).
+
+---
+
 ## 2026-10-16 — Console Wave 0: the design layer lands (tokens, pills, pending/confirm feedback, empty states, site switchers)
 
 **Commits:** `359ba84`
