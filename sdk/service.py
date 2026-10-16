@@ -316,23 +316,26 @@ def list_briefs(site_slug: str, limit: int = 100) -> dict:
         s.close()
 
 
-def list_logs(kind: str = "", limit: int = 200) -> dict:
+def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
     """Read-only logs view for the console (Sheets usage/audit parity).
 
     Returns audit rows (action-prefix filtered by `kind`: "usage" ->
     usage.model + usage.image rows, "publish" -> publish decisions; empty
-    = all) plus the per-article cost ledger (llm|image|data|total)."""
+    = all) plus the per-article cost ledger (llm|image|data|total).
+    `offset` pages whichever list is surfaced — audit when `kind` selects
+    one, the cost ledger when `kind` is "cost" or empty."""
     init_db()
     s = get_session()
     try:
         k = (kind or "").strip()
+        offset = max(0, int(offset or 0))
         audit: list[dict] = []
         if k != "cost":
             aq = select(AuditLog)
             if k:
                 aq = aq.where(AuditLog.action.startswith(k))
             audit_rows = s.execute(
-                aq.order_by(AuditLog.id.desc()).limit(limit)
+                aq.order_by(AuditLog.id.desc()).limit(limit).offset(offset)
             ).scalars()
             audit = [{"id": a.id, "action": a.action, "article_id": a.article_id,
                       "payload": a.payload or {}, "created_at": _iso(a.created_at)}
@@ -340,7 +343,8 @@ def list_logs(kind: str = "", limit: int = 200) -> dict:
         costs = []
         if not k or k == "cost":
             for c in s.execute(
-                select(CostLedger).order_by(CostLedger.id.desc()).limit(limit)
+                select(CostLedger).order_by(CostLedger.id.desc())
+                .limit(limit).offset(offset)
             ).scalars():
                 costs.append({"id": c.id, "article_id": c.article_id, "kind": c.kind,
                               "amount_usd": c.amount_usd, "detail": c.detail or {},

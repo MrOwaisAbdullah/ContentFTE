@@ -26,7 +26,8 @@ Endpoints:
     GET  /sdk/v1/sites/{slug}/brief       -> next briefable keyword (read-only peek)
     GET  /sdk/v1/sites/{slug}/research    -> research_data worksheet view (console)
     GET  /sdk/v1/sites/{slug}/briefs      -> content_briefs worksheet view (console)
-    GET  /sdk/v1/logs                     -> audit + cost ledger view (console)
+    GET  /sdk/v1/logs                     -> audit + cost ledger view,
+                                             limit/offset paged (console)
     PATCH /sdk/v1/articles/{id}/content   -> operator edit of content_md (console)
     POST /sdk/v1/run/{stage}              -> trigger a pipeline stage in the
                                               background (console; 409 on overlap)
@@ -328,12 +329,13 @@ def get_briefs(site_slug: str, limit: int = 100,
 
 
 @router.get("/logs")
-def get_logs(kind: str = "", limit: int = 200,
+def get_logs(kind: str = "", limit: int = 200, offset: int = 0,
              x_site_key: str | None = Header(default=None)) -> dict:
     """Logs worksheet view (read-only): audit_log rows (kind = action
-    prefix, e.g. "usage" or "publish"; empty = all) + the cost ledger."""
+    prefix, e.g. "usage" or "publish"; empty = all) + the cost ledger.
+    `offset` pages the surfaced list(s) — the console's Older/Newer pager."""
     _check_site_key(x_site_key)
-    return _resolve(service.list_logs(kind=kind, limit=limit))
+    return _resolve(service.list_logs(kind=kind, limit=limit, offset=offset))
 
 
 @router.patch("/articles/{article_id}/content")

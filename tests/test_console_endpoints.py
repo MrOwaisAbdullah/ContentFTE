@@ -297,6 +297,41 @@ def test_logs_route_audit_and_costs_with_kind_filter():
     assert len(cost["costs"]) == 1
 
 
+def test_logs_offset_pages_audit_and_costs():
+    """Wave 4: `offset` walks both lists newest-first without overlap."""
+    from lib.db import AuditLog, CostLedger, get_session
+    from sdk import service
+
+    art = service.submit_article("page-site", keyword="offset kw")
+    s = get_session()
+    try:
+        for i in range(5):
+            s.add(AuditLog(article_id=art["id"], action=f"article.page{i}",
+                           payload={"i": i}))
+        for i in range(3):
+            s.add(CostLedger(article_id=art["id"], kind="llm",
+                             amount_usd=0.01 * (i + 1), detail={"i": i}))
+        s.commit()
+    finally:
+        s.close()
+
+    client = _client()
+    # article.* rows: article.submit + 5 pages = 6; limit 4 splits 4/2
+    page1 = client.get("/sdk/v1/logs?kind=article&limit=4&offset=0").json()
+    page2 = client.get("/sdk/v1/logs?kind=article&limit=4&offset=4").json()
+    ids1 = [a["id"] for a in page1["audit"]]
+    ids2 = [a["id"] for a in page2["audit"]]
+    assert len(ids1) == 4 and len(ids2) == 2
+    assert not set(ids1) & set(ids2)              # disjoint pages
+    assert min(ids1) > max(ids2)                  # newest-first paging
+
+    # cost ledger pages independently; newest amounts first
+    c1 = client.get("/sdk/v1/logs?kind=cost&limit=2&offset=0").json()
+    c2 = client.get("/sdk/v1/logs?kind=cost&limit=2&offset=2").json()
+    assert [round(c["amount_usd"], 4) for c in c1["costs"]] == [0.03, 0.02]
+    assert [round(c["amount_usd"], 4) for c in c2["costs"]] == [0.01]
+
+
 def test_usage_log_functions_mirror_to_audit_when_sheets_fail(monkeypatch):
     import tools.sheet_tool as st
     from lib.db import AuditLog, get_session
