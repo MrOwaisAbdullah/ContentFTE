@@ -205,6 +205,9 @@ def test_mcp_tools_registered_and_thin_over_service():
         "contentfte_regenerate_image",
         "contentfte_run_stage",
         "contentfte_search_console",
+        "contentfte_brain_notes", "contentfte_brain_add",
+        "contentfte_review_feedback", "contentfte_mine_feedback",
+        "contentfte_log_coverage",
     }
     assert expected == names, f"tool name mismatch: {names ^ expected}"
 

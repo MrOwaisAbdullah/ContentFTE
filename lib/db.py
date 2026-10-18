@@ -221,6 +221,60 @@ class TavilyUsage(Base):
     site: Mapped[Site] = relationship()
 
 
+class BrainEntry(Base):
+    """§5.x what the writer actually knows — real voice entries + auto-logged
+    coverage history. Mirrors brain/*.md so the store is the source of truth
+    (the markdown files remain the git-auditable artifact).
+
+    `kind`: "voice" (owner-authored, first-person) or "coverage"
+    (auto-logged factual record of an approved topic). `get_brain_notes`
+    matches on tags/title.
+    """
+
+    __tablename__ = "brain_entries"
+    __table_args__ = (Index("ix_brain_site_kind", "site_id", "kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(20), default="voice")
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    content: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(40), default="manual")  # manual|auto_coverage|backfill
+    article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    site: Mapped[Site] = relationship()
+
+
+class ReviewFeedback(Base):
+    """§5.x raw approve/reject log with notes — the self-learning input.
+
+    Every approve/disapprove decision (console, Discord, agent) writes one row
+    carrying the operator's note/reason, so `mine_feedback` can propose brain
+    entries from recurring patterns. Mirrors the legacy `review`/`review_feedback_log`
+    worksheet; the sheet stays a parallel artifact until the bot migrates.
+    """
+
+    __tablename__ = "review_feedback"
+    __table_args__ = (Index("ix_review_site_status", "site_id", "status"),
+                      Index("ix_review_decided", "decided_at"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"), nullable=True)
+    article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # approved|rejected|needs_review
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    decided_by: Mapped[str] = mapped_column(String(120), default="console")
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    site: Mapped[Site] = relationship()
+
+
 _engine = None
 _SessionLocal = None
 

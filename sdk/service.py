@@ -32,7 +32,9 @@ from sqlalchemy import func, select
 
 from lib import custom_site
 from lib import generation
-from lib.db import Article, Article as ArticleModel, AuditLog, CostLedger, KeywordLedger, Site, get_session, init_db
+from lib.db import (Article, Article as ArticleModel, AuditLog, BrainEntry,
+                    CostLedger, KeywordLedger, ReviewFeedback, Site, get_session,
+                    init_db)
 from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 from lib.store import article_scores
@@ -1329,9 +1331,262 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                        action="article.approve" if approved else "article.needs_review",
                        payload={"note": note, "via": via}))
+        # Self-learning input: a dedicated review_feedback row carrying the
+        # operator's note/reason (the audit row above keeps the same data, but
+        # this table is what mine_feedback scans for patterns).
+        s.add(ReviewFeedback(
+            site_id=art.site_id, article_id=art.id, title=art.title or "",
+            status="approved" if approved else "needs_review",
+            score=(art.meta or {}).get("scores", {}).get("quality")
+                   if isinstance((art.meta or {}).get("scores"), dict) else None,
+            summary=str((art.meta or {}).get("summary") or ""),
+            notes=note or "", decided_by=via or "console",
+        ))
         s.commit()
         return {"id": art.id, "status": art.status,
                 "event": "article.published" if approved else "article.needs_review"}
+    finally:
+        s.close()
+
+
+def _brain_entry_to_dict(e):
+    return {
+        "id": e.id, "site_id": e.site_id, "kind": e.kind, "title": e.title,
+        "tags": list(e.tags or []), "content": e.content, "source": e.source,
+        "article_id": e.article_id,
+        "created_at": _iso(e.created_at), "updated_at": _iso(e.updated_at),
+    }
+
+
+def list_brain_entries(site_slug="", kind=""):
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug) if site_slug else None
+        q = select(BrainEntry)
+        if site is not None:
+            q = q.where(BrainEntry.site_id == site.id)
+        if kind:
+            q = q.where(BrainEntry.kind == kind.strip())
+        rows = s.execute(q.order_by(BrainEntry.created_at.desc())).scalars().all()
+        return {"entries": [_brain_entry_to_dict(e) for e in rows], "count": len(rows)}
+    finally:
+        s.close()
+
+
+def get_brain_entry(entry_id):
+    init_db()
+    s = get_session()
+    try:
+        e = s.get(BrainEntry, entry_id)
+        if e is None:
+            return _err("brain entry %d not found" % entry_id)
+        return _brain_entry_to_dict(e)
+    finally:
+        s.close()
+
+
+def create_brain_entry(site_slug="", kind="voice", title="", tags=None, content="",
+                       article_id=None, source="manual"):
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug) if site_slug else None
+        if not (title or "").strip():
+            return _err("title is required", "pass a title for the brain entry")
+        e = BrainEntry(site_id=site.id if site else None,
+                       kind=(kind or "voice").strip(), title=title.strip(),
+                       tags=list(tags or []), content=content or "",
+                       source=source or "manual", article_id=article_id)
+        s.add(e)
+        s.commit()
+        s.refresh(e)
+        return _brain_entry_to_dict(e)
+    finally:
+        s.close()
+
+
+def update_brain_entry(entry_id, title=None, tags=None, content=None, kind=None):
+    init_db()
+    s = get_session()
+    try:
+        e = s.get(BrainEntry, entry_id)
+        if e is None:
+            return _err("brain entry %d not found" % entry_id)
+        if title is not None:
+            e.title = title.strip() or e.title
+        if tags is not None:
+            e.tags = list(tags)
+        if content is not None:
+            e.content = content
+        if kind is not None and kind.strip():
+            e.kind = kind.strip()
+        s.commit()
+        s.refresh(e)
+        return _brain_entry_to_dict(e)
+    finally:
+        s.close()
+
+
+def delete_brain_entry(entry_id):
+    init_db()
+    s = get_session()
+    try:
+        e = s.get(BrainEntry, entry_id)
+        if e is None:
+            return _err("brain entry %d not found" % entry_id)
+        s.delete(e)
+        s.commit()
+        return {"deleted": entry_id}
+    finally:
+        s.close()
+
+
+def get_brain_notes(topic="", site_slug=""):
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug) if site_slug else None
+        q = select(BrainEntry)
+        if site is not None:
+            q = q.where((BrainEntry.site_id == site.id) | (BrainEntry.site_id.is_(None)))
+        rows = s.execute(q).scalars().all()
+        db_entries = [{"title": e.title, "tags": list(e.tags or []),
+                       "content": e.content, "kind": e.kind} for e in rows]
+    finally:
+        s.close()
+
+    file_entries = []
+    try:
+        from pathlib import Path
+        brain_dir = Path(__file__).resolve().parents[1] / "brain"
+        if brain_dir.is_dir():
+            for pp in sorted(brain_dir.glob("*.md")):
+                if pp.name == "README.md" or pp.name.startswith("_"):
+                    continue
+                try:
+                    text = pp.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                title = ""
+                tags = []
+                for line in text.splitlines()[:12]:
+                    sl = line.strip()
+                    if sl.startswith("# ") and not title:
+                        title = sl[2:].strip()
+                    if sl.lower().startswith("tags:"):
+                        tags = [t.strip() for t in sl[5:].split(",") if t.strip()]
+                file_entries.append({"title": title or pp.stem, "tags": tags,
+                                    "content": text, "kind": "voice",
+                                    "source_file": pp.name})
+    except Exception:
+        pass
+
+    seen = {e["title"] for e in db_entries}
+    for fe in file_entries:
+        if fe["title"] not in seen:
+            db_entries.append(fe)
+            seen.add(fe["title"])
+
+    topic_l = (topic or "").lower()
+    matched = []
+    for e in db_entries:
+        haystack = " ".join([e["title"]] + (e.get("tags") or []) + [e.get("content", "")[:200]]).lower()
+        if not topic_l or any(w in haystack for w in topic_l.split() if len(w) > 3):
+            matched.append(e)
+    matched.sort(key=lambda e: 0 if e.get("kind") == "voice" else 1)
+    combined = "\n\n---\n\n".join(
+        "# %s\nTags: %s\n\n%s" % (e["title"], ", ".join(e.get("tags") or []), e["content"])
+        for e in matched
+    )
+    return {"topic": topic, "matches": len(matched), "entries": matched, "text": combined}
+
+
+def log_coverage(article_id):
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(Article, article_id) if False else s.get(ArticleModel, article_id)
+        if art is None:
+            return _err("article %d not found" % article_id)
+        if art.status not in ("approved", "published"):
+            return _err("article %d is %r - coverage only for approved/published" % (article_id, art.status))
+        title = art.title or ("#%d" % art.id)
+        tags = [w.lower() for w in (title or "").split() if len(w) > 3][:8]
+        summary = str((art.meta or {}).get("summary") or "")
+        sc = (art.meta or {}).get("scores")
+        score = sc.get("quality") if isinstance(sc, dict) else None
+        content = ("Auto-logged coverage record (not personal voice).\n"
+                   "Approved: %s\nQuality score: %s\nSummary: %s\n"
+                   % (__import__("datetime").datetime.now(__import__("datetime").timezone.utc).date().isoformat(),
+                      score, summary))
+        e = BrainEntry(site_id=art.site_id, kind="coverage", title=title,
+                       tags=tags, content=content, source="auto_coverage",
+                       article_id=art.id)
+        s.add(e)
+        s.commit()
+        s.refresh(e)
+        return _brain_entry_to_dict(e)
+    finally:
+        s.close()
+
+
+def mine_feedback(site_slug="", min_rows=5):
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug) if site_slug else None
+        q = select(ReviewFeedback)
+        if site is not None:
+            q = q.where(ReviewFeedback.site_id == site.id)
+        rows = s.execute(q.order_by(ReviewFeedback.decided_at.desc())).scalars().all()
+        if len(rows) < min_rows:
+            return {"status": "insufficient_data", "rows": len(rows),
+                    "min_rows": min_rows,
+                    "message": "need more approve/reject decisions before mining"}
+        rejected = [r for r in rows if r.status in ("rejected", "needs_review")]
+        approved = [r for r in rows if r.status == "approved"]
+        proposals = []
+        if rejected:
+            from collections import Counter
+            words = Counter()
+            for r in rejected:
+                for w in (r.notes or "").lower().split():
+                    if len(w) > 4:
+                        words[w] += 1
+            top = [w for w, n in words.most_common(5) if n >= 2]
+            if top:
+                proposals.append({"kind": "voice", "title": "Recurring rejection themes",
+                                 "tags": top,
+                                 "content": ("Candidate (operator must author the real entry):\n"
+                                             "Rejection notes most often mention: " + ", ".join(top) +
+                                             ". Based on %d rejected rows." % len(rejected))})
+        proposals.append({"kind": "coverage", "title": "Approval summary",
+                          "tags": ["approval", "stats"],
+                          "content": "Approved: %d, rejected/needs_review: %d (of %d total)."
+                                     % (len(approved), len(rejected), len(rows))})
+        return {"status": "ok", "rows_scanned": len(rows),
+                "approved": len(approved), "rejected": len(rejected),
+                "proposals": proposals,
+                "note": "proposals only - nothing is written to brain_entries automatically"}
+    finally:
+        s.close()
+
+
+def list_review_feedback(site_slug="", limit=100):
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug) if site_slug else None
+        q = select(ReviewFeedback)
+        if site is not None:
+            q = q.where(ReviewFeedback.site_id == site.id)
+        rows = s.execute(q.order_by(ReviewFeedback.decided_at.desc()).limit(limit)).scalars().all()
+        return {"items": [{"id": r.id, "site_id": r.site_id, "article_id": r.article_id,
+                           "title": r.title, "status": r.status, "score": r.score,
+                           "summary": r.summary, "notes": r.notes,
+                           "decided_by": r.decided_by, "decided_at": _iso(r.decided_at)}
+                          for r in rows], "count": len(rows)}
     finally:
         s.close()
 

@@ -203,6 +203,27 @@ class ApproveArticleInput(BaseModel):
     note: str = Field(default="", max_length=500, description="Optional operator note (audit)")
 
 
+class BrainNoteInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    topic: str = Field(default="", max_length=300, description="Topic/keyword to match brain notes against")
+    site_slug: str = Field(default="", max_length=120, description="Optional site slug (blank = global)")
+
+
+class CreateBrainEntryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    title: str = Field(..., min_length=1, max_length=300, description="Entry title")
+    kind: str = Field(default="voice", description="'voice' (owner-authored) or 'coverage' (auto-logged)")
+    tags: list[str] = Field(default_factory=list, description="Tags for matching (topic words)")
+    content: str = Field(default="", description="Entry body (markdown)")
+    site_slug: str = Field(default="", max_length=120, description="Optional site slug (blank = global)")
+
+
+class ReviewFeedbackInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    site_slug: str = Field(default="", max_length=120, description="Optional site slug")
+    limit: int = Field(default=50, ge=1, le=500, description="Max rows to return")
+
+
 class UpdateContentInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     article_id: int = Field(..., ge=1, description="Numeric article ID to edit")
@@ -768,6 +789,99 @@ async def approve_article(params: ApproveArticleInput) -> str:
     """
     return _out(service.approve_article(params.article_id, approved=params.approved,
                                         note=params.note or "mcp", via="mcp"))
+
+
+@mcp.tool(
+    name="contentfte_brain_notes",
+    annotations={"title": "Brain Notes for Topic", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def brain_notes(params: BrainNoteInput) -> str:
+    """Retrieve the owner's real stories/opinions/numbers relevant to a topic.
+
+    Reads brain_entries from the DB (with brain/*.md file fallback). Use before
+    drafting, in addition to the style guide. Empty result is expected and fine --
+    never invent a personal anecdote to fill the gap.
+
+    Args:
+        params (BrainNoteInput): topic?, site_slug?.
+
+    Returns:
+        str: JSON {"topic", "matches", "notes": [{title, tags, content, kind}], "text"}.
+    """
+    return _out(service.get_brain_notes(topic=params.topic, site_slug=params.site_slug))
+
+
+@mcp.tool(
+    name="contentfte_brain_add",
+    annotations={"title": "Add Brain Entry", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+async def brain_add(params: CreateBrainEntryInput) -> str:
+    """Add a real voice/coverage brain entry (owner-authored or auto-logged).
+
+    Args:
+        params (CreateBrainEntryInput): title, kind?, tags?, content?, site_slug?.
+
+    Returns:
+        str: JSON of the created entry or {"error", "next"}.
+    """
+    return _out(service.create_brain_entry(site_slug=params.site_slug, kind=params.kind,
+                                           title=params.title, tags=params.tags,
+                                           content=params.content))
+
+
+@mcp.tool(
+    name="contentfte_review_feedback",
+    annotations={"title": "List Review Feedback", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def review_feedback(params: ReviewFeedbackInput) -> str:
+    """List approve/reject decisions with operator notes (self-learning input).
+
+    Args:
+        params (ReviewFeedbackInput): site_slug?, limit?.
+
+    Returns:
+        str: JSON {"items": [{id, title, status, score, notes, decided_by, decided_at}], "count"}.
+    """
+    return _out(service.list_review_feedback(site_slug=params.site_slug, limit=params.limit))
+
+
+@mcp.tool(
+    name="contentfte_mine_feedback",
+    annotations={"title": "Mine Feedback Patterns", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def mine_feedback_tool(params: ReviewFeedbackInput) -> str:
+    """Scan review_feedback for recurring patterns and propose (never write) brain
+    entries for operator review.
+
+    Args:
+        params (ReviewFeedbackInput): site_slug?, limit? (limit unused).
+
+    Returns:
+        str: JSON {"status", "rows_scanned", "approved", "rejected", "proposals"}.
+    """
+    return _out(service.mine_feedback(site_slug=params.site_slug))
+
+
+@mcp.tool(
+    name="contentfte_log_coverage",
+    annotations={"title": "Log Coverage Entry", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+async def log_coverage_tool(params: ApproveArticleInput) -> str:
+    """Create a coverage brain entry for an approved/published article (factual
+    record, not personal voice).
+
+    Args:
+        params (ApproveArticleInput): article_id (reuses the same input shape).
+
+    Returns:
+        str: JSON of the created brain entry or {"error", "next"}.
+    """
+    return _out(service.log_coverage(params.article_id))
 
 
 @mcp.tool(

@@ -342,36 +342,25 @@ def get_brain_notes_tool(topic: str):
     general research as usual and do NOT invent a personal anecdote or number to fill
     the gap.
     """
-    if not os.path.isdir(BRAIN_DIR):
-        return {"notes": [], "message": "No brain/ directory found."}
+    # DB is the source of truth (brain_entries table); files under brain/ are
+    # still read as a fallback for legacy entries not yet imported. The service
+    # layer merges both and dedups by title (DB wins).
+    try:
+        from sdk import service
+        res = service.get_brain_notes(topic=topic or "")
+    except Exception as exc:
+        res = {"matches": 0, "entries": [], "text": "", "error": str(exc)}
 
-    topic_words = {w.lower() for w in re.findall(r"[a-zA-Z0-9]+", topic) if len(w) > 2}
-    matches = []
-    for fname in sorted(os.listdir(BRAIN_DIR)):
-        if not fname.endswith(".md") or fname.startswith("_") or fname.lower() == "readme.md":
-            continue
-        path = os.path.join(BRAIN_DIR, fname)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except Exception:
-            continue
-
-        lines = text.splitlines()
-        title = lines[0].lstrip("#").strip() if lines else fname
-        tags_line = next((l for l in lines[:6] if l.lower().startswith("tags:")), "")
-        tags = {t.strip().lower() for t in tags_line.split(":", 1)[1].split(",")} if tags_line else set()
-        title_words = {w.lower() for w in re.findall(r"[a-zA-Z0-9]+", title)}
-
-        if topic_words & (tags | title_words):
-            matches.append({"file": fname, "title": title, "content": text})
-
-    if not matches:
+    entries = res.get("entries") or []
+    notes = [{"title": e.get("title"), "tags": e.get("tags") or [],
+              "content": e.get("content"), "kind": e.get("kind")} for e in entries]
+    if not notes:
         return {
             "notes": [],
             "message": "No brain notes found for this topic. Write from general research as usual -- do not invent a personal anecdote, story, or number to fill this gap.",
         }
-    return {"notes": matches, "message": f"Found {len(matches)} brain note(s) relevant to '{topic}'."}
+    return {"notes": notes, "text": res.get("text", ""),
+            "message": "Found %d brain note(s) relevant to '%s'." % (len(notes), topic)}
 
 
 @function_tool

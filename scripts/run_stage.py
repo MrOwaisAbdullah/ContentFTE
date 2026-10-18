@@ -2177,6 +2177,13 @@ async def run_log_coverage() -> None:
             f.write(content)
         new_files.append(path)
         print(f"[log_coverage] Wrote {filename}")
+        try:
+            from sdk import service
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            service.create_brain_entry(kind="coverage", title=title, tags=tag_list,
+                                      content=content, source="auto_coverage")
+        except Exception as _e:
+            print(f"[log_coverage] DB mirror skipped: {_e}")
 
     if not new_files:
         print("[log_coverage] Nothing new to log; all approved posts already have a coverage file.")

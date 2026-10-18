@@ -694,9 +694,14 @@ export default async function ArticlePage({
                   </Alert>
                 ) : null}
                 {canApprove ? (
-                  <form action={approveArticleAction}>
+                  <form action={approveArticleAction} className="space-y-2">
                     <input type="hidden" name="id" value={article.id} />
                     <input type="hidden" name="approved" value="1" />
+                    <input
+                      name="note"
+                      placeholder="Approval note - why it passes (optional)"
+                      className="w-full rounded-md border border-line bg-page px-3 py-1.5 text-xs text-ink placeholder:text-ink-faint/70 focus:border-accent"
+                    />
                     <PendingButton className={`${BTN_GOLD} w-full`} pendingLabel="Approving…">
                       Approve
                     </PendingButton>
