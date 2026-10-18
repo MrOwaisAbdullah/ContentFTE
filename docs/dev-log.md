@@ -11,6 +11,23 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-18 - Instance dashboard guide (Search Console, Discord, env)
+
+**Commit:** 90829a5
+
+**What** - added `docs/instance-dashboard-guide.md`: operator runbook for
+adding a brand-new site to an existing deployment - creating the instance in
+the console dashboard (env-declared vs UI-managed/file-backed), per-instance
+engine `.env`, connecting Search Console (one service account across many
+properties, tri-state status, optional `search_console_site_url` override),
+Discord bot per instance (token/webhook, container has no `brain/` access),
+dashboard env reference, and a verification checklist. Cross-references
+`service_setup.md`, `site-onboarding-flow.md`, `instances-isolation.md`,
+`postgres-cutover.md`.
+
+---
+
+
 ## 2026-10-18 - Brain + review feedback in Postgres (approve/disapprove with notes)
 
 **Commit:** a4b76e8
