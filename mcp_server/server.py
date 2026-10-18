@@ -114,6 +114,15 @@ class ArticleIdInput(BaseModel):
     article_id: int = Field(..., ge=1, description="Numeric article ID (from contentfte_generate_article)")
 
 
+class RegenerateImageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    article_id: int = Field(..., ge=1, description="Numeric article ID (from contentfte_generate_article)")
+    image_name: str = Field(..., min_length=1, max_length=300,
+                            description="File name from one of the article's meta.images rows "
+                                        "(e.g. 'article12_featured.png' — the console Media tab "
+                                        "shows each row)")
+
+
 class WpPostInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     post_id: int = Field(..., ge=1,
@@ -429,6 +438,34 @@ async def stage_images(params: ArticleIdInput) -> str:
         "inpost", "errors"?} or {"skipped", "reason"} or {"error", "next"}.
     """
     return _out(service.stage_images(params.article_id))
+
+
+@mcp.tool(
+    name="contentfte_regenerate_image",
+    annotations={"title": "Regenerate Article Image", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def regenerate_image(params: RegenerateImageInput) -> str:
+    """Re-generate ONE staged image row (featured or inpost) and replace it.
+
+    Re-runs the same generation path as contentfte_stage_images for that one
+    slot — an inpost row is regenerated from the `## ` section its after_h2
+    points at — and replaces the meta.images row in place. Cost and QA are
+    overwritten from the new result. SPENDS image credits (the console gates
+    it behind a confirm dialog); without provider credentials it skips
+    cleanly (no error).
+
+    Args:
+        params (RegenerateImageInput): article_id, image_name (a meta.images
+            path basename — the article's own rows are the allowlist).
+
+    Returns:
+        str: JSON {"id", "event": "article.images", "images", "featured",
+        "inpost", "errors"?, "detail"} or {"skipped", "reason"} or
+        {"error", "next"}.
+    """
+    return _out(service.regenerate_article_image(params.article_id,
+                                                 params.image_name))
 
 
 @mcp.tool(

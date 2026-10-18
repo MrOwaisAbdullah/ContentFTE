@@ -232,6 +232,29 @@ def stage_images(article_id: int, x_site_key: str | None = Header(default=None))
     return _resolve(service.stage_images(article_id))
 
 
+@router.post("/articles/{article_id}/images/{name}/regenerate")
+def regenerate_article_image(article_id: int, name: str,
+                             x_site_key: str | None = Header(default=None)) -> dict:
+    """Regenerate one staged meta.images row (featured / inpost).
+
+    Re-runs the AI image generation for that slot and replaces the row in
+    ``meta.images`` in-place. Cost and QA are overwritten from the new result.
+    Best-effort: if no provider credentials, returns ``skipped``; any error
+    returns ``{"error", "next"}`` without raising — the caller should surface
+    the user a confirm dialog (spends credits) and a cost surface.
+
+    The *name* must match the allowlisted row's ``path`` basename (same rule as
+    ``GET /articles/{id}/images/{name}``) so a request can never reach an image
+    the article doesn't reference.
+
+    Returns:
+        dict: {"id", "event": "article.images", "images", "featured", "inpost",
+        "errors"?, "detail"} or {"error", "next"}.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.regenerate_article_image(article_id, name))
+
+
 @router.get("/articles/{article_id}/content")
 def get_content(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)

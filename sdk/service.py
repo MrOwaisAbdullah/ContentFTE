@@ -17,6 +17,7 @@ Errors are returned as dicts {"error": str, "next": str} (actionable).
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -792,6 +793,165 @@ def stage_images(article_id: int) -> dict:
             s.commit()
         return {"id": art.id, "event": "article.images",
                 "images": len(meta.get("images") or []), **out}
+    finally:
+        s.close()
+
+
+def _find_image_row(meta_images: list, asked_name: str) -> dict | None:
+    """The meta.images row whose ``path`` basename is *asked_name*.
+
+    Mirrors the allowlist logic in ``get_article_image`` so the regenerate op
+    can only ever target images the article actually references; remote-only
+    rows (``url``, no local ``path``) are not regeneratable by name."""
+    if not isinstance(meta_images, list):
+        return None
+    for row in meta_images:
+        if not isinstance(row, dict):
+            continue
+        p = str(row.get("path") or "")
+        if p and os.path.basename(p) == asked_name:
+            return row
+    return None
+
+
+def regenerate_article_image(article_id: int, image_name: str) -> dict:
+    """Re-generate one staged meta.images row (featured or inpost).
+
+    - Only allowlisted by the article's own ``meta.images`` rows (path basename
+      must match *image_name*).
+    - Featured rows: re-run ``_generate_image`` with the same keyword/title/summary,
+      copy to staging, replace the row in-place (keep slot/after_h2/alt).
+    - Inpost rows: re-run ``_select_inpost_image`` using the section that the
+      row's ``after_h2`` points to (heading + trimmed text as prompt), replace
+      the row in-place (keep slot/after_h2/alt).
+    - ``cost_usd`` and ``qa`` are overwritten from the new generation.
+    - Best-effort: if no provider credentials, return ``skipped``; any error
+      returns ``{"error": "...}`` but does NOT raise — the caller should surface
+      the user a confirm dialog (spends credits) and a cost surface.
+    - Never raises — returns what happened, just like ``_stage_images_for``.
+    """
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run list_articles first")
+        # Deep copy before mutating: a shallow copy shares the nested `images`
+        # row objects with the committed value, so an in-place row edit would
+        # compare EQUAL to the old meta and SQLAlchemy would never mark the
+        # column dirty (no UPDATE fires — see the stage_images note).
+        meta = copy.deepcopy(art.meta) if isinstance(art.meta, dict) else {}
+        rows = meta.get("images") if isinstance(meta.get("images"), list) else []
+        row = _find_image_row(rows, str(image_name or "").strip())
+        if row is None:
+            return _err(f"image '{image_name}' not found on article {article_id}",
+                        "the article's meta.images rows are the allowlist")
+        if not (os.environ.get("CLOUDFLARE_API_TOKEN")
+                or os.environ.get("PEXELS_API_KEY")):
+            return {"skipped": "no image provider credentials "
+                               "(CLOUDFLARE_API_TOKEN / PEXELS_API_KEY)",
+                    "reason": "regenerate", "featured": False, "inpost": 0,
+                    "images": len(rows), "errors": []}
+        slot = "inpost" if row.get("slot") == "inpost" else "featured"
+        after_h2 = int(row.get("after_h2") or 0)
+        keyword = str(meta.get("keyword") or art.title or "").strip()
+        title = str(art.title or "")
+        summary = str(meta.get("summary") or "")
+        try:
+            from tools.tools import _generate_image, _select_inpost_image
+        except Exception as exc:  # noqa: BLE001 — fail-open contract
+            return {"error": f"image tools unavailable: {exc}",
+                    "reason": "regenerate", "featured": False, "inpost": 0,
+                    "images": len(rows), "errors": []}
+
+        ok = False
+        err = ""
+        res: dict[str, Any] = {}
+        if slot == "featured":
+            try:
+                res = _generate_image(keyword=keyword, title=title,
+                                      summary=summary, slot="featured")
+            except Exception as exc:  # noqa: BLE001
+                res = {"error": str(exc)}
+            res = res if isinstance(res, dict) else {}
+            if res.get("image_url"):
+                # Same staged name as stage-images: the file is replaced in
+                # place, keeping slot/after_h2 and the row's position.
+                row.pop("url", None)
+                row["path"] = _stage_copy(str(res["image_url"]), art.id,
+                                          "featured") or str(res["image_url"])
+                ok = True
+            else:
+                err = str(res.get("error") or res.get("skipped") or "no image")
+        else:  # slot == "inpost"
+            # Reuse the section the row's after_h2 points at (1-based over all
+            # H2s) — the same anchor publish injects before.
+            sections = [sec for sec in _content_sections(art.content_md or "")
+                        if sec["heading"]]
+            target = next((sec for sec in sections if sec["index"] == after_h2),
+                          None) or (sections[0] if sections else {})
+            topic = str(target.get("heading") or keyword)
+            try:
+                res = _select_inpost_image(
+                    topic=topic,
+                    section_summary=str(target.get("text") or summary)[:600],
+                    alt_text=str(row.get("alt") or topic)[:125])
+            except Exception as exc:  # noqa: BLE001
+                res = {"error": str(exc)}
+            res = res if isinstance(res, dict) else {}
+            src = str(res.get("image_url") or res.get("url") or "")
+            if src:
+                if os.path.isfile(src):  # freshly generated local file
+                    row.pop("url", None)
+                    row["path"] = _stage_copy(src, art.id, "inpost") or src
+                else:  # remote stock: keep the URL, never a fake path
+                    row.pop("path", None)
+                    row["url"] = src
+                ok = True
+            else:
+                err = str(res.get("error") or "no image")
+
+        new_cost = 0.0
+        if ok:
+            # Cost and QA are overwritten from the new result (old scores are
+            # stale the moment the file changed).
+            if isinstance(res.get("cost_usd"), (int, float)):
+                new_cost = float(res["cost_usd"])
+            if slot == "featured":
+                row["alt"] = (summary or keyword or title)[:125].strip()
+            row["cost_usd"] = new_cost
+            row["qa"] = res["qa"] if isinstance(res.get("qa"), dict) else {}
+            if res.get("source"):
+                row["source"] = str(res["source"])[:120]
+            meta["images"] = rows
+            art.meta = meta  # single assignment, beside the audit row below
+            if new_cost > 0:
+                # A regenerate is a new spend: ledger it (the staged rows were
+                # already counted once via image_costs_recorded).
+                try:
+                    record_cost(s, art.id, "image", round(new_cost, 6),
+                                detail={"slot": slot, "reason": "regenerate"})
+                except Exception:
+                    pass
+            via = f" (after_h2={after_h2})" if slot == "inpost" else ""
+            detail = f"{slot} image '{image_name}'{via} regenerated"
+            if new_cost:
+                detail += f", cost=${new_cost:.4f}"
+        else:
+            detail = f"{slot} image '{image_name}' regenerate failed: {err}"
+        s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                       action="article.images",
+                       payload={"event": "article.images_regenerated",
+                                "slot": slot, "image": image_name,
+                                "ok": ok, "detail": detail[:400]}))
+        s.commit()
+        return {"id": art.id, "event": "article.images",
+                "images": len(meta.get("images") or []),
+                "reason": "regenerate",
+                "featured": slot == "featured" and ok,
+                "inpost": 1 if (slot == "inpost" and ok) else 0,
+                "errors": [] if ok else [err],
+                "detail": detail}
     finally:
         s.close()
 
