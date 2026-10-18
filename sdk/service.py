@@ -642,6 +642,26 @@ def _merge_usage(base: dict, add: dict) -> dict:
     return out
 
 
+def _wp_config(site=None):
+    """WordPress credentials for one site.
+
+    Site.settings["wp"] = {"base_url", "username", "app_password"} wins;
+    otherwise the process WP_* env (one WP per instance). Per-site
+    resolution means a shared engine can never push site B's article into
+    site A's WordPress — the highest-severity cross-instance bleed there
+    is. Post-id-scoped ops (wp_post/_elementor_client) have no article to
+    resolve from and stay env-based."""
+    from lib.wordpress import WPConfig
+
+    settings = getattr(site, "settings", None)
+    wp = settings.get("wp") if isinstance(settings, dict) else None
+    if isinstance(wp, dict) and wp.get("base_url"):
+        return WPConfig(base_url=str(wp.get("base_url") or "").rstrip("/"),
+                        username=str(wp.get("username") or ""),
+                        app_password=str(wp.get("app_password") or ""))
+    return WPConfig.from_env()
+
+
 def _enrich_brief_with_links(art: ArticleModel, brief: dict, keyword: str) -> dict:
     """Embed REAL internal-link candidates into the generation brief.
 
@@ -652,9 +672,9 @@ def _enrich_brief_with_links(art: ArticleModel, brief: dict, keyword: str) -> di
     if (getattr(art.site, "site_type", "") or "") != "wordpress":
         return brief
     try:
-        from lib.wordpress import WPConfig, WordPressConnector
+        from lib.wordpress import WordPressConnector
 
-        cfg = WPConfig.from_env()
+        cfg = _wp_config(art.site)
         if not (cfg.base_url and cfg.username and cfg.app_password):
             return brief
         conn = WordPressConnector(cfg)
@@ -1532,7 +1552,7 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     """
     from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
 
-    cfg = WPConfig.from_env()
+    cfg = _wp_config(art.site)
     if not (cfg.base_url and cfg.username and cfg.app_password):
         return {"ok": False, "error": "WordPress not configured",
                 "next": "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD (or "
@@ -1756,7 +1776,7 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
 
         from lib.wordpress import WPConfig, WordPressConnector, build_prepared_post
 
-        cfg = WPConfig.from_env()
+        cfg = _wp_config(art.site)
         if not (cfg.base_url and cfg.username and cfg.app_password):
             return _err("WordPress not configured",
                         "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
@@ -2179,7 +2199,7 @@ def elementor_build(article_id: int, post_id: int | None = None,
         if post_id is None and meta.get("wp_post_id"):
             post_id = int(meta["wp_post_id"])
 
-        cfg = WPConfig.from_env()
+        cfg = _wp_config(art.site)
         if not (cfg.base_url and cfg.username and cfg.app_password):
             return _err("WordPress not configured",
                         "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")

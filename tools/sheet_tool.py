@@ -33,23 +33,36 @@ SPREADSHEET_NAME = "ContentSpark" # Your main spreadsheet name
 # extra Drive API lookup) on every single tool invocation. This matters
 # because Sheets API quota is limited to 300 requests/60s per project and
 # 60/60s per user.
-_gspread_client: Optional[gspread.Client] = None
-_spreadsheet_cache: Optional[gspread.Spreadsheet] = None
+_gspread_clients: Dict[str, gspread.Client] = {}
+_spreadsheet_handles: Dict[str, gspread.Spreadsheet] = {}
+
+
+def _creds_fingerprint() -> str:
+    """Stability key of the ACTIVE GOOGLE_CREDENTIALS. The client and
+    spreadsheet caches are keyed by it so two instances that configure
+    different service accounts in one process can never reuse each other's
+    connection (the first instance's client would otherwise be frozen in
+    for the process lifetime)."""
+    import hashlib
+
+    raw = os.environ.get(CREDENTIALS_ENV_VAR, "").strip()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def _reset_gspread_cache() -> None:
     """Drops cached client/spreadsheet handles so the next call re-authenticates."""
-    global _gspread_client, _spreadsheet_cache
-    _gspread_client = None
-    _spreadsheet_cache = None
+    _gspread_clients.clear()
+    _spreadsheet_handles.clear()
 
 
 # --- Helper Functions ---
 def get_gspread_client() -> gspread.Client:
-    """Authenticates and returns a cached gspread client, reused across calls."""
-    global _gspread_client
-    if _gspread_client is not None:
-        return _gspread_client
+    """Authenticates and returns a cached gspread client, reused across calls
+    (per credential fingerprint)."""
+    fp = _creds_fingerprint()
+    client = _gspread_clients.get(fp)
+    if client is not None:
+        return client
 
     # SHEETS_ENABLED=0 (spec §3b): a Postgres-only instance has no
     # Google creds and no Sheets -- fail loudly here, the single choke
@@ -68,9 +81,10 @@ def get_gspread_client() -> gspread.Client:
     try:
         creds_data = json.loads(credentials_info)
         creds = Credentials.from_service_account_info(creds_data, scopes=REQUIRED_SCOPE)
-        _gspread_client = gspread.authorize(creds)
+        client = gspread.authorize(creds)
+        _gspread_clients[fp] = client
         logger.info("Successfully authenticated with Google Sheets API.")
-        return _gspread_client
+        return client
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in {CREDENTIALS_ENV_VAR}: {e}")
         raise ValueError(f"Invalid JSON in {CREDENTIALS_ENV_VAR}") from e
@@ -80,13 +94,16 @@ def get_gspread_client() -> gspread.Client:
 
 
 def get_spreadsheet() -> gspread.Spreadsheet:
-    """Returns a cached handle to the main ContentSpark spreadsheet."""
-    global _spreadsheet_cache
-    if _spreadsheet_cache is not None:
-        return _spreadsheet_cache
+    """Returns a cached handle to the main ContentSpark spreadsheet
+    (per credential fingerprint, like the client itself)."""
+    fp = _creds_fingerprint()
+    handle = _spreadsheet_handles.get(fp)
+    if handle is not None:
+        return handle
     client = get_gspread_client()
-    _spreadsheet_cache = client.open(SPREADSHEET_NAME)
-    return _spreadsheet_cache
+    handle = client.open(SPREADSHEET_NAME)
+    _spreadsheet_handles[fp] = handle
+    return handle
 
 
 WORKSHEET_ALIASES: Dict[str, List[str]] = {
