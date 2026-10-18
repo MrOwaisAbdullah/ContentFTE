@@ -92,6 +92,65 @@ def list_sites() -> dict:
         s.close()
 
 
+def get_search_console_status() -> dict:
+    """Per-site Search Console connectivity (console Sites screen + MCP).
+
+    One sites.list call answers for every site on the instance: the
+    property is resolved per site (settings override, else base_url + "/")
+    and matched against the properties the instance's GOOGLE_CREDENTIALS
+    service account can actually access. Adding that one service-account
+    email as a user on each property (Search Console -> Settings ->
+    Users and permissions; Restricted is enough for read-only) is the only
+    manual step this cannot do. `connected` is tri-state: true / false /
+    null when the check itself couldn't run (no credentials, API error)."""
+    init_db()
+    session = get_session()
+    try:
+        sites = session.execute(select(Site)).scalars().all()
+    finally:
+        session.close()
+    from lib import search_console
+
+    creds_raw = os.environ.get("GOOGLE_CREDENTIALS", "").strip()
+    sa_email = ""
+    if creds_raw:
+        try:
+            sa_email = json.loads(creds_raw).get("client_email", "")
+        except Exception:
+            sa_email = ""
+    entries = search_console.list_accessible_properties() if creds_raw else None
+
+    out_sites: list[dict] = []
+    for site in sites:
+        prop = search_console.resolve_site_property(site.base_url, site.settings)
+        row: dict = {"slug": site.slug, "base_url": site.base_url,
+                     "property": prop}
+        if not prop:
+            row.update(connected=False,
+                       reason="not configured (no base_url, no "
+                              "settings.search_console_site_url)")
+        elif not creds_raw:
+            row.update(connected=False,
+                       reason="no service account credentials "
+                              "(GOOGLE_CREDENTIALS not set)")
+        elif entries is None:
+            row.update(connected=None,
+                       reason="could not list properties "
+                              "(Search Console API unreachable)")
+        else:
+            hit = search_console.match_property(prop, entries)
+            row.update(connected=hit is not None,
+                       permission_level=(hit or {}).get("permission_level", ""))
+        out_sites.append(row)
+    return {
+        "sites": out_sites,
+        "service_account_email": sa_email,
+        "credentials": bool(creds_raw),
+        "properties_visible": len(entries) if entries is not None else None,
+        "visible": entries if entries is not None else [],
+    }
+
+
 def upsert_site(slug: str, name: str = "", site_type: str = "",
                 base_url: str = "") -> dict:
     """Create a site row, or update the named fields of an existing one.
@@ -1476,7 +1535,8 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     cfg = WPConfig.from_env()
     if not (cfg.base_url and cfg.username and cfg.app_password):
         return {"ok": False, "error": "WordPress not configured",
-                "next": "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD"}
+                "next": "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD (or "
+                        "Site.settings.wp)"}
     if not (art.content_md or "").strip():
         return {"ok": False, "error": "article has no content_md",
                 "next": "run contentfte_generate_article / generate_content first"}

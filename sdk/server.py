@@ -289,6 +289,18 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
                                site_type=body.site_type, base_url=body.base_url)
 
 
+@router.get("/search-console")
+def search_console_status(x_site_key: str | None = Header(default=None)) -> dict:
+    """Per-site Search Console connectivity (multi-property, one SA).
+
+    Property resolves per site (settings override, else base_url + "/");
+    `connected` compares it against the properties the instance's
+    GOOGLE_CREDENTIALS service account can access (one sites.list call).
+    Tri-state: true / false / null when the check couldn't run."""
+    _check_site_key(x_site_key)
+    return service.get_search_console_status()
+
+
 @router.get("/sites/{site_slug}/health")
 def site_health(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)

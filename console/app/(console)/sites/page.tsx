@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { engine, type SiteHealth, type SiteList } from "@/lib/engine";
+import {
+  engine,
+  type SearchConsoleSiteStatus,
+  type SearchConsoleView,
+  type SiteHealth,
+  type SiteList,
+} from "@/lib/engine";
 import { currentInstance } from "@/lib/instances";
 import { requireSession } from "@/lib/session";
 import { createSiteAction } from "@/actions/instances";
@@ -8,6 +14,41 @@ import { PendingButton } from "@/lib/interactive";
 import { Globe } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+
+/** GSC chip: connected (permission level) / not shared (with the fix hint)
+    / unknown when the check itself couldn't run. One engine call answers
+    every row. */
+function gscCell(gsc: SearchConsoleSiteStatus | undefined, sa: string) {
+  if (!gsc) return <span className="text-ink-faint">—</span>;
+  if (gsc.connected === true)
+    return (
+      <span
+        className="text-emerald-300"
+        title={`${gsc.property}\nvisible to ${sa || "the service account"} (${gsc.permission_level || "unknown level"})`}
+      >
+        ✓ {gsc.permission_level || "connected"}
+      </span>
+    );
+  if (gsc.connected === null)
+    return (
+      <span className="text-amber-300" title={gsc.reason || "check failed"}>
+        unknown
+      </span>
+    );
+  const noCreds = (gsc.reason || "").includes("GOOGLE_CREDENTIALS");
+  return (
+    <span
+      className={noCreds ? "text-ink-faint" : "text-rose-300"}
+      title={
+        noCreds
+          ? gsc.reason
+          : `Share ${gsc.property} with ${sa || "the service account"} in Search Console → Settings → Users and permissions (Restricted is enough for reads)`
+      }
+    >
+      {noCreds ? "no creds" : "not shared"}
+    </span>
+  );
+}
 
 export default async function SitesPage({
   searchParams,
@@ -36,6 +77,11 @@ export default async function SitesPage({
     );
   }
 
+  /* Search Console connectivity — one sites.list call answers every row. */
+  const sc: SearchConsoleView | null = sites
+    ? await engine<SearchConsoleView>("/search-console").catch(() => null)
+    : null;
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -58,6 +104,7 @@ export default async function SitesPage({
                 <th className="px-4 py-2.5">Type</th>
                 <th className="px-4 py-2.5">Publish</th>
                 <th className="px-4 py-2.5">Health</th>
+                <th className="px-4 py-2.5">GSC</th>
                 <th className="px-4 py-2.5">Base URL</th>
               </tr>
             </thead>
@@ -109,6 +156,12 @@ export default async function SitesPage({
                         <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} aria-hidden />
                         {tier}
                       </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {gscCell(
+                        sc?.sites.find((x) => x.slug === s.slug),
+                        sc?.service_account_email ?? "",
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-ink-faint">
                       {s.base_url || "—"}

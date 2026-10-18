@@ -870,6 +870,31 @@ async def run_stage(params: RunStageInput) -> str:
     return _out({"status": "accepted", "stage": stage})
 
 
+@mcp.tool(
+    name="contentfte_search_console",
+    annotations={"title": "Search Console Status", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def search_console_status() -> str:
+    """Per-site Google Search Console connectivity for this instance.
+
+    Resolves each site's GSC property (settings override
+    "search_console_site_url", else base_url + "/") and checks it against
+    the properties the instance's GOOGLE_CREDENTIALS service account can
+    access (sites.list). ONE service account serves every property — the
+    only manual step per site is adding its email under Search Console ->
+    Settings -> Users and permissions (Restricted is enough for reads).
+
+    Returns:
+        str: JSON {"sites": [{"slug", "base_url", "property", "connected",
+        "permission_level"?, "reason"?}], "service_account_email",
+        "credentials", "properties_visible", "visible"}. connected is
+        tri-state: true/false/null (null = the check itself couldn't run).
+    """
+    from sdk import service
+    return _out(service.get_search_console_status())
+
+
 def main() -> None:
     """Stdio entry point: `python -m mcp_server.server` (local Claude Code)."""
     mcp.run()

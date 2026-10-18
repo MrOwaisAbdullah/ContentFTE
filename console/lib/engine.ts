@@ -90,6 +90,26 @@ export interface SiteHealth {
   critical: string[];
 }
 
+/** GET /search-console — per-site GSC connectivity (one sites.list call). */
+export interface SearchConsoleSiteStatus {
+  slug: string;
+  base_url: string;
+  property: string;
+  /** tri-state: true = property visible to the SA, false = not shared,
+      null = the check itself couldn't run (reason explains). */
+  connected: boolean | null;
+  permission_level?: string;
+  reason?: string;
+}
+
+export interface SearchConsoleView {
+  sites: SearchConsoleSiteStatus[];
+  service_account_email: string;
+  credentials: boolean;
+  properties_visible: number | null;
+  visible: { site_url: string; permission_level: string }[];
+}
+
 export interface QueueRow {
   id: number;
   keyword: string;
