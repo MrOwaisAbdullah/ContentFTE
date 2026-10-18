@@ -12,6 +12,12 @@ sqlite file to Postgres is: create the database -> point DATABASE_URL at it
 
 - Rows are copied in FK-safe table order with their primary keys preserved,
   so article_id links in cost_ledger / audit_log stay intact.
+- Orphan rows (a foreign key pointing at a primary key that no longer
+  exists — SQLite doesn't enforce FKs, Postgres does) are handled, not
+  fatal: a nullable FK is set to NULL and the row is kept; a non-nullable
+  FK drops the row. Every case is logged and listed in the returned
+  report under "orphans", and children of a dropped row count as orphans
+  too.
 - Re-running is safe: every row is merged by primary key, so a second run is
   a no-op and also propagates later edits. Run it against a *fresh* database
   (a target that already has different rows with the same unique keys, e.g.
@@ -84,23 +90,53 @@ def copy_store(source_url: str, target_url: str, *, dry_run: bool = False,
     target = create_engine(target_url, pool_pre_ping=True)
     report: dict = {"source": source_url, "target": target_url,
                     "dry_run": bool(dry_run), "tables": {},
-                    "sequences_reset": False}
+                    "orphans": [], "sequences_reset": False}
     try:
         if not dry_run:
             Base.metadata.create_all(target)  # additions only (checkfirst)
         src = Session(source)
         dst = Session(target)
         try:
+            # PK ids actually landing in the target per table — the FK
+            # reference set for every later (child) table in MODELS order.
+            present: dict[str, set] = {}
             for model in MODELS:
                 name = model.__tablename__
+                pk_name = model.__table__.primary_key.columns[0].name
+                fk_cols = [c for c in model.__table__.columns if c.foreign_keys]
                 rows = src.execute(select(model)).scalars().all()
                 written = 0
+                landed: list = []
                 for row in rows:
+                    data = _row_dict(model, row)
+                    drop = False
+                    for col in fk_cols:
+                        ref = list(col.foreign_keys)[0].target_fullname.split(".")[0]
+                        value = data.get(col.name)
+                        known = present.get(ref)
+                        if value is None or known is None or value in known:
+                            continue
+                        entry = {"table": name, "id": data.get(pk_name),
+                                 "column": col.name, "value": value}
+                        if col.nullable:
+                            data[col.name] = None
+                            report["orphans"].append({**entry, "action": "nulled"})
+                            log(f"  ! {name}.{pk_name}={entry['id']}: "
+                                f"{col.name}={value} missing in {ref} -> NULL")
+                        else:
+                            report["orphans"].append({**entry, "action": "skipped"})
+                            log(f"  ! {name}.{pk_name}={entry['id']}: "
+                                f"{col.name}={value} missing in {ref} -> row skipped")
+                            drop = True
+                    if drop:
+                        continue
                     if not dry_run:
-                        dst.merge(model(**_row_dict(model, row)))
+                        dst.merge(model(**data))
                         written += 1
+                    landed.append(data[pk_name])
                 if not dry_run:
                     dst.commit()
+                present[name] = set(landed)
                 report["tables"][name] = {"read": len(rows), "written": written}
                 log(f"  {name:16} read={len(rows):5} written={written:5}")
             if not dry_run and target.dialect.name == "postgresql":
@@ -144,6 +180,12 @@ def main() -> int:
     total = sum(t["written"] for t in report["tables"].values())
     print(("dry run: would copy " if args.dry_run else "copied ")
           + f"{total} rows to {args.target}")
+    orphans = report.get("orphans") or []
+    if orphans:
+        nulled = sum(1 for o in orphans if o["action"] == "nulled")
+        skipped = len(orphans) - nulled
+        print(f"orphan FK rows: {nulled} nulled, {skipped} skipped "
+              f"(targets missing in source — see log above)")
     return 0
 
 

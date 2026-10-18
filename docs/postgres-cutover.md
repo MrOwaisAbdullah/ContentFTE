@@ -40,6 +40,14 @@ database; a target that already holds different rows with the same unique
 keys (e.g. a Google-Sheets backfill) would collide — that legacy path is
 `scripts/backfill_postgres.py`, not this script.
 
+Orphan rows — a foreign key pointing at a primary key that no longer
+exists (SQLite doesn't enforce FKs, so deleting an article can leave
+cost/audit rows behind) — are handled, not fatal: a nullable FK (e.g.
+`audit_log.article_id`) is set to NULL and the row is kept; a
+non-nullable FK (e.g. `cost_ledger.article_id`) drops the row. Children
+of a dropped row count as orphans too. Every case is printed during the
+copy and listed in the script's report under `orphans`.
+
 ## 3. Point everything at it
 
 Add to `.env`:

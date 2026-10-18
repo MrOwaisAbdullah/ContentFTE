@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from lib.db import (
@@ -165,3 +165,44 @@ def test_dry_run_writes_nothing(tmp_path):
     assert report["tables"]["articles"]["written"] == 0
     # The target was never opened — no file, no schema.
     assert not os.path.exists(dst_path)
+
+
+def test_orphan_fk_rows_are_nulled_or_skipped(tmp_path):
+    """SQLite doesn't enforce FKs, so deleting an article leaves orphan
+    cost/audit rows behind. The copy must handle them instead of dying on
+    Postgres' enforced FK: a nullable FK (audit_log.article_id) is set to
+    NULL and the row is kept; a non-nullable FK (cost_ledger.article_id)
+    drops the row. Both cases land in report["orphans"]."""
+    src_url, dst_url = _url(tmp_path, "src.db"), _url(tmp_path, "dst.db")
+    ids = _seed(src_url)
+    eng = create_engine(src_url)
+    try:
+        with Session(eng) as s:
+            # Raw DELETE — sqlite lets the cost/audit rows dangle.
+            s.execute(delete(Article))
+            s.commit()
+    finally:
+        eng.dispose()
+
+    report = copy_store(src_url, dst_url, log=lambda *_: None)
+
+    # Non-nullable orphan dropped, nullable orphan nulled + kept.
+    assert report["tables"]["cost_ledger"] == {"read": 1, "written": 0}
+    assert report["tables"]["audit_log"] == {"read": 1, "written": 1}
+    assert {(o["table"], o["column"], o["action"], o["value"])
+            for o in report["orphans"]} == {
+        ("cost_ledger", "article_id", "skipped", ids["art"]),
+        ("audit_log", "article_id", "nulled", ids["art"]),
+    }
+
+    eng = create_engine(dst_url)
+    try:
+        with Session(eng) as s:
+            assert s.scalar(select(func.count()).select_from(CostLedger)) == 0
+            audit = s.execute(select(AuditLog)).scalars().one()
+            # The audit row survived with its broken link cleared, and its
+            # still-valid site link untouched.
+            assert audit.article_id is None
+            assert audit.site_id == ids["site"]
+    finally:
+        eng.dispose()
