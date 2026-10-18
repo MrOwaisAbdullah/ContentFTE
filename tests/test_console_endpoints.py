@@ -160,6 +160,55 @@ def test_patch_content_keeps_published_status():
     assert empty.status_code == 404
 
 
+def test_patch_meta_op_updates_allowlist_and_reopens_approved():
+    from sqlalchemy import select
+
+    from lib.db import AuditLog, get_session
+    from sdk import service
+
+    art = service.submit_article("acme", keyword="old kw")
+    aid = art["id"]
+    client = _client()
+
+    res = client.patch(f"/sdk/v1/articles/{aid}/meta",
+                       json={"title": "New title", "slug": "new-slug",
+                             "focus_keyword": "new kw",
+                             "summary": "fresh summary",
+                             "tldr": "One quotable sentence."})
+    assert res.status_code == 200
+    assert res.json()["title"] == "New title"
+    assert res.json()["slug"] == "new-slug"
+
+    got = service.get_article(aid, include_content=True)
+    assert got["title"] == "New title"
+    assert got["seo"]["focus_keyword"] == "new kw"
+    # the patched TL;DR wins over the markdown-parsed one in the payload
+    assert got["seo"]["tldr"] == "One quotable sentence."
+    assert got["meta"]["edit_log"][-1]["fields"] == [
+        "title", "slug", "focus_keyword", "summary", "tldr"]
+
+    # unknown keys alone are rejected — never a silent no-op
+    bad = client.patch(f"/sdk/v1/articles/{aid}/meta", json={"bogus": "x"})
+    assert bad.status_code == 404
+    assert "allowlisted" in bad.json()["detail"]
+
+    # approved article reopens to generated on a meta change
+    service.approve_article(aid, approved=True)
+    res2 = client.patch(f"/sdk/v1/articles/{aid}/meta", json={"summary": "v2"})
+    assert res2.status_code == 200
+    assert res2.json()["status"] == "generated"
+
+    s = get_session()
+    try:
+        rows = s.execute(select(AuditLog).where(
+            AuditLog.article_id == aid,
+            AuditLog.action == "article.meta_edit")).scalars().all()
+        assert len(rows) == 2  # one per applied edit — never duplicated
+        assert rows[-1].payload["reopened"] is True
+    finally:
+        s.close()
+
+
 def test_run_stage_route_accept_unknown_and_overlap(monkeypatch):
     import sdk.server as server
     from scripts import run_stage as run_stage_mod

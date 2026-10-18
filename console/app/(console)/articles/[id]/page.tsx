@@ -9,6 +9,7 @@ import {
 import {
   approveArticleAction,
   generateArticleAction,
+  patchMetaAction,
   publishArticleAction,
   refreshArticleAction,
   stageImagesAction,
@@ -39,6 +40,10 @@ const CONFIRM = {
   publishDraft:
     "Publish this article? WordPress sites get the post pushed (draft mode); custom sites flip to published and re-pull the payload.",
 };
+
+/* Shared input styling (matches the review-note input in the Decision card). */
+const FIELD_INPUT =
+  "w-full rounded-md border border-line bg-page px-3 py-1.5 text-xs text-ink placeholder:text-ink-faint/70 focus:border-accent";
 
 /* Mirror of lib/eval_gate.py — the approve checklist shows what the engine
    gate will say (≥90 overall AND every sub-score ≥80). */
@@ -747,62 +752,45 @@ export default async function ArticlePage({
               </FieldRow>
             </dl>
             <p className="mt-3 border-t border-line/60 pt-3 text-[11px] leading-5 text-ink-faint">
-              Title / slug / meta are derived from the brief + generator and travel with the delivery payload. Editing
-              them in place needs a brief/meta patch op (later wave) — today: regenerate, or edit the content and
-              refresh.
+              Title / slug / meta are derived from the brief + generator and travel with the delivery payload.
+              They&apos;re operator-editable in the card below — every change lands in the payload immediately; an
+              approved article reopens for review, a published one picks the values up on the next refresh.
             </p>
-            <SectionCard title="Patch meta">
-              <form className="space-y-3" onSubmit={async (e: SubmitEvent) => {
-                e.preventDefault();
-                await patchMetaAction(new FormData(e.target));
-                revalidatePath("/");
-                revalidatePath("/articles");
-                redirect(back(id));
-              }}>
-                <input type="hidden" name="id" defaultValue={String(article.id)} />
-                <FieldRow label="Title">
-                  <input
-                    type="text"
-                    name="title"
-                    defaultValue={article.title || ""}
-                    className="flex-1 bg-input text-input"
-                  />
-                </FieldRow>
-                <FieldRow label="Slug">
-                  <input
-                    type="text"
-                    name="slug"
-                    defaultValue={article.slug || ""}
-                    className="flex-1 bg-input text-input"
-                  />
-                </FieldRow>
-                <FieldRow label="Focus keyphrase">
-                  <input
-                    type="text"
-                    name="focus_keyword"
-                    defaultValue={focus || keyword || ""}
-                    className="flex-1 bg-input text-input"
-                  />
-                </FieldRow>
-                <FieldRow label="Summary">
-                  <input
-                    type="text"
-                    name="summary"
-                    defaultValue={summary || ""}
-                    className="flex-1 bg-input text-input"
-                  />
-                </FieldRow>
-                <FieldRow label="TL;DR (AEO)">
-                  <input
-                    type="text"
-                    name="tldr"
-                    defaultValue={tldr || ""}
-                    className="flex-1 bg-input text-input"
-                  />
-                </FieldRow>
-                <button type="submit" className={BTN_PRIMARY}>Save changes</button>
-              </form>
-            </SectionCard>
+          </SectionCard>
+
+          <SectionCard title="Edit meta fields">
+            <form action={patchMetaAction} className="space-y-3">
+              <input type="hidden" name="id" value={article.id} />
+              <FieldRow label="Title">
+                <input type="text" name="title" defaultValue={article.title || ""} className={FIELD_INPUT} />
+              </FieldRow>
+              <FieldRow label="Slug">
+                <input type="text" name="slug" defaultValue={article.slug || ""} className={FIELD_INPUT} />
+              </FieldRow>
+              <FieldRow label="Focus keyphrase">
+                <input
+                  type="text"
+                  name="focus_keyword"
+                  defaultValue={focus || keyword || ""}
+                  className={FIELD_INPUT}
+                />
+              </FieldRow>
+              <FieldRow label="Summary">
+                <input type="text" name="summary" defaultValue={summary || ""} className={FIELD_INPUT} />
+              </FieldRow>
+              <FieldRow label="TL;DR (AEO)">
+                <input type="text" name="tldr" defaultValue={tldr || ""} className={FIELD_INPUT} />
+              </FieldRow>
+              <div className="flex flex-wrap items-center gap-3 border-t border-line/60 pt-3">
+                <PendingButton className={BTN_PRIMARY} pendingLabel="Saving…">
+                  Save meta
+                </PendingButton>
+                <p className="text-[11px] leading-5 text-ink-faint">
+                  Empty fields are left unchanged. Focus keyphrase writes the article&apos;s registered phrase.
+                </p>
+              </div>
+            </form>
+          </SectionCard>
 
             <SectionCard title={`FAQs (${faqs.length})`} id="faqs">
             {faqs.length === 0 ? (

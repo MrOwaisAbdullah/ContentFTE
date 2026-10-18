@@ -139,10 +139,7 @@ export async function patchMetaAction(formData: FormData) {
     redirect(back(id, "no fields supplied"));
   }
   try {
-    await engine(`/sdk/v1/articles/${id}/meta`, {
-      method: "POST",
-      body: JSON.stringify(fields),
-    });
+    await engine(`/articles/${id}/meta`, { method: "PATCH", json: fields });
   } catch (e) {
     redirect(back(id, errorOf(e)));
   }
@@ -150,6 +147,7 @@ export async function patchMetaAction(formData: FormData) {
   revalidatePath("/articles");
   redirect(back(id));
 }
+
 export async function patchContentAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));
