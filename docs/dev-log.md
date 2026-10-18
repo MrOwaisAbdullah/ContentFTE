@@ -11,6 +11,60 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-18 — Live Postgres cutover: the store now runs on Neon
+
+**Commits:** `cc72bde`, `5837c1e`
+
+**What** — executed `docs/postgres-cutover.md` against a real Neon project
+(ap-southeast-1, Postgres-only instance) and closed the two gaps the run
+surfaced. The first live copy aborted mid-run with a FK violation: SQLite
+doesn't enforce foreign keys, so the live store carried two `cost_ledger`
+rows (ids 5+6) pointing at a deleted `article_id=6`, and Postgres rejects
+them. **`cc72bde`** gives `copy_store` an orphan policy instead of a crash:
+every FK value is resolved against the set of primary keys actually landing
+in the target — a nullable FK (`audit_log.article_id`) is set to NULL and
+the row is kept; a non-nullable FK (`cost_ledger.article_id`) drops the row;
+children of a dropped row count as orphans too. Each case is logged during
+the copy, recorded in the report under `orphans`, and summarized by the
+CLI; dry-run surfaces them as well. New test covers both policies (delete
+the seeded article → copy → cost row dropped, audit row kept with
+`article_id` nulled and its valid site link intact); the runbook documents
+the behavior. **`5837c1e`** fixes the env-gated PG smoke itself, which had
+never run against a live database: `service.list_sites()` returns
+`{'sites': [...], 'count': n}`, not a list — the assertion iterated the
+dict and died on string keys. The `.env` URL also needed the two
+documented adjustments applied: `+psycopg` driver marker and the `-pooler`
+suffix dropped for the direct endpoint.
+
+**Verified** — full pytest **440 passed / 2 skipped** (439 baseline + the
+new orphan test). Cutover sequence on Neon: throwaway `contentfte-test`
+database created; `--dry-run` read 101 rows / wrote 0; the real copy
+landed **99 rows** (101 − the 2 orphans) across all 9 tables with primary
+keys preserved; every id sequence checked to hand out `MAX(id)+1` next
+(read off the sequence relations, no values consumed); the live
+`contentfte.db` byte-identical afterwards (mtime + size unchanged). The
+throwaway-DB smoke then passed live — **1 passed**: sqlite seed copied in,
+site listing, article read-through, `submit_article` creating an id
+beyond the copied max (the sequence assertion seen from the write path),
+approve, `stage.run` recording, log listing; teardown self-cleaned. Engine
+booted on Neon (`DATABASE_URL` from `.env`) and served the migrated store
+over HTTP — 4 sites, 5 articles with correct statuses/slugs/site links
+and UTC timestamps; port 8123 freed afterwards. Note: the boot log still
+shows `[Usage] Seeded from sheet` — the instance runs in Sheets mode; a
+Sheets-free instance sets `SHEETS_ENABLED=0` (sealed loudly, per spec §3).
+
+**Next** — the sqlite file is now a legacy artifact; future writes land in
+Neon only (a re-run of the copy would propagate stray sqlite edits, so
+don't). Optional hardening: set `SHEETS_ENABLED=0` in `.env` to seal the
+legacy sheet path (usage log moves to the console Logs screen). Cleanup
+sweep: the orphan cost rows are resolved by the migration itself (dropped
+on the way over — they remain in sqlite for audit); zero-`total` ledger
+rows and broad-query 400 noise remain. Still user-blocked: delete the
+unmerged `Extending-AgentRunner` / `backup-bb314a6` refs; `GFR_PLAN=pro`
+smoke waits on the pro key.
+
+---
+
 ## 2026-10-18 — Backlog close-out: PostgreSQL switch, PATCH brief/meta op, and per-image regenerate
 
 **Commits:** `3ce1aa4`, `9f96350`, `fbe8e3c`, `67b03ed`, `9f52ecb`
