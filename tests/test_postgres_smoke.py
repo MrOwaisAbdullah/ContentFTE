@@ -119,7 +119,7 @@ def test_engine_service_cycle_on_postgres(pg_env):
     slug = pg_env["slug"]
 
     # The copied rows are readable through the service on PG.
-    sites = service.list_sites()
+    sites = service.list_sites()["sites"]
     assert any(s["slug"] == slug for s in sites)
     copied = service.get_article(pg_env["article"], include_content=True)
     assert copied["title"] == "Copied to PG"
