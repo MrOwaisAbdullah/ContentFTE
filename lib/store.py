@@ -98,12 +98,48 @@ def _is_yes(v: Any) -> bool:
     return str(v).strip().lower() in ("yes", "true", "1", "y", "approved")
 
 
+# The sheet's "User Intent" cells are free prose ("Informational /
+# Educational & Architectural Decision-Making (targeting AI Engineers…"),
+# but keyword_ledger.intent is String(40) and the brief templates key off
+# short tokens — SQLite ignored the length, Postgres enforces it. Map the
+# prose to the template vocabulary by earliest marker (prose cells lead
+# with their classification); the raw text is kept by callers in the
+# research snapshot so nothing is lost.
+_INTENT_MARKERS: tuple = tuple(
+    (marker, token)
+    for token, markers in (
+        ("transactional", ("transactional", "purchase", "buy now",
+                           "discount", "coupon", "pricing")),
+        ("navigational", ("navigational", "navigation")),
+        ("commercial", ("commercial", "comparison", "comparing", " vs ",
+                        "versus", "evaluat")),
+        ("informational", ("informational", "educational", "technical",
+                           "research", "learn")),
+    )
+    for marker in markers
+)
+
+
+def _intent_token(raw: str) -> str:
+    """One of informational/navigational/commercial/transactional — always
+    short enough for the String(40) column, always a token the brief
+    templates understand."""
+    low = (raw or "").strip().lower()
+    best_pos, best_token = -1, "informational"
+    for marker, token in _INTENT_MARKERS:
+        pos = low.find(marker)
+        if pos != -1 and (best_pos == -1 or pos < best_pos):
+            best_pos, best_token = pos, token
+    return best_token
+
+
 # ---------------------------------------------------------------------------
 # Row mappers
 # ---------------------------------------------------------------------------
 def map_research_row(row: List[Any], headers: Optional[List[str]] = None) -> Dict[str, Any]:
     primary = _cell(row, headers, "Primary Keyword", 8)
     subject = _cell(row, headers, "Keyword/Topic", 0)
+    raw_intent = _cell(row, headers, "User Intent", 3, default="informational")
     return {
         "keyword": primary or subject,
         "subject": subject,
@@ -111,7 +147,8 @@ def map_research_row(row: List[Any], headers: Optional[List[str]] = None) -> Dic
         "secondary_keywords": _cell(row, headers, "Secondary Keywords", 9),
         "volume": _to_int(_cell(row, headers, "Search Volume", 1)),
         "difficulty": _to_float(_cell(row, headers, "Difficulty", 2)),
-        "intent": _cell(row, headers, "User Intent", 3, default="informational") or "informational",
+        "intent": _intent_token(raw_intent),
+        "intent_raw": raw_intent or "informational",
         "summary": _cell(row, headers, "Content Summary", 4),
         "generated": _is_yes(_cell(row, headers, "Generated", 7)),
     }
@@ -170,7 +207,8 @@ def mirror_keyword(session: Session, *, keyword: str, volume: int = 0,
                    difficulty: float = 0.0, intent: str = "informational",
                    summary: str = "", generated: bool = False,
                    primary_keyword: str = "", secondary_keywords: str = "",
-                   subject: str = "", site_slug: str = "") -> Optional[KeywordLedger]:
+                   subject: str = "", site_slug: str = "",
+                   intent_raw: str = "") -> Optional[KeywordLedger]:
     if not (keyword or "").strip():
         return None
     site = get_or_create_site(session, site_slug)
@@ -189,6 +227,9 @@ def mirror_keyword(session: Session, *, keyword: str, volume: int = 0,
                              # by get_next_brief_task -> brief -> generation.
                              "primary_keyword": primary_keyword,
                              "secondary_keywords": secondary_keywords,
+                             # The sheet's full-sentence User Intent cell, kept
+                             # beside the tokenized intent column.
+                             "intent_raw": intent_raw,
                          })
     # research_data's Generated=Yes means the brief was produced -> briefed.
     if generated and row.status in ("researched", "approved", "queued"):

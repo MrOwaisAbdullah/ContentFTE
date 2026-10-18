@@ -55,6 +55,31 @@ def test_map_research_row_positional_and_headers():
     assert m2 == m
 
 
+def test_map_research_row_tokenizes_prose_intent():
+    """Sheet User Intent cells are full sentences; keyword_ledger.intent is
+    a short token (String(40) — SQLite ignored the length, Postgres
+    enforces it). The prose survives in intent_raw."""
+    row = ["ai agent frameworks", "500", "30",
+           "Informational / Educational & Architectural Decision-Making "
+           "(Targeting AI Engineers, Software Architects, and Developers)",
+           "sum", "u", "t", "No"]
+    m = store.map_research_row(row)
+    assert m["intent"] == "informational"
+    assert m["intent_raw"].startswith("Informational / Educational")
+    # A comparison-flavored prose intent lands on the commercial token the
+    # brief templates key; transactional wins when both signals appear.
+    m2 = store.map_research_row(
+        ["x", "1", "1", "Comparison / versus buyers guide", "", "", "", "No"])
+    assert m2["intent"] == "commercial"
+    m3 = store.map_research_row(
+        ["y", "1", "1", "Transactional pricing page for buyers", "", "", "", "No"])
+    assert m3["intent"] == "transactional"
+    # Every token fits the column and the template vocabulary.
+    assert len(m["intent"]) <= 40
+    assert m["intent"] in ("informational", "navigational", "commercial",
+                           "transactional")
+
+
 def test_map_generated_post_row_flags():
     row = ["Title A", "# body", "[]", "92.5", "sum", "Approved", "No"]
     m = store.map_generated_post_row(row)
@@ -87,6 +112,22 @@ def test_mirror_keyword_idempotent_and_status(temp_db):
         assert len(rows) == 1
         assert rows[0].volume == 150
         assert rows[0].status == "briefed"  # Generated=Yes
+    finally:
+        s.close()
+
+
+def test_mirror_keyword_keeps_intent_raw(temp_db):
+    """The tokenized intent column and the raw sheet prose both survive."""
+    s = temp_db.get_session()
+    try:
+        store.mirror_keyword(
+            s, keyword="kw intent", intent="commercial",
+            intent_raw="Commercial investigation: comparing frameworks "
+                       "for engineers and architects")
+        row = s.execute(select(temp_db.KeywordLedger)).scalars().one()
+        assert row.intent == "commercial"
+        assert row.research_snapshot["intent_raw"].startswith(
+            "Commercial investigation")
     finally:
         s.close()
 
