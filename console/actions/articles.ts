@@ -121,6 +121,31 @@ export async function stageImagesAction(formData: FormData) {
   redirect(back(id));
 }
 
+/* Per-image regenerate (Media tab): re-runs one staged slot through the same
+   generation path as stage-images and redirects back with the cost detail in
+   ?ok. Spends image credits — the button that calls this is confirm-gated. */
+export async function regenerateImageAction(formData: FormData) {
+  await requireSession();
+  const id = Number(formData.get("id"));
+  const name = String(formData.get("name") || "").trim();
+  if (!name) redirect(back(id, "image name missing"));
+  let detail = "";
+  let skipped = "";
+  try {
+    const res = await engine<{ detail?: string; skipped?: string }>(
+      `/articles/${id}/images/${encodeURIComponent(name)}/regenerate`,
+      { method: "POST" },
+    );
+    detail = res?.detail || "";
+    skipped = res?.skipped || "";
+  } catch (e) {
+    redirect(back(id, errorOf(e)));
+  }
+  revalidatePath(back(id));
+  if (skipped) redirect(back(id, `image not regenerated — ${skipped}`));
+  redirect(detail ? `${back(id)}?ok=${encodeURIComponent(detail)}` : back(id));
+}
+
 export async function patchMetaAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));

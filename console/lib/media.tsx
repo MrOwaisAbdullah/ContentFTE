@@ -83,7 +83,17 @@ function Chip({
   );
 }
 
-export function MediaCard({ articleId, image }: { articleId: number; image: MediaImage }) {
+export function MediaCard({
+  articleId,
+  image,
+  extra,
+}: {
+  articleId: number;
+  image: MediaImage;
+  /** Optional action row under the card (article detail passes a regenerate
+      form; the site Media page renders the card read-only). */
+  extra?: ReactNode;
+}) {
   const src = imageSrc(articleId, image);
   const qa = (image.qa || {}) as MediaImageQa;
   const lanes = (
@@ -184,6 +194,7 @@ export function MediaCard({ articleId, image }: { articleId: number; image: Medi
           </span>
           <span className="font-mono">{fmtCost(typeof image.cost_usd === "number" ? image.cost_usd : null)}</span>
         </p>
+        {extra ? <div className="border-t border-line/60 pt-2">{extra}</div> : null}
       </figcaption>
     </figure>
   );

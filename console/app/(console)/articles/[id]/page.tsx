@@ -12,6 +12,7 @@ import {
   patchMetaAction,
   publishArticleAction,
   refreshArticleAction,
+  regenerateImageAction,
   stageImagesAction,
 } from "@/actions/articles";
 import {
@@ -37,6 +38,8 @@ export const dynamic = "force-dynamic";
 const CONFIRM = {
   generate: "Generate content now? It spends LLM credits for this article.",
   stageImages: "Stage images now? It spends image-generation credits.",
+  regenerate:
+    "Regenerate this image? It re-runs generation for this slot and spends image credits.",
   publishDraft:
     "Publish this article? WordPress sites get the post pushed (draft mode); custom sites flip to published and re-pull the payload.",
 };
@@ -297,12 +300,35 @@ function MediaPanel({ articleId, images }: { articleId: number; images: MediaIma
           <p className="mb-3 text-xs leading-5 text-ink-faint">
             Thumbnails stream through the console&apos;s engine proxy; badges come from each row&apos;s{" "}
             <code className="font-mono text-[11px]">qa</code> block (Jev style pick + VLM lanes). Staged files
-            live in the engine staging dir.
+            live in the engine staging dir. <span className="text-ink-dim">Regenerate</span> re-runs that one
+            slot (featured, or the section an inline image is injected before) and spends image credits.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {images.map((img, i) => (
-              <MediaCard key={`${img.slot || "img"}-${i}`} articleId={articleId} image={img} />
-            ))}
+            {images.map((img, i) => {
+              const name = typeof img.path === "string" ? (img.path.split(/[\\/]/).pop() ?? "") : "";
+              return (
+                <MediaCard
+                  key={`${img.slot || "img"}-${i}`}
+                  articleId={articleId}
+                  image={img}
+                  extra={
+                    name ? (
+                      <form action={regenerateImageAction}>
+                        <input type="hidden" name="id" value={articleId} />
+                        <input type="hidden" name="name" value={name} />
+                        <PendingButton
+                          className={`${BTN_GOLD} w-full`}
+                          confirmMessage={CONFIRM.regenerate}
+                          pendingLabel="Regenerating…"
+                        >
+                          Regenerate
+                        </PendingButton>
+                      </form>
+                    ) : null
+                  }
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -421,10 +447,10 @@ export default async function ArticlePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ err?: string; tab?: string }>;
+  searchParams: Promise<{ err?: string; ok?: string; tab?: string }>;
 }) {
   const { id } = await params;
-  const { err = "", tab = "content" } = await searchParams;
+  const { err = "", ok = "", tab = "content" } = await searchParams;
   let article: ArticleDetail | null = null;
   let error = "";
   try {
@@ -599,6 +625,7 @@ export default async function ArticlePage({
       />
 
       {err ? <Alert tone="error">{err}</Alert> : null}
+      {ok ? <Alert tone="success">{ok}</Alert> : null}
 
       {/* tabs — plan §5: Content · SEO & meta · Media · Activity */}
       <nav aria-label="Article sections" className="flex flex-wrap items-center gap-1 border-b border-line">
