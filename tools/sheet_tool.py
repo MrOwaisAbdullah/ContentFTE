@@ -9,6 +9,7 @@ import logging
 import time
 
 from lib.site_env import SITE_PREFIX, sheets_enabled
+from lib.store import article_scores
 from agents import function_tool
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file if present
@@ -821,7 +822,7 @@ def _pg_view(ws_key: str, session, site):
         rows = []
         for a in models:
             meta = a.meta or {}
-            scores = a.scores or {}
+            scores = article_scores(a)
             stamps = meta.get("sheet_stamps") or {}
             quality = scores.get("quality", scores.get("overall", ""))
             rows.append([
@@ -906,7 +907,7 @@ def _pg_apply_update(ws_key: str, model, header: str, value: Any) -> None:
         return
     if ws_key in ("generated_posts", "approved_unpublished"):
         meta = dict(model.meta or {})
-        scores = dict(model.scores or {})
+        scores = dict(article_scores(model))
         lowered = value_str.strip().lower()
         if header == "Title":
             if value_str.strip():
@@ -938,8 +939,8 @@ def _pg_apply_update(ws_key: str, model, header: str, value: Any) -> None:
             stamps = dict(meta.get("sheet_stamps") or {})
             stamps[header] = value_str
             meta["sheet_stamps"] = stamps
+        meta["scores"] = scores
         model.meta = meta
-        model.scores = scores
         return
 
 

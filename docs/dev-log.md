@@ -11,6 +11,54 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-18 — Lean Postgres schema: drop sheet-showcase columns, derive, index
+
+**Commit:** (this commit)
+
+**What** — the DB was mirroring the Google Sheet column-for-column, including
+columns that are never written with real values and a denormalized copy of the
+cost ledger. This change makes the store lean and queryable:
+
+- `lib/db.py`: dropped `sites.publish_mode` (now derived from
+  `Site.settings["publish_mode"]`, default `"draft"`), `keyword_ledger.cluster_id`
+  and `target_url` (never written non-empty), `articles.cost_usd` (derived from
+  `cost_ledger` via one grouped SUM), `articles.content_html` (never written —
+  html is rendered at serve time), and `articles.scores` (folded into
+  `meta["scores"]` — one JSON home per article). Added hot-path indexes:
+  `keyword_ledger(site_id,status)`, `articles(site_id,status)`,
+  `cost_ledger(article_id)`, `audit_log(action, article_id, site_id, created_at)`.
+  `intent/volume/difficulty/priority_score` deliberately kept as real columns —
+  they are the filter/sort dimensions the queue and brief pipeline run on, and
+  SQL filtering beats JSON extraction.
+- `sdk/service.py`: `list_articles`/`get_article`/meta-edit derive `cost_usd`
+  from `cost_ledger` (`_cost_map`, one grouped SUM) and `quality` from
+  `meta["scores"]`; `publish_mode` from settings; removed the dead
+  `content_html` fallback; removed the denormalized `art.cost_usd` write at
+  publish (`finalize` still writes the ledger row). Payload keys unchanged, so
+  the console is untouched.
+- `lib/store.py`: `mirror_article` folds quality into `meta["scores"]`;
+  `list_briefable`/`list_generated_posts`/`get_article_markdown` read eval
+  detail via `article_scores()` (new helper).
+- `tools/sheet_tool.py`: article worksheet views read scores via
+  `article_scores()`; the write path merges edited scores into `meta["scores"]`.
+- `tools/ledger_tool.py`: dropped `cluster_id` from the brief-task payload and
+  docstring.
+- `lib/ledger.py`: `upsert_keyword` no longer takes `cluster_id`; removed dead
+  `cluster_coverage()`.
+- `blog_agent/blog_agents.py`: docstring updated.
+- `scripts/migrate_lean_schema.py` (new): idempotent migration — folds
+  `scores -> meta["scores"]`, drops the 6 columns, creates indexes; supports
+  `--dry-run` and `--url`. Validated on sqlite (old schema -> lean) and run
+  against live Neon.
+
+**Verified** — full pytest 463 passed / 2 skipped; `next build` clean (all
+console routes); live Neon migrated (83 articles, all carrying
+`meta["scores"]`, 6 columns dropped, 7 indexes present); service read-back
+returns `cost_usd`/`quality`/`scores` correctly from the lean columns. Migration
+is backward compatible: the code works against both the old and new schema.
+
+---
+
 ## 2026-10-18 â€” Per-site Search Console, full sheet history in PG, instance isolation
 
 **Commits:** `344f54a`, `82d553e`, `190112e`

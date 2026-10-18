@@ -102,7 +102,7 @@ def test_generate_content_persists_envelope_to_drafted():
         assert row.meta["generation"]["regenerated"] is False
         assert any("minor: one source" in w
                    for w in row.meta["generation"]["warnings"])
-        assert row.scores["overall"] == 92.0
+        assert (row.meta.get("scores") or {}).get("overall") == 92.0
         # ledger advanced to drafted (§5.16 lifecycle)
         led = s.get(KeywordLedger, row.keyword_id)
         assert led is not None and led.status == "drafted"

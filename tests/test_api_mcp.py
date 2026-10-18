@@ -382,7 +382,7 @@ def test_content_route_is_unified_delivery_payload():
     """GET /articles/{id}/content == build_delivery_payload + article metadata.
 
     Single source of truth for custom-site frontends: html is RENDERED from
-    markdown at serve time (content_html is never written), plus
+    markdown at serve time (no content_html column remains -- html is rendered), plus
     markdown_alternate + Article/FAQ JSON-LD + site-relative url."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -417,7 +417,7 @@ def test_content_route_is_unified_delivery_payload():
     assert got.status_code == 200
     body = got.json()
 
-    # rendered html (not the always-empty content_html column)
+    # rendered html (no content_html column -- rendered at serve time)
     assert "<h1>Best CRM for Agencies</h1>" in body["html"]
     assert "<strong>bold</strong>" in body["html"]
     assert body["markdown"].startswith("# Best CRM")

@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -54,8 +55,9 @@ class Site(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     site_type: Mapped[str] = mapped_column(String(40), default="custom")  # wordpress|custom|sanity
     base_url: Mapped[str] = mapped_column(String(500), default="")
-    publish_mode: Mapped[str] = mapped_column(String(20), default="draft")  # draft|auto
     api_key: Mapped[str] = mapped_column(String(120), default="")
+    # publish_mode (draft|auto) rides in settings — the column was always
+    # the default value; nothing ever wrote it.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -75,10 +77,19 @@ class BrandProfile(Base):
 
 
 class KeywordLedger(Base):
-    """§5.16 site keyword ledger (campaign memory)."""
+    """§5.16 site keyword ledger (campaign memory).
+
+    Deliberately lean: intent/volume/difficulty/priority_score/status are
+    the queryable filter+sort dimensions the queue and brief pipeline run
+    on; everything else the research sheet carried rides in
+    research_snapshot (JSON). cluster_id/target_url were never written and
+    are gone."""
 
     __tablename__ = "keyword_ledger"
-    __table_args__ = (UniqueConstraint("site_id", "keyword", name="uq_site_keyword"),)
+    __table_args__ = (
+        UniqueConstraint("site_id", "keyword", name="uq_site_keyword"),
+        Index("ix_kw_site_status", "site_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
@@ -87,9 +98,7 @@ class KeywordLedger(Base):
     volume: Mapped[int] = mapped_column(Integer, default=0)
     difficulty: Mapped[float] = mapped_column(Float, default=0.0)
     priority_score: Mapped[float] = mapped_column(Float, default=0.0)
-    cluster_id: Mapped[str] = mapped_column(String(120), default="")
     status: Mapped[str] = mapped_column(String(30), default="researched")
-    target_url: Mapped[str] = mapped_column(String(500), default="")
     research_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -98,7 +107,14 @@ class KeywordLedger(Base):
 
 
 class Article(Base):
+    """One generated post. Lean by design: eval detail rides in
+    meta["scores"], the live URL in meta["published_url"], and per-post
+    spend is derived from cost_ledger (never denormalized here).
+    content_html was never written (render happens at serve time) and
+    cost_usd duplicated the cost_ledger sum — both gone."""
+
     __tablename__ = "articles"
+    __table_args__ = (Index("ix_articles_site_status", "site_id", "status"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
@@ -106,9 +122,6 @@ class Article(Base):
     title: Mapped[str] = mapped_column(String(500), default="")
     slug: Mapped[str] = mapped_column(String(300), default="")
     status: Mapped[str] = mapped_column(String(30), default="drafted")
-    scores: Mapped[dict] = mapped_column(JSON, default=dict)
-    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
-    content_html: Mapped[str] = mapped_column(Text, default="")
     content_md: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -118,9 +131,13 @@ class Article(Base):
 
 
 class CostLedger(Base):
-    """§5.10-6 per-post cost ledger (LLM + images + data)."""
+    """§5.10-6 per-post cost ledger (LLM + images + data).
+
+    The single source of truth for spend — articles no longer denormalize
+    a cost_usd copy; payloads derive it with one grouped SUM."""
 
     __tablename__ = "cost_ledger"
+    __table_args__ = (Index("ix_cost_article", "article_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), nullable=False)
@@ -131,9 +148,18 @@ class CostLedger(Base):
 
 
 class AuditLog(Base):
-    """§5.2 every publish decision writes an audit row."""
+    """§5.2 every publish decision writes an audit row.
+
+    History only grows — indexed on the filters the Logs screen and the
+    ops queries actually use (action, article, site)."""
 
     __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_action", "action"),
+        Index("ix_audit_article", "article_id"),
+        Index("ix_audit_site", "site_id"),
+        Index("ix_audit_created", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)

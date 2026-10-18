@@ -776,7 +776,7 @@ brief_agent = Agent(
     1. Pull the brief task from the keyword ledger (5.16: briefs ONLY come from
        approved/queued ledger rows - no briefable row, no brief):
        - Call `get_next_brief_task_tool` (site_slug optional). On {"status":"ok"}
-         it returns keyword, intent, volume, difficulty, cluster_id, research
+         it returns keyword, intent, volume, difficulty, research
          snapshot AND a deterministic intent template - that keyword drives the
          entire brief.
        - If it returns {"status":"error"}: bridge the legacy pipeline - use

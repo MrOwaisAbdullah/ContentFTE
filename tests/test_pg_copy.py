@@ -48,10 +48,11 @@ def _seed(url: str) -> dict:
         s.add(kw)
         s.flush()
         art = Article(site_id=site.id, keyword_id=kw.id, title="Copy me",
-                      slug="copy-me", status="generated", cost_usd=0.02,
-                      scores={"seo": 8.5}, content_md="# Copy me\n\nBody.",
+                      slug="copy-me", status="generated",
+                      content_md="# Copy me\n\nBody.",
                       meta={"brief": {"description": "d"},
-                            "images": [{"slot": "featured", "path": "x.jpg"}]})
+                            "images": [{"slot": "featured", "path": "x.jpg"}],
+                            "scores": {"seo": 8.5}})
         s.add(art)
         s.flush()
         s.add_all([

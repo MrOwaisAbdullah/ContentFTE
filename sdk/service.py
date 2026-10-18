@@ -35,6 +35,7 @@ from lib import generation
 from lib.db import Article, Article as ArticleModel, AuditLog, CostLedger, KeywordLedger, Site, get_session, init_db
 from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
+from lib.store import article_scores
 from lib.taxonomy import derive_taxonomy
 
 
@@ -70,6 +71,19 @@ def _iso(dt: Any) -> str | None:
     return dt.isoformat() if dt else None
 
 
+def _cost_map(s, article_ids: list[int]) -> dict[int, float]:
+    """Per-article spend, derived from cost_ledger with one grouped SUM —
+    articles no longer denormalize a cost_usd copy."""
+    if not article_ids:
+        return {}
+    rows = s.execute(
+        select(CostLedger.article_id, func.sum(CostLedger.amount_usd))
+        .where(CostLedger.article_id.in_(article_ids))
+        .group_by(CostLedger.article_id)
+    ).all()
+    return {int(i): float(t or 0.0) for i, t in rows}
+
+
 def _site_by_slug(s, slug: str) -> Site | None:
     return s.execute(select(Site).where(Site.slug == slug)).scalar_one_or_none()
 
@@ -83,7 +97,10 @@ def list_sites() -> dict:
     s = get_session()
     try:
         sites = [{"id": r.id, "slug": r.slug, "name": r.name, "site_type": r.site_type,
-                  "base_url": r.base_url, "publish_mode": r.publish_mode,
+                  "base_url": r.base_url,
+                  # publish_mode rides in settings (the column it used to
+                  # occupy was never written — always the default).
+                  "publish_mode": str((r.settings or {}).get("publish_mode") or "draft"),
                   "settings": r.settings or {}, "has_key": bool(r.api_key),
                   "created_at": _iso(r.created_at)}
                  for r in s.execute(select(Site)).scalars()]
@@ -223,6 +240,7 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
         slug_by_id: dict[int, str] = ({scoped_site.id: scoped_site.slug}
                                       if scoped_site else {})
         articles: list[dict] = []
+        costs = _cost_map(s, [a.id for a in rows])
         for a in rows:
             if a.site_id not in slug_by_id:
                 row = s.get(Site, a.site_id)
@@ -231,10 +249,10 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
                 "id": a.id, "site_id": a.site_id, "site_slug": slug_by_id[a.site_id],
                 "title": a.title, "slug": _resolve_slug(a), "status": a.status,
                 "created_at": _iso(a.created_at), "published_at": _iso(a.published_at),
-                "cost_usd": a.cost_usd,
+                "cost_usd": costs.get(a.id, 0.0),
                 # console Content screen (generated_posts sheet parity):
                 # Quality Score + Summary columns, still no html/markdown.
-                "quality": (a.scores or {}).get("quality"),
+                "quality": article_scores(a).get("quality"),
                 "summary": (a.meta or {}).get("summary", ""),
                 # console Media page: which articles have art, so it can
                 # detail-fetch only those (still no image rows in the list).
@@ -272,8 +290,7 @@ def list_queue(site_slug: str, status: str = "", limit: int = 100) -> dict:
         queue = [
             {"id": r.id, "keyword": r.keyword, "status": r.status,
              "intent": r.intent, "volume": r.volume, "difficulty": r.difficulty,
-             "priority_score": r.priority_score, "cluster_id": r.cluster_id,
-             "target_url": r.target_url,
+             "priority_score": r.priority_score,
              "subject": (r.research_snapshot or {}).get("subject", ""),
              "added_at": _iso(r.added_at)}
             for r in rows
@@ -1226,7 +1243,8 @@ async def generate_content(article_id: int, *, generate_fn=None,
         }
         art.meta = new_meta
         if quality is not None:
-            art.scores = {**(art.scores or {}), "overall": quality}
+            new_meta["scores"] = {**(new_meta.get("scores") or {}), "overall": quality}
+            art.meta = new_meta
 
         words = len(content.split())
         s.add(AuditLog(
@@ -1268,7 +1286,8 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
             return _err(f"article {article_id} not found", "run generate_article first")
         data: dict[str, Any] = {"id": art.id, "site_id": art.site_id, "title": art.title,
                                 "slug": _resolve_slug(art), "status": art.status,
-                                "scores": art.scores or {}, "cost_usd": art.cost_usd,
+                                "scores": article_scores(art),
+                                "cost_usd": _cost_map(s, [art.id]).get(art.id, 0.0),
                                 "keyword_id": art.keyword_id}
         if include_content:
             meta = art.meta or {}
@@ -1290,8 +1309,6 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
                 # TL;DR block parsed from the markdown by build_delivery_payload.
                 tldr=str(meta.get("tldr") or ""),
             )
-            if not payload.get("html") and art.content_html:
-                payload["html"] = art.content_html
             data.update(payload)
             data["slug"] = slug
             data["meta"] = meta
@@ -1426,8 +1443,8 @@ def patch_article_meta(article_id: int, fields: dict[str, str]) -> dict:
         data: dict[str, Any] = {"id": art.id, "site_id": art.site_id,
                                 "title": art.title, "slug": _resolve_slug(art),
                                 "status": art.status,
-                                "scores": art.scores or {},
-                                "cost_usd": art.cost_usd,
+                                "scores": article_scores(art),
+                                "cost_usd": _cost_map(s, [art.id]).get(art.id, 0.0),
                                 "keyword_id": art.keyword_id,
                                 "meta": meta}
         return data
@@ -1644,9 +1661,9 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
                 f"article {article_id} is '{art.status}' — publish requires 'approved'",
                 "gate: overall >=90 and every sub-score >=80, then POST /sdk/v1/articles/{id}/approve")
         art.status = "published"
-        # §5.10-6 finalize the per-post cost ledger at publish.
+        # §5.10-6 finalize the per-post cost ledger at publish. Spend is read
+        # back from the ledger on demand — no denormalized cost_usd copy.
         totals = finalize(s, art.id)
-        art.cost_usd = totals["total_usd"]
 
         meta = dict(art.meta) if isinstance(art.meta, dict) else {}
         wp_state: dict | None = None

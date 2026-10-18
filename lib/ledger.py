@@ -64,7 +64,6 @@ def upsert_keyword(
     volume: int = 0,
     difficulty: float = 0.0,
     winnability: float = 0.5,
-    cluster_id: str = "",
     research_snapshot: dict | None = None,
 ) -> KeywordLedger:
     keyword = keyword.strip()
@@ -82,7 +81,6 @@ def upsert_keyword(
             volume=volume,
             difficulty=difficulty,
             priority_score=score,
-            cluster_id=cluster_id,
             status="researched",
             research_snapshot=research_snapshot or {},
         )
@@ -92,8 +90,6 @@ def upsert_keyword(
         row.volume = volume
         row.difficulty = difficulty
         row.priority_score = score
-        if cluster_id:
-            row.cluster_id = cluster_id
         if research_snapshot:
             row.research_snapshot = research_snapshot
     session.commit()
@@ -163,24 +159,6 @@ def check_cannibalization(session: Session, site_id: int, candidate: str) -> dic
     if best is not None and best_ratio >= 0.6:
         return {"overlap": True, "with_keyword": best.keyword, "overlap_ratio": round(best_ratio, 3)}
     return {"overlap": False, "with_keyword": None, "overlap_ratio": round(best_ratio, 3)}
-
-
-def cluster_coverage(session: Session, site_id: int, cluster_id: str) -> dict:
-    rows = list(
-        session.execute(
-            select(KeywordLedger).where(
-                KeywordLedger.site_id == site_id, KeywordLedger.cluster_id == cluster_id
-            )
-        ).scalars()
-    )
-    if not rows:
-        return {"total": 0, "published": 0, "coverage_pct": 0.0}
-    published = sum(1 for r in rows if r.status in {"published", "ranking", "won"})
-    return {
-        "total": len(rows),
-        "published": published,
-        "coverage_pct": round(100.0 * published / len(rows), 1),
-    }
 
 
 def queue_health(session: Session, site_id: int) -> dict:

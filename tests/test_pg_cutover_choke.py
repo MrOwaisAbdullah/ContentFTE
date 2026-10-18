@@ -239,7 +239,7 @@ def test_generated_posts_cell_writes_map_onto_the_article(pg_db):
     try:
         art = s.query(Article).one()
         assert art.status == "published" and art.published_at is not None
-        assert art.scores["quality"] == 91.25
+        assert (art.meta or {}).get("scores", {}).get("quality") == 91.25
     finally:
         s.close()
 
@@ -413,10 +413,10 @@ def test_successful_published_posts_comes_from_articles(pg_db):
         kw = upsert_keyword(s, site.id, "published kw")
         art = Article(site_id=site.id, keyword_id=kw.id, title="Published One",
                       status="published", content_md="body",
-                      meta={"wp_url": "https://example.test/blog/published-one"},
-                      scores={"quality": 90})
+                      meta={"wp_url": "https://example.test/blog/published-one",
+                            "scores": {"quality": 90}})
         draft = Article(site_id=site.id, title="Draft One", status="generated",
-                        content_md="x", meta={}, scores={})
+                        content_md="x", meta={})
         s.add_all([art, draft])
         s.commit()
     finally:

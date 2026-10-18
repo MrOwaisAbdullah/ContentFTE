@@ -154,7 +154,7 @@ def test_mirror_article_upsert_and_status(temp_db):
         assert len(arts) == 1
         assert arts[0].content_md == "v2"
         assert arts[0].status == "published"
-        assert arts[0].scores["quality"] == 95
+        assert ((arts[0].meta or {}).get("scores") or {}).get("quality") == 95
     finally:
         s.close()
 

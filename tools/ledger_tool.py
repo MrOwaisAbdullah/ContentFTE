@@ -51,7 +51,6 @@ def _row_payload(row: KeywordLedger) -> Dict[str, Any]:
         "volume": row.volume or 0,
         "difficulty": row.difficulty or 0.0,
         "priority_score": row.priority_score or 0.0,
-        "cluster_id": row.cluster_id or "",
         "status_label": row.status,
         "research_snapshot": row.research_snapshot or {},
         # Keyword targets from the keyword sheet, surfaced at the top level
@@ -77,7 +76,7 @@ def get_next_brief_task(site_slug: str = "") -> Dict[str, Any]:
 
     Returns:
         {"status": "ok", "ledger_id", "keyword", "intent", "volume",
-         "difficulty", "priority_score", "cluster_id", "status_label",
+         "difficulty", "priority_score", "status_label",
          "research_snapshot", "primary_keyword", "secondary_keywords",
          "template", "template_text"} on success, or
         {"status": "error", "message": ...} when nothing is briefable

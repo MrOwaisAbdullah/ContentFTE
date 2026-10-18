@@ -302,12 +302,14 @@ def mirror_article(session: Session, *, title: str, content: str = "",
         art = Article(site_id=site.id, title=title.strip())
         session.add(art)
     art.content_md = content or art.content_md
-    art.scores = {**(art.scores or {}), "quality": quality_score}
-    art.meta = {**(art.meta or {}), "faqs": faqs, "summary": summary}
+    meta = {**(art.meta or {}), "faqs": faqs, "summary": summary}
+    # Eval detail rides in meta["scores"] — one JSON home per article.
+    meta["scores"] = {**(meta.get("scores") or {}), "quality": quality_score}
     if secondary_keywords:
         # Carried so the publish step can store the operator's keyword targets
         # on the delivered document (content_briefs is gone by then).
-        art.meta = {**art.meta, "secondary_keywords": secondary_keywords}
+        meta["secondary_keywords"] = secondary_keywords
+    art.meta = meta
     if status == "published":
         art.status = "published"
     elif not (art.meta or {}).get("published_url"):
@@ -706,6 +708,14 @@ def use_postgres_reads() -> bool:
     return STORE_READ_SOURCE == "postgres"
 
 
+def article_scores(art: Article) -> Dict[str, Any]:
+    """Eval detail lives in meta["scores"] — lean schema keeps one JSON home
+    per article instead of a second JSON column of its own."""
+    meta = art.meta if isinstance(art.meta, dict) else {}
+    scores = meta.get("scores")
+    return scores if isinstance(scores, dict) else {}
+
+
 def list_briefable(site_slug: str = "", limit: int = 50) -> List[Dict[str, Any]]:
     """Approved/queued ledger rows — the brief queue, from Postgres."""
     init_db()
@@ -714,7 +724,7 @@ def list_briefable(site_slug: str = "", limit: int = 50) -> List[Dict[str, Any]]
         site = get_or_create_site(session, site_slug)
         return [
             {"keyword": r.keyword, "intent": r.intent, "status": r.status,
-             "cluster_id": r.cluster_id, "priority_score": r.priority_score}
+             "priority_score": r.priority_score}
             for r in briefable_rows(session, site.id, limit=limit)
         ]
     finally:
@@ -734,7 +744,7 @@ def list_generated_posts(site_slug: str = "", published: Optional[bool] = None) 
             q = q.where(Article.status != "published")
         return [
             {"id": a.id, "title": a.title, "slug": a.slug, "status": a.status,
-             "quality": (a.scores or {}).get("quality")}
+             "quality": article_scores(a).get("quality")}
             for a in session.execute(q).scalars()
         ]
     finally:
@@ -752,7 +762,7 @@ def find_generated_post(title: str, site_slug: str = "") -> Optional[Dict[str, A
         if art is None:
             return None
         return {"id": art.id, "title": art.title, "status": art.status,
-                "markdown": art.content_md, "scores": art.scores or {}}
+                "markdown": art.content_md, "scores": article_scores(art)}
     finally:
         session.close()
 
