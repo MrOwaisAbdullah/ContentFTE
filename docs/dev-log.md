@@ -11,6 +11,69 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
+## 2026-10-18 — Per-site Search Console, full sheet history in PG, instance isolation
+
+**Commits:** `344f54a`, `82d553e`, `190112e`
+
+**What** — three linked changes. **`344f54a`** wires Search Console for
+*every* site from one service account: the operator shares the SA email
+(Restricted) under each property's Search Console → Settings → Users;
+the engine then reports per-site status. `resolve_site_property` lets
+`Site.settings.search_console_site_url` override the derived
+`base_url + "/"` (URL-prefix or `sc-domain:`), `match_property` matches
+with trailing-slash tolerance and domain-property coverage, and
+`service.get_search_console_status` returns a **tri-state** per site —
+`connected: true / false / null`, where null means the API could not be
+asked (never a false "disconnected"). Surfaced as REST
+`GET /sdk/v1/search-console`, MCP `contentfte_search_console`, and a GSC
+column on the console Sites screen backed by **one** engine call per
+page. The `sites.list` answer is TTL-cached (300 s) per credential
+fingerprint; failures are never cached.
+
+**`82d553e`** extends the Sheets→PG backfill from the 3 content
+worksheets to *all* of them: `published_posts` → article
+`published_url`/slug/status (28 stub published articles preserve the URL
+inventory for posts older than the ledger; 74 distinct titles carry
+URLs, 3 genuinely-unpublished approved articles untouched),
+`ContentSpark_Keywords` → keyword_ledger queue rows (create-only for
+status; additive snapshot merge), `usage logs` → `audit_log`
+`usage.model` (1 030 rows of model-performance history back to
+2026-08-23), `image_logs` → `cost_ledger` kind=image attached by
+Subject title (14 matched, $0.17 historical spend) with an
+`usage.image` audit fallback for unmatched subjects (227), and
+`review`/`performance`/`audit`(claims)/`freshness_sweep` → audit rows
+article-linked by title. Every historical row carries a deterministic
+`sheet_ref`; refs preload once per action, so re-runs import zero —
+proven across **5 live Neon runs** (final run: all historical kinds 0).
+Two live-data bugs surfaced and fixed: a 23 799-char cell (a whole
+article pasted into the queue's Keyword column) is now skipped loudly
+(`MAX_KEYWORD_LEN`, varchar(300) is enforced by PG, not sqlite), and
+`mirror_article` learned that a recorded live URL outranks a lagging
+`Published: No` cell — the two sheets used to fight over those 2
+articles' status on every pass. `load_dotenv()` added to the script
+(the earlier direct run silently wrote to the legacy sqlite file).
+
+**`190112e`** hardens per-instance connection isolation after a full
+audit (`docs/instances-isolation.md` holds the map): gspread client +
+spreadsheet handle now key their caches by credential fingerprint like
+the Search Console token does, and `_wp_config` resolves WordPress
+credentials per site (`Site.settings.wp` wins over `WP_*` env) at every
+article-scoped call site, closing the highest-severity latent bleed —
+a shared engine pushing site B's article into site A's WordPress. The
+doc also records what is already isolated by process/registry (console
+instances, Discord per-instance env, per-site metering/brand) and the
+known shared-mode gaps (Discord shared-bot routing is specced but not
+implemented; brand DNA loads the first site's profile at startup).
+
+**Verified** — full pytest **463 passed / 2 skipped** (baseline 442 + 21
+new: GSC wiring 9, backfill history 7, WP resolution 3, store guards 2).
+`next build` clean (all console routes incl. the Sites GSC column).
+Backfill live against Neon, read-only state check after: 78 articles
+(75 published / 3 approved), audit actions complete, oldest historical
+row 2026-08-23, keywords 46 (22 researched / 5 briefed / 19 queued).
+
+---
+
 ## 2026-10-18 — Live Postgres cutover: the store now runs on Neon
 
 **Commits:** `cc72bde`, `5837c1e`
