@@ -159,6 +159,49 @@ def test_mirror_article_upsert_and_status(temp_db):
         s.close()
 
 
+def test_mirror_article_live_url_outranks_lagging_flag(temp_db):
+    """published_posts recorded the live URL but generated_posts still says
+    Published=No (the operator ticks the flag late). The URL wins — without
+    this rule the two sheets fight over the status on every backfill pass."""
+    s = temp_db.get_session()
+    try:
+        store.mirror_article(s, title="Post B", content="body", approved=True,
+                             published=True)
+        art = s.execute(select(temp_db.Article)).scalars().one()
+        art.meta = {**(art.meta or {}), "published_url": "https://x.dev/blog/b/"}
+        s.commit()
+        # the lagging sheet row must not unpublish it
+        store.mirror_article(s, title="Post B", content="body", approved=True,
+                             published=False)
+        assert art.status == "published"
+        # an article with no URL still follows the flag
+        store.mirror_article(s, title="Post C", content="body", approved=True,
+                             published=True)
+        store.mirror_article(s, title="Post C", content="body", approved=True,
+                             published=False)
+        post_c = s.execute(select(temp_db.Article).where(
+            temp_db.Article.title == "Post C")).scalars().one()
+        assert post_c.status == "approved"
+    finally:
+        s.close()
+
+
+def test_mirror_keyword_skips_oversized_cells(temp_db):
+    """A stray cell holding a whole article (seen in ContentSpark_Keywords)
+    must be skipped, not truncated into a fake keyword — Postgres enforces
+    the varchar(300) that SQLite tolerated."""
+    s = temp_db.get_session()
+    try:
+        blob = "x" * (store.MAX_KEYWORD_LEN + 1)
+        assert store.mirror_keyword(s, keyword=blob) is None
+        assert store.mirror_brief(s, keyword=blob, brief_content="B") is None
+        assert store.mirror_keyword_queue(s, keyword=blob) == (None, False)
+        assert s.execute(select(func.count()).select_from(
+            temp_db.KeywordLedger)).scalar_one() == 0
+    finally:
+        s.close()
+
+
 # ---------------------------------------------------------------------------
 # The dual-write hook
 # ---------------------------------------------------------------------------
@@ -223,7 +266,10 @@ def test_backfill_counts_verify_and_idempotency(temp_db):
     job = _load_backfill()
     res = job.backfill(fetch_records=_fake_records, site_slug="t")
     assert res["status"] == "ok"
-    assert res["counts"] == {"keyword": 2, "brief": 1, "article": 1}
+    assert res["counts"] == {"keyword": 2, "brief": 1, "article": 1,
+                             "published": 0, "keyword_queue": 0, "usage": 0,
+                             "image": 0, "review": 0, "performance": 0,
+                             "claims": 0, "freshness": 0}
     assert res["verify"] == {"site": "t", "keywords": 2, "articles": 1}
 
     # Re-run is a no-op (idempotent keyed upserts).
@@ -234,7 +280,10 @@ def test_backfill_counts_verify_and_idempotency(temp_db):
 def test_backfill_dry_run_writes_nothing(temp_db):
     job = _load_backfill()
     res = job.backfill(fetch_records=_fake_records, dry_run=True, site_slug="t")
-    assert res["counts"] == {"keyword": 2, "brief": 1, "article": 1}
+    assert res["counts"] == {"keyword": 2, "brief": 1, "article": 1,
+                             "published": 0, "keyword_queue": 0, "usage": 0,
+                             "image": 0, "review": 0, "performance": 0,
+                             "claims": 0, "freshness": 0}
     assert res["verify"] is None
     s = temp_db.get_session()
     try:

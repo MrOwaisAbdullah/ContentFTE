@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote, urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from lib.db import Article, AuditLog, KeywordLedger, Site, get_session, init_db
+from lib.db import (Article, AuditLog, CostLedger, KeywordLedger, Site,
+                    get_session, init_db)
 from lib.ledger import briefable_rows, upsert_keyword
 from lib.site_env import is_shared_mode
 
@@ -203,16 +206,28 @@ def get_or_create_site(session: Session, slug: str = "") -> Site:
     return site
 
 
+# keyword_ledger.keyword is String(300). sqlite tolerated longer cells,
+# Postgres enforces the length — and a stray cell occasionally holds a
+# whole article instead of a keyword (seen in ContentSpark_Keywords). Skip
+# such cells loudly rather than truncate them into fake keywords.
+MAX_KEYWORD_LEN = 300
+
+
 def mirror_keyword(session: Session, *, keyword: str, volume: int = 0,
                    difficulty: float = 0.0, intent: str = "informational",
                    summary: str = "", generated: bool = False,
                    primary_keyword: str = "", secondary_keywords: str = "",
                    subject: str = "", site_slug: str = "",
                    intent_raw: str = "") -> Optional[KeywordLedger]:
-    if not (keyword or "").strip():
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return None
+    if len(keyword) > MAX_KEYWORD_LEN:
+        logger.warning(f"mirror_keyword: skipping {len(keyword)}-char cell "
+                       f"(keyword column holds {MAX_KEYWORD_LEN})")
         return None
     site = get_or_create_site(session, site_slug)
-    row = upsert_keyword(session, site.id, keyword.strip(), intent=intent,
+    row = upsert_keyword(session, site.id, keyword, intent=intent,
                          volume=volume, difficulty=difficulty,
                          research_snapshot={
                              "summary": summary,
@@ -242,15 +257,20 @@ def mirror_brief(session: Session, *, keyword: str, brief_content: str = "",
                  faqs: str = "", sources: str = "", summary: str = "",
                  generated: bool = False, secondary_keywords: str = "",
                  site_slug: str = "") -> Optional[KeywordLedger]:
-    if not (keyword or "").strip():
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return None
+    if len(keyword) > MAX_KEYWORD_LEN:
+        logger.warning(f"mirror_brief: skipping {len(keyword)}-char cell "
+                       f"(keyword column holds {MAX_KEYWORD_LEN})")
         return None
     site = get_or_create_site(session, site_slug)
     row = session.execute(
         select(KeywordLedger).where(
-            KeywordLedger.site_id == site.id, KeywordLedger.keyword == keyword.strip())
+            KeywordLedger.site_id == site.id, KeywordLedger.keyword == keyword)
     ).scalar_one_or_none()
     if row is None:
-        row = upsert_keyword(session, site.id, keyword.strip())
+        row = upsert_keyword(session, site.id, keyword)
     row.research_snapshot = {
         **(row.research_snapshot or {}),
         "brief": brief_content,
@@ -288,7 +308,14 @@ def mirror_article(session: Session, *, title: str, content: str = "",
         # Carried so the publish step can store the operator's keyword targets
         # on the delivered document (content_briefs is gone by then).
         art.meta = {**art.meta, "secondary_keywords": secondary_keywords}
-    art.status = status
+    if status == "published":
+        art.status = "published"
+    elif not (art.meta or {}).get("published_url"):
+        # A recorded live URL outranks a lagging "Published: No" cell — the
+        # operator sometimes ticks the generated_posts flag late while
+        # published_posts already carries the URL. Without this rule the two
+        # sheets fight over the status on every backfill/dual-write pass.
+        art.status = status
     session.commit()
     session.refresh(art)
     return art
@@ -351,6 +378,308 @@ def mirror_sheet_append(worksheet_name: str, row_values: List[Any],
     except Exception as e:
         logger.warning(f"dual-write mirror failed for {worksheet_name} (non-fatal): {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Extended backfill — the sheets beyond research/briefs/posts
+# (published_posts, usage logs, image_logs, review, performance, audit,
+# freshness_sweep, and the separate ContentSpark_Keywords queue).
+# Every import is idempotent: the row's identity rides in payload/detail
+# under "sheet_ref", and callers preload existing refs so a re-run
+# inserts nothing twice.
+# ---------------------------------------------------------------------------
+_SHEET_TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M")
+
+
+def _sheet_ts(raw: Any) -> Optional[datetime]:
+    """Sheet timestamps are UTC strings ("2026-10-18 07:54:33 UTC"; older
+    rows lack seconds). Unparseable -> None (created_at falls back to now,
+    the row still imports)."""
+    text = str(raw or "").strip().removesuffix(" UTC").strip()
+    for fmt in _SHEET_TS_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def mirror_sheet_audit(session: Session, *, action: str, payload: Dict[str, Any],
+                       ts_raw: Any = "", seen: Optional[set] = None,
+                       article_id: Optional[int] = None,
+                       site_id: Optional[int] = None) -> bool:
+    """One historical sheet row -> an audit_log row, idempotent on
+    payload["sheet_ref"]. Never commits (the backfill commits per
+    worksheet); `seen` is the preloaded set of refs already imported for
+    this action — pass it for bulk imports (one read, not one per row).
+    Without it the idempotency contract still holds via a per-row query."""
+    ref = str((payload or {}).get("sheet_ref") or "")
+    if not ref:
+        return False
+    if seen is not None:
+        if ref in seen:
+            return False
+        seen.add(ref)
+    else:
+        session.flush()
+        if ref in existing_sheet_refs(session, action):
+            return False
+    ts = _sheet_ts(ts_raw)
+    session.add(AuditLog(action=action, payload=payload, article_id=article_id,
+                         site_id=site_id, **({"created_at": ts} if ts else {})))
+    return True
+
+
+def existing_sheet_refs(session: Session, action: str) -> set:
+    """Every payload["sheet_ref"] already imported under an audit action."""
+    rows = session.execute(
+        select(AuditLog.payload).where(AuditLog.action == action)).scalars()
+    return {str(p.get("sheet_ref")) for p in rows if p and p.get("sheet_ref")}
+
+
+def mirror_sheet_cost(session: Session, *, kind: str, amount_usd: float,
+                      detail: Dict[str, Any], article_id: int,
+                      ts_raw: Any = "", seen: Optional[set] = None) -> bool:
+    """One historical cost row (image_logs) -> cost_ledger, idempotent on
+    detail["sheet_ref"]. Never commits; same `seen` convention as
+    mirror_sheet_audit (fallback query when no set is passed)."""
+    ref = str((detail or {}).get("sheet_ref") or "")
+    if not ref:
+        return False
+    if seen is not None:
+        if ref in seen:
+            return False
+        seen.add(ref)
+    else:
+        session.flush()
+        if ref in existing_cost_refs(session, kind):
+            return False
+    ts = _sheet_ts(ts_raw)
+    session.add(CostLedger(article_id=article_id, kind=kind,
+                           amount_usd=float(amount_usd or 0.0), detail=detail,
+                           **({"created_at": ts} if ts else {})))
+    return True
+
+
+def existing_cost_refs(session: Session, kind: str) -> set:
+    """Every detail["sheet_ref"] already imported under a cost kind."""
+    rows = session.execute(
+        select(CostLedger.detail).where(CostLedger.kind == kind)).scalars()
+    return {str(d.get("sheet_ref")) for d in rows if d and d.get("sheet_ref")}
+
+
+def mirror_published_post(session: Session, *, title: str, url: str,
+                          site_slug: str = "") -> tuple[Optional[Article], bool]:
+    """published_posts row -> the article's published URL.
+
+    Matches by title on the site; a match gets status=published, a slug
+    derived from the URL path (when it has none), and
+    meta.published_url. A title with no article row (posts older than the
+    ledger) becomes a stub published article carrying the URL — the
+    sitemap/decay tooling needs the full URL inventory, not just the 50
+    articles the store knows content for.
+
+    Returns (article, changed) — changed is False when the row already
+    carried this URL, so a re-run reports 0 imported, not a re-count."""
+    title = (title or "").strip()
+    url = (url or "").strip()
+    if not title or not url:
+        return None, False
+    site = get_or_create_site(session, site_slug)
+    art = session.execute(
+        select(Article).where(Article.site_id == site.id, Article.title == title)
+    ).scalars().first()
+    slug = _slug_from_url(url)
+    if art is None:
+        art = Article(site_id=site.id, title=title, slug=slug,
+                      status="published",
+                      meta={"published_url": url, "source": "sheet-backfill"})
+        session.add(art)
+        session.commit()
+        session.refresh(art)
+        return art, True
+    changed = False
+    if (art.meta or {}).get("published_url") != url:
+        art.meta = {**(art.meta or {}), "published_url": url}
+        changed = True
+    if art.status != "published":
+        art.status = "published"
+        changed = True
+    if not art.slug and slug:
+        art.slug = slug
+        changed = True
+    if changed:
+        session.commit()
+        session.refresh(art)
+    return art, changed
+
+
+def _slug_from_url(url: str) -> str:
+    """https://x.dev/blog/my-post/ -> 'my-post' (unquoted, last path seg)."""
+    path = unquote(urlsplit(url).path.strip("/"))
+    if path.startswith("blog/"):
+        path = path[5:]
+    return path.split("/")[-1] if "/" in path else path
+
+
+def mirror_keyword_queue(session: Session, *, keyword: str, primary: str = "",
+                         secondary: str = "", status: str = "",
+                         site_slug: str = "") -> Optional[KeywordLedger]:
+    """ContentSpark_Keywords queue row -> keyword_ledger.
+
+    CREATE-ONLY for status: an existing row (researched/briefed from
+    research_data) keeps whatever status it earned — the queue sheet only
+    carries claim state, which the ledger owns natively now. The only
+    write to an existing row is an additive snapshot merge (primary /
+    secondary keyword targets, never a clobber), so this handler runs in
+    any order relative to research_data. New rows map sheet status:
+    available/claimed -> queued, briefed -> briefed."""
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return None, False
+    if len(keyword) > MAX_KEYWORD_LEN:
+        logger.warning(f"mirror_keyword_queue: skipping {len(keyword)}-char "
+                       f"cell (keyword column holds {MAX_KEYWORD_LEN})")
+        return None, False
+    site = get_or_create_site(session, site_slug)
+    existing = session.execute(
+        select(KeywordLedger).where(KeywordLedger.site_id == site.id,
+                                    KeywordLedger.keyword == keyword)
+    ).scalar_one_or_none()
+    if existing is not None:
+        snap = dict(existing.research_snapshot or {})
+        changed = False
+        if primary.strip() and not snap.get("primary_keyword"):
+            snap["primary_keyword"] = primary.strip()
+            changed = True
+        if secondary.strip() and not snap.get("secondary_keywords"):
+            snap["secondary_keywords"] = secondary.strip()
+            changed = True
+        if changed:
+            existing.research_snapshot = snap
+            session.commit()
+        return existing, changed
+    row = upsert_keyword(session, site.id, keyword, research_snapshot={
+        "primary_keyword": (primary or "").strip(),
+        "secondary_keywords": (secondary or "").strip(),
+        "source": "keywords-sheet",
+    })
+    target = {"available": "queued", "claimed": "queued",
+              "briefed": "briefed"}.get((status or "").strip().lower())
+    if target and target != row.status:
+        row.status = target
+        session.commit()
+        session.refresh(row)
+    return row, True
+
+
+# --- historical-row mappers (dict in, payload with a stable sheet_ref out) --
+def map_usage_log_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """usage logs -> audit usage.model (the model-performance history)."""
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "usage:" + "|".join([ts, str(rec.get("Model") or ""),
+                                          str(rec.get("Agent") or ""),
+                                          str(rec.get("Stage") or "")]),
+        "timestamp": ts,
+        "model": str(rec.get("Model") or ""),
+        "agent": str(rec.get("Agent") or ""),
+        "stage": str(rec.get("Stage") or ""),
+        "status": str(rec.get("Status") or ""),
+        "latency_s": str(rec.get("Latency (s)") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def map_image_log_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """image_logs -> cost_ledger detail (or audit usage.image when no
+    article matches)."""
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "image:" + "|".join([ts, str(rec.get("Model") or ""),
+                                          str(rec.get("Slot") or ""),
+                                          str(rec.get("Subject") or "")]),
+        "timestamp": ts,
+        "model": str(rec.get("Model") or ""),
+        "stage": str(rec.get("Stage") or ""),
+        "subject": str(rec.get("Subject") or ""),
+        "status": str(rec.get("Status") or ""),
+        "reference": str(rec.get("Reference") or ""),
+        "latency_s": str(rec.get("Latency (s)") or ""),
+        "latency_ms": str(rec.get("Latency (ms)") or ""),
+        "detail": str(rec.get("Detail") or ""),
+        "slot": str(rec.get("Slot") or ""),
+        "prompt": str(rec.get("Prompt") or ""),
+        "cost_usd": str(rec.get("Cost (USD)") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def map_review_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "review:" + "|".join([ts, str(rec.get("Title") or ""),
+                                           str(rec.get("Status") or "")]),
+        "timestamp": ts,
+        "title": str(rec.get("Title") or ""),
+        "review_status": str(rec.get("Status") or ""),
+        "quality_score": str(rec.get("Quality Score") or ""),
+        "summary": str(rec.get("Summary") or ""),
+        "reason": str(rec.get("Reason") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def map_performance_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "performance:" + "|".join([ts, str(rec.get("URL") or "")]),
+        "timestamp": ts,
+        "title": str(rec.get("Title") or ""),
+        "url": str(rec.get("URL") or ""),
+        "impressions": str(rec.get("Impressions") or ""),
+        "clicks": str(rec.get("Clicks") or ""),
+        "ctr": str(rec.get("CTR") or ""),
+        "position": str(rec.get("Average Position") or ""),
+        "finding": str(rec.get("Finding") or ""),
+        "suggested_edit": str(rec.get("Suggested Edit") or ""),
+        "status": str(rec.get("Status") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def map_claims_audit_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "claims:" + "|".join([ts, str(rec.get("Title") or "")]),
+        "timestamp": ts,
+        "title": str(rec.get("Title") or ""),
+        "keyword": str(rec.get("Keyword/Topic") or ""),
+        "quality_score": str(rec.get("Quality Score") or ""),
+        "notes": str(rec.get("Claims Notes") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def map_freshness_row(rec: Dict[str, Any]) -> Dict[str, Any]:
+    ts = str(rec.get("Timestamp") or "").strip()
+    return {
+        "sheet_ref": "freshness:" + "|".join([ts, str(rec.get("Title") or "")]),
+        "timestamp": ts,
+        "title": str(rec.get("Title") or ""),
+        "status": str(rec.get("Status") or ""),
+        "reason": str(rec.get("Reason") or ""),
+        "suggested_edit": str(rec.get("Suggested Edit") or ""),
+        "source": "sheet-backfill",
+    }
+
+
+def title_article_index(session: Session, site_id: int) -> Dict[str, int]:
+    """title -> article_id for one site (historical rows link by title)."""
+    rows = session.execute(
+        select(Article.id, Article.title).where(Article.site_id == site_id)
+    ).all()
+    return {(t or "").strip(): i for i, t in rows}
 
 
 def verify_cutover(session: Session, site_slug: str = "") -> Dict[str, Any]:
