@@ -1727,7 +1727,7 @@ def post_to_sanity_tool(
     image_path: str,
     slug: Optional[str] = None,
     alt_text: Optional[str] = None,
-    faqs: Optional[List[Any]] = None,
+    faqs: Optional[List[FAQItem]] = None,
     focus_keyphrase: Optional[str] = None,
     seo_title: Optional[str] = None,
     seo_description: Optional[str] = None,
