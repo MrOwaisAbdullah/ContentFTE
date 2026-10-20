@@ -11,7 +11,53 @@ future session can reconstruct *why* the code looks the way it does.
 
 ---
 
-## 2026-10-18 - Instance dashboard guide (Search Console, Discord, env)
+## 2026-10-20 - Fix Posting Agent Gemini 400 (faqs schema)
+
+**Commit:** 6f8f48f
+
+**What** - `run_stage.py --stage "post"` was failing with
+`GenerateContentRequest.tools[0].function_declarations[0].parameters.properties.faqs.items: missing field.`
+The `post_to_sanity_tool` declared `faqs: Optional[List[Any]]`, which produces a
+JSON schema with `type: array` but no `items` field; Gemini rejects that. Changed
+the annotation to `Optional[List[FAQItem]]` using the existing `FAQItem` BaseModel,
+so the schema now carries `items` with `question`/`answer` properties. Swept the
+other `@function_tool` signatures - no other untyped array params remain.
+
+**Verified** - syntax check passed; commit pushed. The next `post` stage run should
+no longer hit the 400.
+
+---
+
+
+## 2026-10-18 - Full Database Accounting, Fast SQL Spend Aggregations & GSC Performance Telemetry
+
+**What** - closed architectural gaps across the dashboard, engine, and database layer:
+- **Cost & Financial Accounting Integrity**: Updated `CostLedger` in `lib/db.py` to add `site_id` (with index `ix_cost_site`) alongside nullable `article_id`. Modified `record_cost` and `finalize` in `lib/cost_ledger.py` to automatically associate `site_id` from the parent article. Updated `delete_article` in `sdk/service.py` to preserve financial audit records by disassociating `article_id` while keeping `site_id` intact, preventing historical spend data loss.
+- **High-Performance SQL Spend Aggregations**: Replaced the client-side 500-item memory scan on the Overview dashboard with a database-aggregated endpoint `GET /spend/summary` (`get_spend_summary()` in `sdk/service.py`), utilizing SQL `func.sum()` with timezone-aware WTD (Monday 00:00 UTC) and MTD filters.
+- **Search Console 28-day Performance Telemetry**: Extended `get_search_console_status()` in `sdk/service.py` and `get_site_totals()` in `lib/search_console.py` to pull 28-day impressions, clicks, average CTR, and average position for verified properties. Rendered these metrics directly in the Mission Control dashboard telemetry widget.
+- **Interactive Pipeline Stream Ribbon**: Augmented the 6-stage autonomous stream on `app/(console)/page.tsx` with inline "Run Now", "Research", and "Generate" one-click action triggers scoped to the currently active site.
+- **Multi-Tenant Stage Run Scope & Rotation Fix**: Implemented site-aware execution for `POST /run/{stage}`, normalized title matching, and resilient timestamp parsing in `scripts/run_stage.py`.
+
+**Verified** - `npm run build` in `console/` passed with code 0; `pytest tests/test_api_mcp.py` passed 15/15.
+
+---
+
+## 2026-10-18 - World-Class Operator Console Revamp & Dual-Theme (DESIGN.md)
+
+**What** - comprehensive transformation of the ContentFTE operator console into a world-class production grade dashboard:
+- **DESIGN.md Dual-Theme Engine**: Integrated the design system palette from `DESIGN.md` (Graphite `#16181D`, Clay Orange `#F2643A`, Burnt Clay `#B03E1C`, Sand `#E6E1D8`, Chalk `#F2EEE8`). Added `ThemeToggle` component with instant Sun/Moon switching, `localStorage` persistence, and zero-FOUC initialization script in `app/layout.tsx`.
+- **Custom Sleek Scrollbars**: Eliminated harsh white native OS scrollbars across sidebars, views, and tables via adaptive custom scrollbar CSS tokens.
+- **Universal Command Palette (`⌘K`)**: Added `CommandPalette` component supporting instant site switching, route navigation, and quick operator actions.
+- **Unified Site Context Engine**: Added first-class "All Sites (Fleet View)" vs "Individual Site Drilldown" selector in the Topbar. All views (Overview, Articles, Approvals, Publish Queue) now dynamically scope data to the active context.
+- **Mission Control Overview**: Upgraded `page.tsx` with a 6-stage autonomous pipeline stream ribbon, Google Search Console & SEO telemetry widget, and high-density review queue.
+- **Content Pipeline Pro**: Built `ArticlesTable` client component with live instant search, multi-column sorting (Date, Score, Cost, Title), status count filters, color-coded quality score badges (`94/100`), and pagination.
+- **Publish & Approvals Queue UX**: Fixed layout overflows to eliminate horizontal scrollbars, resolved fallback timestamps and score badges.
+- **Provisioning Wizard & Instances**: Revamped `provision/page.tsx` into a 2-column guided wizard with operator runbook cards and 1-click `.env` export/copy; upgraded `instances/page.tsx` with summary cards.
+- **Backend Data Alignment**: Updated `sdk/service.py` to extract `overall` score fallback as `quality`, ensure summaries extract from `content_summary` / `description`, and preserve site scoping.
+
+**Verified** - `npm run build` in `console/` completed cleanly with code 0 (all 19 routes compiled); engine `pytest` passed 463 passed / 2 skipped.
+
+---
 
 **Commit:** 90829a5
 
