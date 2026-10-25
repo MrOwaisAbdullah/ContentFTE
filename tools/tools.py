@@ -462,37 +462,106 @@ def lookup_image_source(image_id: Any) -> Optional[str]:
     return None
 
 
+def _clean_stock_query(topic: str) -> List[str]:
+    """Generates visual search query variants for Pexels so abstract tech concepts
+    retrieve high-quality human/software/workspace imagery first."""
+    raw = (topic or "").strip()
+    if not raw:
+        return []
+    variants = []
+    low = raw.lower()
+
+    # Prioritize visual, concrete tech concepts over abstract titles
+    if any(k in low for k in ['test', 'ci/cd', 'integration', 'deploy', 'devops', 'code', 'software', 'programming', 'developer']):
+        variants.append("software engineer coding computer")
+        variants.append("developer workspace dual monitors")
+    elif any(k in low for k in ['data', 'analytics', 'metrics', 'chart', 'seo', 'growth']):
+        variants.append("business analytics dashboard computer screen")
+    elif any(k in low for k in ['team', 'collaboration', 'agile', 'scrum', 'workflow', 'management']):
+        variants.append("technology team collaboration modern office")
+
+    # Add simplified raw query
+    simplified = re.sub(r'\b(pipeline|architecture|lifecycle|principles|framework|best practices|methodology|deep dive|overview|introduction|tutorial|guide)\b', '', raw, flags=re.IGNORECASE).strip()
+    simplified = re.sub(r'\s+', ' ', simplified)
+    if simplified and simplified.lower() not in [v.lower() for v in variants]:
+        variants.append(simplified)
+
+    if raw not in variants:
+        variants.append(raw)
+    return variants
+
+
+def _fetch_stock_candidates(keyword: str, count: int = 5) -> List[Dict[str, Any]]:
+    """Fetches stock image candidates across visual query variants from Pexels."""
+    api_key = os.environ.get('PEXELS_API_KEY', '')
+    if not api_key:
+        return []
+    headers = {"Authorization": api_key}
+    queries = _clean_stock_query(keyword) or [keyword]
+    candidates = []
+    seen_ids = set()
+
+    for q in queries:
+        try:
+            # Fetch up to 2 per query variant to ensure diverse candidates
+            per_query = max(2, count // len(queries) + 1)
+            url = f"https://api.pexels.com/v1/search?query={q}&per_page={per_query}"
+            response = requests.get(url, headers=headers, timeout=12)
+            if response.status_code != 200:
+                continue
+            photos = response.json().get('photos', [])
+            for photo in photos:
+                pid = photo.get('id')
+                if pid in seen_ids:
+                    continue
+                seen_ids.add(pid)
+                img_url = (photo.get('src', {}).get('large') or photo.get('src', {}).get('medium', '')).replace('\\\\', '/').replace(' ', '%20')
+                if img_url and not img_url.startswith('http'):
+                    img_url = 'https://' + img_url.lstrip('https://').lstrip('http://')
+                if img_url:
+                    candidates.append({
+                        "image_url": img_url,
+                        "alt_text": photo.get('alt') or f"{keyword} stock photo",
+                        "source": "Pexels",
+                        "photo_id": pid
+                    })
+                if len(candidates) >= count:
+                    return candidates
+        except Exception as e:
+            logger.warning(f"Failed to query Pexels with '{q}': {e}")
+            continue
+
+    return candidates
+
+
 def _fetch_stock_image(keyword: str, slot: str = "") -> Dict[str, Any]:
     """Fetches a stock image with alt text from Pexels (plain fn for internal
     callers such as _select_inpost_image). `slot` labels the image_logs row
     (featured/inpost) for cost-per-post accounting (stock cost is always 0)."""
     started = time.time()
-    try:
-        url = f"https://api.pexels.com/v1/search?query={keyword}&per_page=1"
-        headers = {"Authorization": os.environ['PEXELS_API_KEY']}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        photo = response.json()['photos'][0]
-        # Ensure the URL uses proper forward slashes and is properly formatted
-        image_url = photo['src']['medium'].replace('\\\\', '/').replace(' ', '%20')
-        # Validate that the URL is properly formatted
-        if not image_url.startswith('http'):
-            image_url = 'https://' + image_url.lstrip('https://').lstrip('http://')
+    candidates = _fetch_stock_candidates(keyword, count=1)
+    if candidates:
+        first = candidates[0]
+        image_url = first["image_url"]
         record_image_source(image_url, STOCK_IMAGE_SOURCE_LABEL)
-        # Logged alongside the AI attempts so image_logs answers "what image
-        # source did this run actually end up with" for fallback runs too.
         log_image_usage(
             STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "success",
             time.time() - started, detail="pexels", cost_usd=0.0, slot=slot,
         )
-        return {"image_url": image_url, "alt_text": f"{keyword} stock image", "source": "Pexels", "evaluation_score": 8.5, "feedback": "High quality stock photo from Pexels"}
-    except Exception as e:
-        logger.error(f"Failed to fetch stock image from Pexels: {e}")
-        log_image_usage(
-            STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "error",
-            time.time() - started, detail=str(e)[:500], cost_usd=0.0, slot=slot,
-        )
-        return {"error": f"Failed to fetch stock image from Pexels: {str(e)}"}
+        return {
+            "image_url": image_url,
+            "alt_text": first.get("alt_text", f"{keyword} stock image"),
+            "source": "Pexels",
+            "evaluation_score": 8.5,
+            "feedback": "High quality stock photo from Pexels"
+        }
+    err = f"No stock images found on Pexels for: {keyword}"
+    logger.error(err)
+    log_image_usage(
+        STOCK_IMAGE_SOURCE_LABEL, "stock", keyword, "error",
+        time.time() - started, detail=err, cost_usd=0.0, slot=slot,
+    )
+    return {"error": err}
 
 
 @function_tool
@@ -1568,67 +1637,78 @@ def _select_inpost_image(
             slot="inpost", latency_ms=latency_ms,
         )
 
-    stock: Optional[Dict[str, Any]] = None
+    # Check multiple stock candidates (up to 3) for the highest relevancy match
+    candidates: List[Dict[str, Any]] = []
     if (topic or "").strip():
         try:
-            stock = fetch_stock(topic, "inpost")
+            candidates = _fetch_stock_candidates(topic, count=3)
         except Exception as e:
-            logger.warning(f"fetch_stock raised for {topic!r}: {e}")
-            stock = {"error": str(e)}
+            logger.warning(f"_fetch_stock_candidates raised for {topic!r}: {e}")
 
-    if stock and stock.get("image_url"):
-        stock_url = str(stock["image_url"])
-        local = stock_url if not stock_url.startswith("http") else _download_image_to_temp(stock_url)
-        if local:
+    best_candidate = None
+    best_verdict = None
+    best_score = -1
+
+    for cand in candidates:
+        cand_url = str(cand.get("image_url", ""))
+        if not cand_url:
+            continue
+        local = cand_url if not cand_url.startswith("http") else _download_image_to_temp(cand_url)
+        if not local:
+            continue
+        try:
             verdict = score_fn(local, topic, section_summary) or {}
-            score_val = verdict.get("score")
+            score_val = verdict.get("score", 0)
             passed = bool(verdict.get("passed"))
-            gate.update(
-                stock_candidate=stock_url,
-                stock_score=score_val,
-                stock_passed=passed,
-                stock_fallback=bool(verdict.get("fallback")),
-                latency_ms=verdict.get("latency_ms"),
-            )
-            issues = "; ".join(str(i) for i in (verdict.get("issues") or [])[:3])
-            _log_gate(
-                "stock_accepted" if passed else "stock_below_threshold",
-                f"score={score_val}/100 threshold={threshold} "
-                f"fallback={verdict.get('fallback')} issues={issues}",
-                latency_ms=verdict.get("latency_ms"),
-            )
+            if score_val > best_score:
+                best_score = score_val
+                best_verdict = verdict
+                best_candidate = cand
             if passed:
-                if local != stock_url:
-                    try:
-                        os.remove(local)
-                    except OSError:
-                        pass
-                out = dict(stock)
-                out.update(
-                    alt_text=chosen_alt or stock.get("alt_text"),
-                    # Keep the historical 0-10 evaluation_score consumers
-                    # happy while the gate truth lives in relevancy_score.
-                    relevancy_score=score_val if isinstance(score_val, (int, float)) else threshold,
-                    evaluation_score=round((score_val if isinstance(score_val, (int, float)) else threshold) / 10.0, 1),
-                    feedback=f"VLM topic-relevancy {score_val}/100 >= {threshold}: free stock accepted",
-                    slot="inpost",
-                    gate=gate,
-                )
-                gate["decision"] = "stock_accepted"
-                return out
-            # Below threshold: the local copy was only for the VLM check.
-            if local != stock_url:
+                # Accept first candidate that passes threshold
+                best_candidate = cand
+                best_verdict = verdict
+                break
+        finally:
+            if local and local != cand_url and os.path.exists(local):
                 try:
                     os.remove(local)
                 except OSError:
                     pass
-        else:
-            gate.update(stock_candidate=stock_url, stock_passed=False, stock_download_failed=True)
-            _log_gate("stock_undownloadable", "could not download candidate for VLM check")
+
+    if best_candidate and best_verdict:
+        score_val = best_verdict.get("score", best_score)
+        passed = bool(best_verdict.get("passed"))
+        stock_url = best_candidate["image_url"]
+        record_image_source(stock_url, STOCK_IMAGE_SOURCE_LABEL)
+        gate.update(
+            stock_candidate=stock_url,
+            stock_score=score_val,
+            stock_passed=passed,
+            stock_fallback=bool(best_verdict.get("fallback")),
+            latency_ms=best_verdict.get("latency_ms"),
+        )
+        issues = "; ".join(str(i) for i in (best_verdict.get("issues") or [])[:3])
+        _log_gate(
+            "stock_accepted" if passed else "stock_below_threshold",
+            f"score={score_val}/100 threshold={threshold} fallback={best_verdict.get('fallback')} issues={issues}",
+            latency_ms=best_verdict.get("latency_ms"),
+        )
+        if passed:
+            out = dict(best_candidate)
+            out.update(
+                alt_text=chosen_alt or best_candidate.get("alt_text"),
+                relevancy_score=score_val,
+                evaluation_score=round(score_val / 10.0, 1),
+                feedback=f"VLM topic-relevancy {score_val}/100 >= {threshold}: free stock accepted",
+                slot="inpost",
+                gate=gate,
+            )
+            gate["decision"] = "stock_accepted"
+            return out
     else:
-        gate.update(stock_candidate=None, stock_passed=False,
-                    stock_error=(stock or {}).get("error", "no candidate") if isinstance(stock, dict) else "no candidate")
-        _log_gate("stock_unavailable", str(gate.get("stock_error") or "no candidate")[:200])
+        gate.update(stock_candidate=None, stock_passed=False, stock_error="no candidates evaluated")
+        _log_gate("stock_unavailable", "no stock candidates passed inspection")
 
     # Stock rejected/unavailable -> in-post AI lane (textless, Jev-ranked look).
     try:

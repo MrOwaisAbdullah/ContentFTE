@@ -8,6 +8,7 @@ import {
 } from "@/lib/engine";
 import {
   approveArticleAction,
+  deleteArticleAction,
   generateArticleAction,
   patchMetaAction,
   publishArticleAction,
@@ -27,6 +28,7 @@ import {
   fmtScore,
 } from "@/lib/ui";
 import { PendingButton } from "@/lib/interactive";
+import { normalizeScores } from "@/lib/scores";
 import { ContentWorkspace } from "@/lib/workspace";
 import { MediaCard, MediaImage } from "@/lib/media";
 import { Braces, CircleCheck, ExternalLink, FileClock, Info, TriangleAlert } from "lucide-react";
@@ -158,7 +160,9 @@ function ScoresCard({
   return (
     <SectionCard title="Scores" id="scores">
       {overall === null ? (
-        <p className="text-sm text-ink-faint">No scores yet — run Generate to evaluate this article.</p>
+        <p className="text-sm text-ink-faint">
+          No eval recorded for this run. Older articles (pre-gate) may have no scores; run Generate to evaluate.
+        </p>
       ) : (
         <div className="space-y-4">
           <div>
@@ -522,8 +526,13 @@ export default async function ArticlePage({
   /* checklist — same rule as lib/eval_gate.check_gate, honest about
      legacy runs whose scores only carry {overall}. */
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  const overall = num(article.scores?.overall);
-  const subs = SUB_SCORES.map((k) => ({ k, v: num(article.scores?.[k]) }));
+  const ns = normalizeScores(article.scores as Record<string, unknown> | null);
+  // Prefer the normalized overall; fall back to quality/sub-scores (legacy).
+  const overall = ns.overall;
+  const subs = SUB_SCORES.map((k) => ({
+    k,
+    v: ns.subScores[k] ?? num(article.scores?.[k]) ?? num((article.scores?.sub_scores as Record<string, unknown> | undefined)?.[k]),
+  }));
   const subsPresent = subs.every((s) => s.v !== null);
   const gateFailures = [
     ...(overall !== null && overall < PUBLISH_THRESHOLD ? [`overall ${overall} < ${PUBLISH_THRESHOLD}`] : []),
@@ -606,7 +615,13 @@ export default async function ArticlePage({
             ) : null}
             {article.status === "published" ? (
               <>
-                <ActionForm action={refreshArticleAction} id={article.id} className={BTN_GHOST}>
+                <ActionForm
+                  action={refreshArticleAction}
+                  id={article.id}
+                  className={BTN_GHOST}
+                  confirmMessage="Refresh the live post now? It re-renders the current markdown onto the existing WP post."
+                  pendingLabel="Refreshing…"
+                >
                   Refresh live post
                 </ActionForm>
                 <ActionForm
@@ -680,6 +695,39 @@ export default async function ArticlePage({
                 </Alert>
               </SectionCard>
             ) : null}
+            {(article.status === "approved" || article.status === "published") && article.url ? (
+              <SectionCard title="Delivery payload (what the site receives)">
+                <dl className="space-y-2 text-xs">
+                  <div className="flex flex-col gap-0.5">
+                    <dt className="text-ink-faint">URL</dt>
+                    <dd className="break-all font-mono text-ink-dim">{article.url}</dd>
+                  </div>
+                  {article.seo?.title ? (
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-ink-faint">SEO title</dt>
+                      <dd className="text-ink-dim">{article.seo.title}</dd>
+                    </div>
+                  ) : null}
+                  {article.seo?.description ? (
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-ink-faint">Meta description</dt>
+                      <dd className="text-ink-dim">{article.seo.description}</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    {faqs.length > 0 ? (
+                      <span className="text-[11px] font-mono text-ink-faint">{faqs.length} FAQ{faqs.length === 1 ? "" : "s"} (JSON-LD)</span>
+                    ) : null}
+                    {article.schema?.article ? (
+                      <span className="text-[11px] font-mono text-ink-faint">Article schema</span>
+                    ) : null}
+                    {article.schema?.faq ? (
+                      <span className="text-[11px] font-mono text-ink-faint">FAQ schema</span>
+                    ) : null}
+                  </div>
+                </dl>
+              </SectionCard>
+            ) : null}
           </div>
 
           <div className="space-y-4">
@@ -746,6 +794,19 @@ export default async function ArticlePage({
                     before this becomes a real approval decision.
                   </p>
                 ) : null}
+
+                <div className="border-t border-line/60 pt-3">
+                  <form action={deleteArticleAction}>
+                    <input type="hidden" name="id" value={article.id} />
+                    <PendingButton
+                      className="w-full rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                      confirmMessage="Are you sure you want to delete this article? This action cannot be undone."
+                      pendingLabel="Deleting…"
+                    >
+                      Delete article
+                    </PendingButton>
+                  </form>
+                </div>
               </div>
             </SectionCard>
           </div>
@@ -921,8 +982,8 @@ function PageHeaderLike({
         <Pill status={article.status} />
         <span className="font-mono text-xs text-ink-faint">{words} words</span>
         <span className="font-mono text-xs text-ink-faint">
-          {article.scores && Number(article.scores.overall) > 0
-            ? `overall ${fmtScore(Number(article.scores.overall))}`
+          {normalizeScores(article.scores as Record<string, unknown> | null).overall !== null
+            ? `overall ${fmtScore(normalizeScores(article.scores as Record<string, unknown> | null).overall!)}`
             : "no score"}
         </span>
         <span className="font-mono text-xs text-ink-faint">{fmtCost(article.cost_usd)}</span>

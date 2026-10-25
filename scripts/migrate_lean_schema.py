@@ -81,6 +81,17 @@ def main():
                                          {"m": json.dumps(m), "i": rid})
                 print("folded articles.scores -> meta['scores']")
 
+        # 1b. Forward-add columns the model expects but the DB lacks
+        #     (e.g. cost_ledger.site_id added after the initial cutover).
+        adds = [("cost_ledger", "site_id", "INTEGER REFERENCES sites(id)")]
+        for table, col, ddl in adds:
+            if col not in _columns(conn, table):
+                if args.dry_run:
+                    print("[dry-run] would add " + table + "." + col)
+                else:
+                    conn.execute(text("ALTER TABLE " + table + " ADD COLUMN " + col + " " + ddl))
+                    print("added " + table + "." + col)
+
         # 2. Drop redundant/dead columns.
         drops = [
             ("sites", "publish_mode"),

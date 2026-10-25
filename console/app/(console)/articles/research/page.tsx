@@ -16,7 +16,7 @@ export default async function ResearchPage({
   let data: ResearchView | null = null;
   try {
     sites = await engine<SiteList>("/sites");
-    if (!slug) slug = sites.sites[0]?.slug || "";
+    if (!slug && sites.sites.length === 1) slug = sites.sites[0].slug;
     if (slug) {
       data = await engine<ResearchView>(
         `/sites/${encodeURIComponent(slug)}/research?limit=200`,
@@ -35,7 +35,18 @@ export default async function ResearchPage({
 
       {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
 
-      {!data || data.research.length === 0 ? (
+      {!slug && sites.sites.length > 1 ? (
+        <div className="rounded-xl border border-dashed border-line bg-card/40 p-8 space-y-4">
+          <h2 className="text-[15px] font-headline font-semibold text-ink">Choose a site to view its research findings</h2>
+          <div className="flex flex-wrap gap-2">
+            {sites.sites.map((s) => (
+              <Link key={s.slug} href={`/articles/research?site=${encodeURIComponent(s.slug)}`} className="px-3 py-1.5 rounded-lg border border-line bg-surface-container text-ink text-[12px] font-mono hover:border-primary-container hover:text-primary-container transition-colors">
+                {s.name || s.slug}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : !data || data.research.length === 0 ? (
         <Empty
           title="No research rows yet"
           hint="Run the research stage — it turns ledger keywords into findings with intent, volume and summaries."

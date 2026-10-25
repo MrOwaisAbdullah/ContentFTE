@@ -237,14 +237,19 @@ export default async function StagesPage({
                 </div>
                 <form action={runStageAction}>
                   <input type="hidden" name="stage" value={s.name} />
+                  {site ? <input type="hidden" name="site" value={site} /> : null}
                   <PendingButton
                     pendingLabel="Starting…"
                     confirmMessage={confirmMessage}
+                    disabled={s.name === "edit_post"}
                     className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${tier.btn}`}
                   >
                     Run
                   </PendingButton>
                 </form>
+                {s.name === "edit_post" ? (
+                  <span className="text-[10px] font-mono text-amber-300">needs EDIT_TITLE / EDIT_INSTRUCTION env</span>
+                ) : null}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                 <span className={`rounded-full border px-2 py-0.5 ${tier.chip}`}>

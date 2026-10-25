@@ -213,13 +213,13 @@ def get_page_country_device_breakdown(page_url: str, days: int = 28, row_limit: 
     ]
 
 
-def get_site_totals(days: int = 7) -> Optional[Dict[str, float]]:
+def get_site_totals(days: int = 28, site_url: str = SITE_URL) -> Optional[Dict[str, float]]:
     """Convenience wrapper: site-wide clicks/impressions/avg position over a
     trailing window, no dimensions -- a single summary row. Used for the
-    weekly digest's headline numbers."""
+    weekly digest's headline numbers and dashboard telemetry."""
     end = date.today() - timedelta(days=3)
     start = end - timedelta(days=days)
-    rows = query_search_analytics(start_date=start, end_date=end, row_limit=1)
+    rows = query_search_analytics(start_date=start, end_date=end, row_limit=1, site_url=site_url)
     if not rows:
         return None
     row = rows[0]

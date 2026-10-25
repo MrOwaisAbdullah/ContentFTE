@@ -426,9 +426,21 @@ def _stamp_check_column(worksheet_name: str, key_column: str, key_value: str, ch
         if col_index is None:
             return
         lookup = manage_sheet_data(worksheet_name=worksheet_name, action="find_row_by_key", key_column=key_column, key_value=key_value)
-        if not (lookup.get("status") == "success" and lookup.get("found")):
-            return
-        manage_sheet_data(worksheet_name=worksheet_name, action="update_cell", row_index=lookup["row_index"], col_index=col_index, data=_timestamp_now())
+        target_row_index = None
+        if lookup.get("status") == "success" and lookup.get("found"):
+            target_row_index = lookup["row_index"]
+        else:
+            # Fallback to normalized title match
+            all_records = manage_sheet_data(worksheet_name=worksheet_name, action="get_all_records")
+            if all_records.get("status") == "success":
+                norm_target = _normalize_title(key_value)
+                for idx, r in enumerate(all_records.get("data", []), start=2):
+                    if _normalize_title(str(r.get(key_column, ""))) == norm_target:
+                        target_row_index = idx
+                        break
+
+        if target_row_index is not None:
+            manage_sheet_data(worksheet_name=worksheet_name, action="update_cell", row_index=target_row_index, col_index=col_index, data=_timestamp_now())
     except Exception as e:
         print(f"Warning: failed to stamp {check_column_name} on {worksheet_name} for '{key_value}': {e}")
 
@@ -481,6 +493,38 @@ _FRESHNESS_SWEEP_HEADERS = [
 ]
 
 
+def _normalize_title(t: str) -> str:
+    """Normalize a title for robust matching across sheets, Sanity, and logs."""
+    return re.sub(r"\s+", " ", (t or "").strip().lower())
+
+
+def _parse_history_datetime(ts_str: str) -> Optional[datetime]:
+    """Robustly parse timestamps from sheets / logs."""
+    if not ts_str:
+        return None
+    try:
+        import dateutil.parser
+        dt = dateutil.parser.parse(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S UTC",
+        "%Y-%m-%d %H:%M UTC",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ):
+        try:
+            clean_ts = ts_str.replace("UTC", "").strip()
+            clean_fmt = fmt.replace(" UTC", "").strip()
+            return datetime.strptime(clean_ts, clean_fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def _get_check_history_from_sheet(worksheet_name: str) -> Dict[str, datetime]:
     """Reads a review log worksheet (e.g. 'performance' or 'freshness sweep')
     and returns a mapping of Title -> latest checked datetime."""
@@ -492,23 +536,13 @@ def _get_check_history_from_sheet(worksheet_name: str) -> Dict[str, datetime]:
             ts_str = str(r.get("Timestamp", "")).strip()
             if not t or not ts_str:
                 continue
-            dt = None
-            for fmt in (
-                "%Y-%m-%d %H:%M:%S UTC",
-                "%Y-%m-%d %H:%M UTC",
-                "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%d",
-            ):
-                try:
-                    clean_ts = ts_str.replace("UTC", "").strip()
-                    clean_fmt = fmt.replace(" UTC", "").strip()
-                    dt = datetime.strptime(clean_ts, clean_fmt).replace(tzinfo=timezone.utc)
-                    break
-                except ValueError:
-                    continue
+            dt = _parse_history_datetime(ts_str)
             if dt:
+                norm_t = _normalize_title(t)
                 if t not in history or dt > history[t]:
                     history[t] = dt
+                if norm_t not in history or dt > history[norm_t]:
+                    history[norm_t] = dt
     return history
 
 
@@ -593,13 +627,9 @@ def _select_review_candidate(
 
         check_raw = str(row.get(check_column, "")).strip()
         sort_key = created_at or datetime.min.replace(tzinfo=timezone.utc)
-        checked_at = None
-        if check_raw:
-            try:
-                checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-        sheet_checked_at = sheet_history.get(title)
+        checked_at = _parse_history_datetime(check_raw)
+        norm_t = _normalize_title(title)
+        sheet_checked_at = sheet_history.get(title) or sheet_history.get(norm_t)
         if sheet_checked_at and (checked_at is None or sheet_checked_at > checked_at):
             checked_at = sheet_checked_at
 
@@ -639,17 +669,19 @@ def _select_review_candidate_from_sanity(
         if min_age_days is not None and created_at is not None and (now - created_at).days < min_age_days:
             continue
 
+        norm_title = _normalize_title(title)
         sheet_row = sheet_rows_by_title.get(title) or {}
+        if not sheet_row:
+            for st, sr in sheet_rows_by_title.items():
+                if _normalize_title(st) == norm_title:
+                    sheet_row = sr
+                    break
+
         check_raw = str(sheet_row.get(check_column, "")).strip()
         sort_key = created_at or datetime.min.replace(tzinfo=timezone.utc)
 
-        checked_at = None
-        if check_raw:
-            try:
-                checked_at = datetime.strptime(check_raw, _CREATED_AT_FORMAT).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-        perf_checked_at = perf_history.get(title)
+        checked_at = _parse_history_datetime(check_raw)
+        perf_checked_at = perf_history.get(title) or perf_history.get(norm_title)
         if perf_checked_at and (checked_at is None or perf_checked_at > checked_at):
             checked_at = perf_checked_at
 
@@ -892,7 +924,7 @@ def _extract_content_from_markdown(output: str) -> Optional[dict]:
         "FAQs": faqs,
         "Summary": summary,
         "Quality Score": "",
-        "Approve/Disapprove": "Approved",
+        "Approve/Disapprove": "Pending",
         "Published": "No",
     }
 
@@ -937,7 +969,7 @@ def _content_row_values(content: dict, title: str,
         "FAQs": faqs_str,
         "Quality Score": str(_get_field(content, "Quality Score")),
         "Summary": str(_get_field(content, "Summary")),
-        "Approve/Disapprove": str(_get_field(content, "Approve/Disapprove", "Approved")),
+        "Approve/Disapprove": str(_get_field(content, "Approve/Disapprove", "Pending")),
         "Published": str(_get_field(content, "Published", "No")),
         "Repurpose Bundle": _jsonish("Repurpose Bundle"),
         "Video Script Seed": _jsonish("Video Script Seed"),

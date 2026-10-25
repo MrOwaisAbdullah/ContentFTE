@@ -1,26 +1,25 @@
 import { requireSession } from "@/lib/session";
 import { currentInstance, registry } from "@/lib/instances";
-import { engine, type ArticleList, type SiteList } from "@/lib/engine";
+import { engine, type ArticleList, type ArticleStats, type SiteList } from "@/lib/engine";
 import { ConsoleShell } from "@/lib/shell";
 import { Toaster } from "@/lib/toast";
+import { FlashToaster } from "@/components/flash-toaster";
 
-// Console chrome (Wave 1, docs/console-dashboard-plan.md §4): the sidebar IA
-// lives in <ConsoleShell/>; this layout only gathers the chrome's data —
-// instance registry, site switcher options, engine health and the approvals
-// work-queue count. Every fetch is best-effort: a dead engine renders as a
-// red health dot in the topbar instead of taking the whole console down.
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
   await requireSession();
-  const [instances, current, sitesRes, articlesRes] = await Promise.all([
+  const [instances, current, sitesRes, statsRes] = await Promise.all([
     registry(),
     currentInstance(),
     engine<SiteList>("/sites").catch(() => null),
-    engine<ArticleList>("/articles?limit=500").catch(() => null),
+    engine<ArticleStats>("/articles/stats").catch(() => null),
   ]);
 
   const sites = (sitesRes?.sites ?? []).map((s) => ({ slug: s.slug, name: s.name || s.slug }));
-  const approvalsCount =
-    articlesRes?.articles.filter((a) => a.status === "generated" || a.status === "needs_review").length ?? 0;
+  const approvalsCount = (statsRes?.by_status?.generated ?? 0) + (statsRes?.by_status?.needs_review ?? 0);
+
+  // recent articles for the command palette (UX-16)
+  const recentArticles = (await engine<ArticleList>("/articles?limit=100").catch(() => null))
+    ?.articles.map((a) => ({ id: a.id, title: a.title, slug: a.slug, site: a.site_slug, status: a.status })) ?? [];
 
   return (
     <>
@@ -30,10 +29,12 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         currentInstance={current.name}
         engineOk={sitesRes !== null}
         approvalsCount={approvalsCount}
+        articles={recentArticles}
       >
         {children}
       </ConsoleShell>
       <Toaster />
+      <FlashToaster />
     </>
   );
 }

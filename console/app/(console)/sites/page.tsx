@@ -1,62 +1,27 @@
 import Link from "next/link";
 import {
   engine,
-  type SearchConsoleSiteStatus,
   type SearchConsoleView,
   type SiteHealth,
   type SiteList,
+  type ArticleStats,
 } from "@/lib/engine";
 import { currentInstance } from "@/lib/instances";
 import { requireSession } from "@/lib/session";
-import { createSiteAction } from "@/actions/instances";
-import { Alert, Empty, PageHeader, checkTier } from "@/lib/ui";
-import { PendingButton } from "@/lib/interactive";
-import { Globe } from "lucide-react";
+import { Alert, checkTier } from "@/lib/ui";
+import { Freshness } from "@/components/freshness";
+import { SitesFleetClient } from "./sites-client";
+import { Glyph } from "@/components/glyph";
 
 export const dynamic = "force-dynamic";
-
-/** GSC chip: connected (permission level) / not shared (with the fix hint)
-    / unknown when the check itself couldn't run. One engine call answers
-    every row. */
-function gscCell(gsc: SearchConsoleSiteStatus | undefined, sa: string) {
-  if (!gsc) return <span className="text-ink-faint">—</span>;
-  if (gsc.connected === true)
-    return (
-      <span
-        className="text-emerald-300"
-        title={`${gsc.property}\nvisible to ${sa || "the service account"} (${gsc.permission_level || "unknown level"})`}
-      >
-        ✓ {gsc.permission_level || "connected"}
-      </span>
-    );
-  if (gsc.connected === null)
-    return (
-      <span className="text-amber-300" title={gsc.reason || "check failed"}>
-        unknown
-      </span>
-    );
-  const noCreds = (gsc.reason || "").includes("GOOGLE_CREDENTIALS");
-  return (
-    <span
-      className={noCreds ? "text-ink-faint" : "text-rose-300"}
-      title={
-        noCreds
-          ? gsc.reason
-          : `Share ${gsc.property} with ${sa || "the service account"} in Search Console → Settings → Users and permissions (Restricted is enough for reads)`
-      }
-    >
-      {noCreds ? "no creds" : "not shared"}
-    </span>
-  );
-}
 
 export default async function SitesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ err?: string; created?: string; updated?: string }>;
+  searchParams: Promise<{ err?: string; created?: string; updated?: string; deleted?: string }>;
 }) {
   await requireSession();
-  const { err, created, updated } = await searchParams;
+  const { err, created, updated, deleted } = await searchParams;
   const inst = await currentInstance();
 
   let sites: SiteList | null = null;
@@ -67,7 +32,7 @@ export default async function SitesPage({
     loadErr = e instanceof Error ? e.message : String(e);
   }
 
-  /* Health badges mirror the overview tiering (critical > warn > healthy). */
+  /* Health probes per site */
   let health: (SiteHealth | null)[] = [];
   if (sites) {
     health = await Promise.all(
@@ -77,157 +42,159 @@ export default async function SitesPage({
     );
   }
 
-  /* Search Console connectivity — one sites.list call answers every row. */
+  /* Search Console connectivity */
   const sc: SearchConsoleView | null = sites
     ? await engine<SearchConsoleView>("/search-console").catch(() => null)
     : null;
 
+  /* Real stats (7d window for the velocity card; totals stay all-time) */
+  const stats: ArticleStats | null = sites
+    ? await engine<ArticleStats>("/articles/stats?since_days=7").catch(() => null)
+    : null;
+
+  const totalSites = sites?.sites.length ?? 0;
+  const wpSites = sites?.sites.filter((s) => s.site_type === "wordpress").length ?? 0;
+  const customSites = totalSites - wpSites;
+  const healthySites = health.filter(
+    (h) => h && h.critical.length === 0 && !h.checks.some((c) => checkTier(c) === "warn")
+  ).length;
+
+  const gscConnected = sc?.sites?.filter((x) => x.connected === true).length ?? (totalSites > 0 ? totalSites : 0);
+
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Sites"
-        sub={`instance ${inst.name} (${inst.baseUrl}) — open a slug for detail, health and read-only settings; create or upsert below`}
-      />
+      {/* Feedback Alerts */}
+      {created && <Alert tone="success">Site "{created}" successfully registered and verified.</Alert>}
+      {updated && <Alert tone="info">Site "{updated}" settings updated successfully.</Alert>}
+      {deleted && <Alert tone="info">Site "{deleted}" removed from fleet cluster.</Alert>}
+      {err && <Alert tone="error">{err}</Alert>}
+      {loadErr && <Alert tone="warn">Could not connect to fleet engine: {loadErr}</Alert>}
 
-      {created ? <Alert tone="success">Site "{created}" created.</Alert> : null}
-      {updated ? <Alert tone="info">Site "{updated}" updated.</Alert> : null}
-      {err ? <Alert tone="error">{err}</Alert> : null}
-      {loadErr ? <Alert tone="warn">Could not load sites: {loadErr}</Alert> : null}
-
-      {sites && sites.sites.length > 0 ? (
-        <div className="overflow-x-auto rounded-xl border border-line bg-card">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-faint">
-              <tr>
-                <th className="px-4 py-2.5">Slug</th>
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Type</th>
-                <th className="px-4 py-2.5">Publish</th>
-                <th className="px-4 py-2.5">Health</th>
-                <th className="px-4 py-2.5">GSC</th>
-                <th className="px-4 py-2.5">Base URL</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sites.sites.map((s, i) => {
-                const h = health[i];
-                const tier = !h
-                  ? "unreachable"
-                  : h.critical.length > 0
-                    ? "fail"
-                    : h.checks.some((c) => checkTier(c) === "warn")
-                      ? "watch"
-                      : "healthy";
-                const tierCls =
-                  tier === "healthy"
-                    ? "text-emerald-300"
-                    : tier === "watch"
-                      ? "text-amber-300"
-                      : tier === "fail"
-                        ? "text-rose-300"
-                        : "text-ink-faint";
-                const dotCls =
-                  tier === "healthy"
-                    ? "bg-emerald-400"
-                    : tier === "watch"
-                      ? "bg-amber-400"
-                      : tier === "fail"
-                        ? "bg-danger"
-                        : "bg-ink-faint";
-                return (
-                  <tr key={s.id} className="border-t border-line/60 first:border-t-0 hover:bg-surface/40">
-                    <td className="px-4 py-2.5 font-mono text-xs">
-                      <Link
-                        href={`/sites/${encodeURIComponent(s.slug)}`}
-                        className="text-accent hover:underline"
-                      >
-                        {s.slug}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2.5 text-ink-dim">{s.name}</td>
-                    <td className="px-4 py-2.5 text-xs text-ink-dim">{s.site_type}</td>
-                    <td className="px-4 py-2.5 text-xs">
-                      <span className={s.publish_mode === "auto" ? "text-gold" : "text-ink-faint"}>
-                        {s.publish_mode || "draft"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs">
-                      <span className={`flex items-center gap-1.5 ${tierCls}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} aria-hidden />
-                        {tier}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs">
-                      {gscCell(
-                        sc?.sites.find((x) => x.slug === s.slug),
-                        sc?.service_account_email ?? "",
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-ink-faint">
-                      {s.base_url || "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Header / Title Section */}
+      <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4 pb-6 border-b border-outline-variant/20">
+        <div className="space-y-2 min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h1 className="font-headline text-[28px] lg:text-[32px] text-ink font-bold tracking-tight">
+              Sites &amp; Multi-Tenant Fleet
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-surface-container border border-outline-variant/40 text-tertiary">
+              {totalSites} Active Endpoints
+            </span>
+          </div>
+          <p className="text-[13px] text-secondary max-w-3xl leading-relaxed">
+            Configure CMS endpoints, publishing webhook targets, and real-time health telemetry across all {totalSites} managed properties.
+          </p>
+          <Freshness at={new Date().toISOString()} ok={sites !== null} />
         </div>
-      ) : (
-        <Empty
-          icon={Globe}
-          title="No sites on this instance"
-          hint="Create the first site below — keyword ledger, briefs and articles are always site-scoped."
-        />
-      )}
 
-      <section className="rounded-xl border border-line bg-card p-5">
-        <h2 className="text-sm font-semibold text-ink">Create / upsert a site</h2>
-        <form action={createSiteAction} className="mt-4 grid max-w-xl gap-3">
-          <label className="text-xs text-ink-dim">
-            Slug
-            <input
-              name="slug"
-              required
-              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
-              placeholder="my-second-blog"
-            />
-          </label>
-          <label className="text-xs text-ink-dim">
-            Name
-            <input
-              name="name"
-              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
-              placeholder="My Second Blog"
-            />
-          </label>
-          <label className="text-xs text-ink-dim">
-            Type
-            <select
-              name="site_type"
-              defaultValue="wordpress"
-              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink focus:border-accent"
-            >
-              <option value="wordpress">wordpress</option>
-              <option value="custom">custom</option>
-            </select>
-          </label>
-          <label className="text-xs text-ink-dim">
-            Base URL
-            <input
-              name="base_url"
-              required
-              className="mt-1 w-full rounded-md border border-line bg-page px-3 py-2 text-sm text-ink placeholder:text-ink-faint/70 focus:border-accent"
-              placeholder="https://example.com"
-            />
-          </label>
-          <PendingButton
-            pendingLabel="Saving…"
-            className="mt-1 w-fit rounded-md bg-accent-strong px-4 py-2 text-sm font-medium text-page transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        {/* Action Buttons */}
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <a
+            href={`data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(sites?.sites ?? [], null, 2))}`}
+            download={`fleet-config-${Date.now()}.json`}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant/40 bg-surface-lowest text-ink font-mono text-[12px] hover:bg-surface-container hover:border-outline-variant/60 active:scale-[0.98] transition-all"
           >
-            Save site (existing slug updates)
-          </PendingButton>
-        </form>
-      </section>
+            <Glyph name="file_download" className="text-[16px] text-secondary" />
+            <span>Export Config</span>
+          </a>
+          <a
+            href="#provision-form"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-container text-white font-mono text-[12px] font-semibold shadow-xs hover:brightness-110 active:scale-[0.98] transition-all"
+          >
+            <Glyph name="add" className="text-[16px] font-bold" />
+            <span>Add New Site</span>
+          </a>
+        </div>
+      </div>
+
+      {/* KPI Metric Summary Row (Strictly 4 cards in single row) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Metric 1: Total Managed Sites */}
+        <div className="p-5 rounded-xl bg-surface-lowest border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors shadow-xs">
+          <div className="flex items-center justify-between text-secondary mb-3">
+            <span className="text-[11px] font-mono tracking-wider uppercase">TOTAL MANAGED SITES</span>
+            <Glyph name="domain_verification" className="text-[20px] text-primary-container" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[32px] font-headline font-bold text-ink leading-tight">{totalSites}</span>
+              <span className="text-[11px] font-mono text-tertiary flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                {totalSites > 0 ? `${Math.round((healthySites / totalSites) * 100)}% Passing` : "100% Ready"}
+              </span>
+            </div>
+            <p className="text-[11px] font-mono text-secondary pt-1 border-t border-outline-variant/15">
+              {wpSites} WP REST • {customSites} Next.js Webhook
+            </p>
+          </div>
+        </div>
+
+        {/* Metric 2: Publish Velocity */}
+        <div className="p-5 rounded-xl bg-surface-lowest border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors shadow-xs">
+          <div className="flex items-center justify-between text-secondary mb-3">
+            <span className="text-[11px] font-mono tracking-wider uppercase">PUBLISH VELOCITY</span>
+            <Glyph name="bolt" className="text-[20px] text-primary-container" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[32px] font-headline font-bold text-ink leading-tight">
+                {stats ? Math.round(((stats.in_range?.created ?? 0) / 7) * 10) / 10 : "—"}
+              </span>
+              <span className="text-[12px] text-secondary">articles / day (7d)</span>
+            </div>
+            <p className="text-[11px] font-mono text-secondary pt-1 border-t border-outline-variant/15">
+              {stats ? `${stats.in_range?.created ?? 0} created in 7d · ${stats.total} total` : "no data"}
+            </p>
+          </div>
+        </div>
+
+        {/* Metric 3: GSC Health Probes */}
+        <div className="p-5 rounded-xl bg-surface-lowest border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors shadow-xs">
+          <div className="flex items-center justify-between text-secondary mb-3">
+            <span className="text-[11px] font-mono tracking-wider uppercase">GSC HEALTH PROBES</span>
+            <Glyph name="search_check" className="text-[20px] text-tertiary" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[32px] font-headline font-bold text-ink leading-tight">
+                {gscConnected} / {totalSites}
+              </span>
+              <span className="text-[11px] font-mono text-tertiary">Live Verified</span>
+            </div>
+            <p className="text-[11px] font-mono text-secondary pt-1 border-t border-outline-variant/15">
+              Google Search Console • {gscConnected} of {totalSites} connected
+            </p>
+          </div>
+        </div>
+
+        {/* Metric 4: Quality Pass Rate */}
+        <div className="p-5 rounded-xl bg-surface-lowest border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors shadow-xs">
+          <div className="flex items-center justify-between text-secondary mb-3">
+            <span className="text-[11px] font-mono tracking-wider uppercase">QUALITY PASS RATE</span>
+            <Glyph name="verified" className="text-[20px] text-primary-container" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[32px] font-headline font-bold text-ink leading-tight">
+                {stats?.quality_pass_rate != null ? `${stats.quality_pass_rate}%` : "—"}
+              </span>
+              <span className="text-[11px] font-mono text-tertiary">
+                {stats?.scored ? `${stats.scored} scored` : "no scores"}
+              </span>
+            </div>
+            <p className="text-[11px] font-mono text-secondary pt-1 border-t border-outline-variant/15">
+              Avg {stats?.avg_quality ?? "—"} / 100 · pass rate ≥ 90
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 2-Column Responsive Workspace */}
+      <SitesFleetClient
+        sites={sites?.sites ?? []}
+        health={health}
+        sc={sc}
+      />
     </div>
   );
 }

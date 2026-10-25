@@ -24,6 +24,9 @@ export async function createArticleAction(formData: FormData) {
   const keyword = String(formData.get("keyword") || "").trim();
   const title = String(formData.get("title") || "").trim();
   const site = String(formData.get("site") || "").trim();
+  const transcript = String(formData.get("transcript") || "").trim();
+  const instant = formData.get("instant") === "1" || formData.get("instant") === "true";
+
   if (!keyword) redirect(`${kwBase}?err=${encodeURIComponent("keyword is required")}`);
   if (!site) {
     redirect(
@@ -31,14 +34,29 @@ export async function createArticleAction(formData: FormData) {
     );
   }
   try {
-    const res = await engine<{ id: number; status: string }>(`/articles`, {
+    const briefPayload: Record<string, any> = {};
+    if (title) briefPayload.title = title;
+    if (transcript) {
+      briefPayload.source_transcript = transcript;
+      briefPayload.notes = `Generated from transcript:\n\n${transcript.slice(0, 1000)}...`;
+    }
+
+    const res = await engine<{ id: number; status: string; instant_triggered?: boolean }>(`/articles`, {
       method: "POST",
-      json: { site_slug: site, keyword, brief: title ? { title } : {} },
+      json: {
+        site_slug: site,
+        keyword,
+        brief: briefPayload,
+        instant,
+      },
     });
     revalidatePath("/");
     revalidatePath("/articles");
     revalidatePath(kwBase);
-    redirect(`/articles/${res.id}`);
+    const msg = instant 
+      ? "Topic queued with Instant Generation! Drafting and image staging started in background."
+      : "Topic added to the ledger.";
+    redirect(`/articles/${res.id}?ok=${encodeURIComponent(msg)}`);
   } catch (e) {
     redirect(`${kwBase}?err=${encodeURIComponent(errorOf(e))}`);
   }
@@ -48,26 +66,32 @@ export async function approveArticleAction(formData: FormData) {
   await requireSession();
   const id = Number(formData.get("id"));
   const approved = formData.get("approved") === "1";
-  // The detail screen's "Send to review" carries a note; audit rows keep it.
-  const note = String(formData.get("note") || "").trim() || "console";
+  const from = String(formData.get("from") || "");
+  const note = String(formData.get("note") || "");
+  const returnTo = from && PUBLISH_RETURN.has(from) ? from : back(id);
   try {
     await engine(`/articles/${id}/approve`, {
       method: "POST",
       json: { approved, note },
     });
   } catch (e) {
-    redirect(back(id, errorOf(e)));
+    redirect(from && PUBLISH_RETURN.has(from) ? `${from}?err=${encodeURIComponent(errorOf(e))}` : back(id, errorOf(e)));
   }
   revalidatePath("/");
   revalidatePath("/articles");
   revalidatePath("/approvals");
-  revalidatePath(back(id));
-  redirect(back(id));
+  revalidatePath("/publish");
+  const msg = approved ? `Article #${id} approved.` : `Article #${id} sent to review.`;
+  if (returnTo.includes("?")) {
+    redirect(`${returnTo}&ok=${encodeURIComponent(msg)}`);
+  } else {
+    redirect(`${returnTo}?ok=${encodeURIComponent(msg)}`);
+  }
 }
 
 /* Publishing from the Publish queue returns to the queue; anything else
    lands back on the article detail. Allowlist — never an open redirect. */
-const PUBLISH_RETURN = new Set(["/approvals", "/publish"]);
+const PUBLISH_RETURN = new Set(["/", "/approvals", "/publish"]);
 
 export async function publishArticleAction(formData: FormData) {
   await requireSession();
@@ -83,8 +107,11 @@ export async function publishArticleAction(formData: FormData) {
   revalidatePath("/");
   revalidatePath("/articles");
   revalidatePath("/publish");
-  if (queued) redirect(from);
-  redirect(back(id));
+  const msg = `Article #${id} published.`;
+  if (queued) {
+    redirect(`${from}?ok=${encodeURIComponent(msg)}`);
+  }
+  redirect(`${back(id)}?ok=${encodeURIComponent(msg)}`);
 }
 
 export async function generateArticleAction(formData: FormData) {
@@ -96,7 +123,7 @@ export async function generateArticleAction(formData: FormData) {
     redirect(back(id, errorOf(e)));
   }
   revalidatePath("/articles");
-  redirect(back(id));
+  redirect(`${back(id)}?ok=${encodeURIComponent(`Article #${id} generated.`)}`);
 }
 
 export async function refreshArticleAction(formData: FormData) {
@@ -107,7 +134,7 @@ export async function refreshArticleAction(formData: FormData) {
   } catch (e) {
     redirect(back(id, errorOf(e)));
   }
-  redirect(back(id));
+  redirect(`${back(id)}?ok=${encodeURIComponent(`Article #${id} refreshed on the live site.`)}`);
 }
 
 export async function stageImagesAction(formData: FormData) {
@@ -118,7 +145,7 @@ export async function stageImagesAction(formData: FormData) {
   } catch (e) {
     redirect(back(id, errorOf(e)));
   }
-  redirect(back(id));
+  redirect(`${back(id)}?ok=${encodeURIComponent(`Images staged for article #${id}.`)}`);
 }
 
 /* Per-image regenerate (Media tab): re-runs one staged slot through the same
@@ -170,7 +197,7 @@ export async function patchMetaAction(formData: FormData) {
   }
   revalidatePath("/");
   revalidatePath("/articles");
-  redirect(back(id));
+  redirect(`${back(id)}?ok=${encodeURIComponent(`Meta saved for article #${id}.`)}`);
 }
 
 export async function patchContentAction(formData: FormData) {
@@ -189,4 +216,45 @@ export async function patchContentAction(formData: FormData) {
   revalidatePath(back(id));
   revalidatePath("/articles");
   redirect(back(id));
+}
+
+export async function deleteArticleAction(formData: FormData) {
+  await requireSession();
+  const id = Number(formData.get("id"));
+  try {
+    await engine(`/articles/${id}`, { method: "DELETE" });
+  } catch (e) {
+    redirect(back(id, errorOf(e)));
+  }
+  revalidatePath("/");
+  revalidatePath("/articles");
+  redirect("/articles?deleted=" + id);
+}
+
+export async function deleteKeywordAction(formData: FormData) {
+  await requireSession();
+  const id = Number(formData.get("id"));
+  const site = String(formData.get("site") || "");
+  try {
+    await engine(`/keywords/${id}`, { method: "DELETE" });
+  } catch (e) {
+    redirect(`/articles/keywords?site=${encodeURIComponent(site)}&err=${encodeURIComponent(errorOf(e))}`);
+  }
+  revalidatePath("/");
+  revalidatePath("/articles/keywords");
+  redirect(`/articles/keywords?site=${encodeURIComponent(site)}&deleted=${id}`);
+}
+
+export async function prioritizeKeywordAction(formData: FormData) {
+  await requireSession();
+  const id = Number(formData.get("id"));
+  const site = String(formData.get("site") || "");
+  try {
+    await engine(`/keywords/${id}/prioritize`, { method: "POST" });
+  } catch (e) {
+    redirect(`/articles/keywords?site=${encodeURIComponent(site)}&err=${encodeURIComponent(errorOf(e))}`);
+  }
+  revalidatePath("/");
+  revalidatePath("/articles/keywords");
+  redirect(`/articles/keywords?site=${encodeURIComponent(site)}&ok=${encodeURIComponent("Keyword boosted to top priority!")}`);
 }

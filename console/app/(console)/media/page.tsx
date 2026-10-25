@@ -3,7 +3,9 @@ import { Images } from "lucide-react";
 
 import { engine, ArticleDetail, ArticleList, ArticleListItem } from "@/lib/engine";
 import { MediaCard, MediaImage } from "@/lib/media";
-import { Alert, Empty, PageHeader, Pill, fmtDate } from "@/lib/ui";
+import { Alert, Empty, PageHeader, Pill, fmtDate, BTN_GOLD } from "@/lib/ui";
+import { PendingButton } from "@/lib/interactive";
+import { regenerateImageAction } from "@/actions/articles";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +73,12 @@ export default async function MediaPage({
         />
       ) : (
         <>
+          <div className="rounded-xl border border-dashed border-line bg-card/40 p-4 text-[11px] font-mono text-secondary space-y-1.5">
+            <p className="font-semibold text-ink">Legend</p>
+            <p>Slot badge: featured / inline. Style badge: Jev pick (style pick + source), hash fallback, or pre-Jev (no style recorded).</p>
+            <p>QA: QA passed / QA not passing. Lanes (blog, style, clean, theme) show VLM scores with their floors; pre-Jev rows have no lanes.</p>
+            <p>try X/Y = generation attempts used. Regenerate re-runs one slot and spends image credits (confirm-gated).</p>
+          </div>
           {site ? (
             <p className="text-xs text-ink-faint">
               Filtered to <span className="font-mono text-ink-dim">{site}</span> ·{" "}
@@ -99,9 +107,31 @@ export default async function MediaPage({
                   </span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {g.images.map((img, i) => (
-                    <MediaCard key={`${g.article.id}-${i}`} articleId={g.article.id} image={img} />
-                  ))}
+                  {g.images.map((img, i) => {
+                    const name = typeof img.path === "string" ? (img.path.split(/[\\/]/).pop() ?? "") : "";
+                    return (
+                      <MediaCard
+                        key={`${g.article.id}-${i}`}
+                        articleId={g.article.id}
+                        image={img}
+                        extra={
+                          name ? (
+                            <form action={regenerateImageAction}>
+                              <input type="hidden" name="id" value={String(g.article.id)} />
+                              <input type="hidden" name="name" value={name} />
+                              <PendingButton
+                                className={`${BTN_GOLD} w-full`}
+                                confirmMessage="Regenerate this image? It re-runs generation for this slot and spends image credits."
+                                pendingLabel="Regenerating…"
+                              >
+                                Regenerate
+                              </PendingButton>
+                            </form>
+                          ) : null
+                        }
+                      />
+                    );
+                  })}
                 </div>
               </section>
             ))}

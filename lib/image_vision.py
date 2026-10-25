@@ -47,24 +47,18 @@ from lib.run_result_utils import loads_lenient
 
 logger = logging.getLogger(__name__)
 
-# Primary VLM. Default is the most reliable model in this project's own
-# error-rate analysis (2026-10-04, 851 log entries): gemini-flash-latest
-# failed 87.95% of the time while gemini-3.5-flash-lite failed 9.34%.
-# Each Gemini model also has its OWN independent free daily quota, so the
-# fallback list below drains several buckets before giving up.
-IMAGE_VLM_MODEL = os.environ.get("IMAGE_VLM_MODEL") or "gemini-3.5-flash-lite"
+# Primary VLM: Qwen 3 VL 30B / 8B via OpenRouter (best-in-class vision & visual QA)
+# with fallback to Gemini 3.5 Flash Lite and DeepSeek V4.1 Flash.
+IMAGE_VLM_MODEL = os.environ.get("IMAGE_VLM_MODEL") or "qwen/qwen3-vl-30b-a3b-instruct"
 IMAGE_VLM_FALLBACKS = [
     m.strip()
     for m in (
         os.environ.get("IMAGE_VLM_FALLBACKS")
-        or "gemini-3.1-flash-lite,gemini-3.6-flash,gemini-3.5-flash,gemini-flash-latest"
+        or "qwen/qwen3-vl-8b-instruct,gemini-3.5-flash-lite,gemini-2.5-flash"
     ).split(",")
     if m.strip()
 ]
-IMAGE_VLM_TIMEOUT = int(os.environ.get("IMAGE_VLM_TIMEOUT") or "60")
-IMAGE_VLM_ENDPOINT = os.environ.get("IMAGE_VLM_ENDPOINT") or (
-    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-)
+IMAGE_VLM_TIMEOUT = int(os.environ.get("IMAGE_VLM_TIMEOUT") or "45")
 
 # VLM description is kept short: it is Jev state, and shorter state is
 # cheaper (patterns.md: state window 32K, but prefer named short fields).
@@ -91,11 +85,21 @@ def _image_data_uri(image_path: str) -> Optional[str]:
 
 
 def _vlm_request(model: str, data_uri: str, prompt: str) -> Optional[Dict[str, Any]]:
-    """One OpenAI-compatible chat call against Gemini with an image part."""
-    api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set; cannot run image VLM.")
-        return None
+    """One OpenAI-compatible chat call against OpenRouter or Google with an image part."""
+    is_openrouter = "/" in model or "qwen" in model.lower() or "deepseek" in model.lower()
+    if is_openrouter:
+        endpoint = "https://openrouter.ai/api/v1/chat/completions"
+        api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+        if not api_key:
+            logger.warning("OPENROUTER_API_KEY not set; skipping OpenRouter VLM.")
+            return None
+    else:
+        endpoint = os.environ.get("IMAGE_VLM_ENDPOINT") or "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        if not api_key:
+            logger.warning("GEMINI_API_KEY not set; skipping Gemini VLM.")
+            return None
+
     payload = {
         "model": model,
         "messages": [
@@ -107,13 +111,13 @@ def _vlm_request(model: str, data_uri: str, prompt: str) -> Optional[Dict[str, A
                 ],
             }
         ],
-        "temperature": 0.2,
+        "temperature": 0.1,
         "max_tokens": _VLM_MAX_TOKENS,
     }
     try:
         started = time.perf_counter()
         resp = requests.post(
-            IMAGE_VLM_ENDPOINT,
+            endpoint,
             json=payload,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=IMAGE_VLM_TIMEOUT,
@@ -123,7 +127,8 @@ def _vlm_request(model: str, data_uri: str, prompt: str) -> Optional[Dict[str, A
             logger.warning(f"VLM {model} HTTP {resp.status_code}: {resp.text[:300]}")
             return None
         body = resp.json()
-        content = body["choices"][0]["message"]["content"]
+        choice_msg = (body.get("choices") or [{}])[0].get("message", {})
+        content = choice_msg.get("content") or choice_msg.get("reasoning")
         usage = body.get("usage") or {}
         logger.info(
             f"VLM {model} ok latency={latency_ms:.0f}ms "
@@ -133,7 +138,10 @@ def _vlm_request(model: str, data_uri: str, prompt: str) -> Optional[Dict[str, A
             content = "".join(
                 part.get("text", "") if isinstance(part, dict) else str(part) for part in content
             )
-        return {"text": str(content), "model": model, "latency_ms": round(latency_ms, 1)}
+        if not content:
+            logger.warning(f"VLM {model} returned empty content: {body}")
+            return None
+        return {"text": str(content).strip(), "model": model, "latency_ms": round(latency_ms, 1)}
     except requests.Timeout:
         logger.warning(f"VLM {model} timed out after {IMAGE_VLM_TIMEOUT}s")
     except Exception as e:
@@ -629,7 +637,7 @@ def revision_guidance(verdict: Dict[str, Any], slot: str = "featured") -> str:
 # thumbnail lane above).
 # ---------------------------------------------------------------------------
 IMAGE_STOCK_RELEVANCY_THRESHOLD = float(
-    os.environ.get("IMAGE_STOCK_RELEVANCY_THRESHOLD") or "0.90"
+    os.environ.get("IMAGE_STOCK_RELEVANCY_THRESHOLD") or "0.30"
 )
 
 _STOCK_TOPIC_INSTRUCTIONS = (

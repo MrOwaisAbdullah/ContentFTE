@@ -1,0 +1,676 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>ContentFTE - Autonomous Fleet Control Operator Console</title>
+<!-- Material Symbols Outlined -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<!-- Google Fonts: Plus Jakarta Sans, Inter, JetBrains Mono -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@500;600;700;800&amp;display=swap" rel="stylesheet">
+<!-- Tailwind CSS CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Theme Configuration -->
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "surface-tint": "#ffb5a0",
+            "secondary-fixed": "#e6e2dc",
+            "on-primary-container": "#541100",
+            "on-secondary-container": "#bbb8b2",
+            "surface-variant": "#33353a",
+            "primary-fixed-dim": "#ffb5a0",
+            "surface-container-highest": "#33353a",
+            "primary": "#ffb5a0",
+            "background": "#0e1015",
+            "primary-container": "#f2643a",
+            "secondary-fixed-dim": "#c9c6c0",
+            "inverse-on-surface": "#2e3036",
+            "surface": "#111318",
+            "surface-container": "#16181e",
+            "error-container": "#93000a",
+            "on-primary-fixed-variant": "#872100",
+            "secondary-container": "#4a4945",
+            "surface-container-lowest": "#0a0c10",
+            "error": "#ffb4ab",
+            "on-error": "#690005",
+            "on-background": "#e2e2e9",
+            "on-secondary-fixed-variant": "#484743",
+            "on-tertiary-fixed": "#002113",
+            "on-tertiary": "#003824",
+            "inverse-surface": "#e2e2e9",
+            "outline": "#a88a82",
+            "surface-container-high": "#23262d",
+            "on-secondary": "#31302d",
+            "outline-variant": "#3f3633",
+            "tertiary-fixed": "#6ffbbe",
+            "on-tertiary-fixed-variant": "#005236",
+            "surface-container-low": "#13151b",
+            "primary-fixed": "#ffdbd1",
+            "on-surface": "#e2e2e9",
+            "surface-bright": "#37393f",
+            "inverse-primary": "#ad330a",
+            "tertiary": "#4edea3",
+            "tertiary-fixed-dim": "#4edea3",
+            "on-primary-fixed": "#3b0900",
+            "surface-dim": "#0e1015",
+            "tertiary-container": "#00a572",
+            "on-error-container": "#ffdad6",
+            "secondary": "#9fa2ab",
+            "on-tertiary-container": "#00311f",
+            "on-surface-variant": "#e1bfb6",
+            "on-secondary-fixed": "#1c1c18",
+            "on-primary": "#5f1500"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.375rem",
+            "xl": "0.625rem",
+            "full": "9999px"
+          },
+          "fontFamily": {
+            "body-md": ["Inter", "sans-serif"],
+            "body-sm": ["Inter", "sans-serif"],
+            "headline-xl-mobile": ["Plus Jakarta Sans", "sans-serif"],
+            "headline-md": ["Plus Jakarta Sans", "sans-serif"],
+            "label-meta": ["Inter", "sans-serif"],
+            "label-code": ["JetBrains Mono", "monospace"],
+            "headline-sm": ["Plus Jakarta Sans", "sans-serif"],
+            "headline-lg": ["Plus Jakarta Sans", "sans-serif"],
+            "label-code-sm": ["JetBrains Mono", "monospace"],
+            "body-lg": ["Inter", "sans-serif"],
+            "headline-xl": ["Plus Jakarta Sans", "sans-serif"]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 350, 'GRAD' 0, 'opsz' 20;
+      font-size: 18px;
+      line-height: 1;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #0a0c10;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #23262d;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body class="bg-[#0a0c10] text-on-surface antialiased overflow-x-hidden selection:bg-primary-container selection:text-white">
+<!-- ========================================================================= -->
+<!-- 1. LEFT SIDEBAR NAVIGATION: Refined, breathing room & quiet hierarchy    -->
+<!-- ========================================================================= -->
+<aside class="fixed inset-y-0 left-0 w-64 z-40 bg-[#0c0e13] border-r border-white/[0.06] flex flex-col h-screen justify-between p-5 select-none">
+<!-- Brand & Primary Action -->
+<div class="flex flex-col gap-y-6">
+<div class="flex items-center gap-x-3 px-1.5 py-1">
+<div class="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-white shadow-[0_0_16px_rgba(242,100,58,0.35)]">
+<span class="material-symbols-outlined text-white text-[18px]" data-icon="bolt">bolt</span>
+</div>
+<div class="flex flex-col">
+<span class="text-[16px] font-headline-md tracking-tight font-semibold text-on-surface leading-tight">ContentFTE</span>
+<span class="text-[11px] font-label-code text-secondary">Fleet Console</span>
+</div>
+</div>
+<!-- Primary Run Action Button -->
+<button class="w-full h-9 px-3 bg-primary-container text-white text-[13px] font-semibold tracking-wide rounded-lg flex items-center justify-center gap-2 shadow-[0_0_14px_rgba(242,100,58,0.25)] hover:brightness-110 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined text-white text-[16px]" data-icon="play_arrow">play_arrow</span>
+<span class="">Dispatch Run</span>
+</button>
+<!-- Nav List -->
+<nav class="flex flex-col gap-1 overflow-y-auto max-h-[calc(100vh-340px)] custom-scroll pr-1">
+<a class="flex items-center gap-3 px-3 py-2 text-primary font-medium bg-[#16181e] rounded-lg text-[13px] border-l-2 border-primary-container transition-colors" href="#overview">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="dashboard">dashboard</span>
+<span class="">Overview</span>
+<span class="ml-auto w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#pipeline">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="view_kanban">view_kanban</span>
+<span class="">Pipeline</span>
+<span class="ml-auto text-[11px] font-label-code bg-white/[0.05] px-1.5 py-0.5 rounded text-secondary">6</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#keywords">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="key">key</span>
+<span class="">Keywords</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#research">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="manage_search">manage_search</span>
+<span class="">Research</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#briefs">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="description">description</span>
+<span class="">Briefs</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#media">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="perm_media">perm_media</span>
+<span class="">Media</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#logs">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="terminal">terminal</span>
+<span class="">Logs</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#insights">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="insights">insights</span>
+<span class="">Insights</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[13px] transition-colors" href="#sites">
+<span class="material-symbols-outlined text-secondary text-[18px]" data-icon="domain">domain</span>
+<span class="">Sites</span>
+<span class="ml-auto text-[11px] font-label-code bg-white/[0.05] px-1.5 py-0.5 rounded text-primary">14</span>
+</a>
+</nav>
+</div>
+<!-- Sidebar Footer Controls -->
+<div class="flex flex-col gap-3 pt-3 border-t border-white/[0.06]">
+<div class="px-2.5 py-1.5 bg-[#12141a] rounded-lg border border-white/[0.05] flex items-center justify-between text-[11px] font-label-code">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary shadow-[0_0_8px_#4edea3]"></span>
+<span class="text-secondary">US-East-1 • 99.98%</span>
+</div>
+<span class="text-tertiary">OK</span>
+</div>
+<div class="flex flex-col gap-0.5">
+<a class="flex items-center gap-2 px-2.5 py-1.5 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[12px] transition-colors" href="#docs">
+<span class="material-symbols-outlined text-[16px]" data-icon="help">help</span>
+<span class="">Documentation</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-1.5 text-secondary hover:text-on-surface hover:bg-[#14161c] rounded-lg text-[12px] transition-colors" href="#settings">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+<span class="">System Settings</span>
+</a>
+</div>
+<div class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-[#14161c] border border-white/[0.05]">
+<img class="w-7 h-7 rounded-full object-cover border border-white/[0.1]" data-alt="Portrait of Alex Vance" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBGyAO0_7_kVn8WDITn1UIpENe4oNoDivgv1u9QRyJF0CxKRnlQWkIWgLEsAVqFCUWwCy2d9HQTmzVDOeRQjZZ2m6Wn7CpdgODg-baekZuE9j67feBNPdeUGNKla9TVidQDrEmPkWF9hhUzCclkMMQ3mrHvf6efb-mIjPPSa7VD1GijsHMEYU2UsOe1bkeV5pVvrRTiw8dE8t9iJf8nYjYfKFX80WKplL_3ry8qbstHQx6RJQb_TOE-">
+<div class="flex flex-col flex-1 min-w-0">
+<span class="text-[12px] font-medium text-on-surface truncate">Alex Vance</span>
+<span class="text-[11px] font-label-code text-secondary truncate">Growth Lead</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- ========================================================================= -->
+<!-- 2. TOP NAV BAR: Generous spacing, minimal clutter                         -->
+<!-- ========================================================================= -->
+<header class="sticky top-0 w-full z-30 bg-[#0a0c10]/90 backdrop-blur-md border-b border-white/[0.06] flex items-center justify-between h-16 px-6 pl-72 select-none gap-4">
+<!-- Left: Cluster & Context Badge -->
+<div class="flex items-center gap-2.5 shrink-0 min-w-0">
+  <button class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#14161c] border border-white/[0.07] text-[12px] font-label-code text-on-surface hover:bg-[#1a1d24] transition-colors shrink-0">
+    <span class="w-1.5 h-1.5 rounded-full bg-tertiary shadow-[0_0_8px_#4edea3]"></span>
+    <span class="font-medium text-white">Fleet Cluster 01</span>
+    <span class="text-secondary/40">/</span>
+    <span class="text-secondary text-[11px] truncate max-w-[120px]">production-us-east</span>
+    <span class="material-symbols-outlined text-[14px] text-secondary ml-0.5" data-icon="unfold_more">unfold_more</span>
+  </button>
+  <div class="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#14161c] border border-white/[0.06] text-[11px] font-label-code shrink-0">
+    <span class="text-secondary/50">site:</span>
+    <span class="text-primary font-medium truncate max-w-[130px]">fintech-insider.io</span>
+    <a class="text-secondary hover:text-primary transition-colors ml-0.5 inline-flex items-center" href="https://fintech-insider.io" target="_blank">
+      <span class="material-symbols-outlined text-[13px]" data-icon="open_in_new">open_in_new</span>
+    </a>
+  </div>
+</div>
+
+<!-- Center: Compact, focused search bar -->
+<div class="flex-1 max-w-xs mx-auto px-2 min-w-0">
+  <div class="relative flex items-center w-full">
+    <span class="absolute left-3 text-secondary/60 material-symbols-outlined text-[15px] pointer-events-none" data-icon="search">search</span>
+    <input class="w-full h-8 pl-8 pr-12 bg-[#13151b] text-on-surface placeholder:text-secondary/50 text-[12px] font-label-code rounded-lg border border-white/[0.08] focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="Search fleet (⌘K)..." type="text">
+    <kbd class="absolute right-2 px-1.5 py-0.5 rounded bg-[#1a1d24] border border-white/[0.08] text-[10px] font-label-code text-secondary select-none pointer-events-none">⌘K</kbd>
+  </div>
+</div>
+
+<!-- Right: Clean status pill, utility icons, and Primary CTA (never shrink, no wrap) -->
+<div class="flex items-center gap-3 shrink-0 ml-auto">
+  <!-- Status badge -->
+  <div class="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#14161c] border border-white/[0.06] text-[11px] font-label-code shrink-0">
+    <span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+    <span class="text-white font-medium">6 Active</span>
+    <span class="text-secondary/30">•</span>
+    <span class="text-secondary">4m sync</span>
+  </div>
+
+  <!-- Quick icons divider -->
+  <div class="flex items-center gap-1 border-l border-white/[0.08] pl-2 shrink-0">
+    <button class="relative p-1.5 text-secondary hover:text-white hover:bg-[#1a1d24] rounded-lg transition-colors" title="Notifications">
+      <span class="material-symbols-outlined text-[18px]" data-icon="notifications">notifications</span>
+      <span class="absolute top-1 right-1 w-1.5 h-1.5 bg-primary-container rounded-full"></span>
+    </button>
+    <button class="p-1.5 text-secondary hover:text-white hover:bg-[#1a1d24] rounded-lg transition-colors" title="Dark Mode">
+      <span class="material-symbols-outlined text-[18px]" data-icon="dark_mode">dark_mode</span>
+    </button>
+  </div>
+
+  <!-- Primary CTA -->
+  <button class="h-8 px-3.5 py-1 bg-primary-container text-white text-[12px] font-semibold tracking-wide rounded-lg flex items-center gap-1.5 shadow-[0_0_12px_rgba(242,100,58,0.25)] hover:bg-[#d8532b] active:scale-[0.98] transition-all shrink-0">
+    <span class="material-symbols-outlined text-[15px]" data-icon="rocket_launch">rocket_launch</span>
+    <span class="">Deploy Fleet</span>
+  </button>
+</div>
+</header>
+<!-- ========================================================================= -->
+<!-- 3. MAIN DASHBOARD CONTENT: Generous margins, breathing room, uncluttered  -->
+<!-- ========================================================================= -->
+<main class="pl-64 min-h-[calc(100vh-64px)] bg-[#0a0c10]">
+<div class="max-w-[1520px] mx-auto px-10 py-10 space-y-10">
+<!-- HEADER: Spacious, uncluttered, clear context -->
+<div class="flex flex-col lg:flex-row lg:items-end justify-between gap-8 pb-4">
+<div class="space-y-3">
+<div class="flex items-center gap-3">
+<h1 class="text-[28px] lg:text-[34px] font-headline-xl font-bold tracking-tight text-white">Fleet Overview</h1>
+<span class="px-2.5 py-1 rounded-full text-[11px] font-label-code bg-primary-container/15 text-primary border border-primary-container/30">
+              Agent Swarm v2.4
+            </span>
+</div>
+<p class="text-[14px] text-secondary font-body-md max-w-2xl leading-relaxed">
+            High-level operational health and autonomous publishing throughput across 14 connected tenant sites.
+          </p>
+</div>
+<!-- Clean, quiet pill selectors -->
+<div class="flex items-center gap-4">
+<div class="inline-flex p-1.5 rounded-lg bg-[#13151b] border border-white/[0.08] text-[12px] font-label-code">
+<button class="px-3.5 py-1 rounded bg-[#1e2129] text-white font-medium shadow-sm">24h</button>
+<button class="px-3.5 py-1 text-secondary hover:text-white transition-colors">7d</button>
+<button class="px-3.5 py-1 text-secondary hover:text-white transition-colors">30d</button>
+</div>
+<div class="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-tertiary/10 border border-tertiary/25 text-[12px] font-label-code text-tertiary">
+<span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-medium">Auto-Publish: ON</span>
+</div>
+</div>
+</div>
+<!-- SECTION 1: 4 REFINED, AIRY KPI SUMMARY CARDS (Strictly <= 4 cards in row) -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+<!-- KPI 1 -->
+<div class="p-6 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-colors space-y-4">
+<div class="flex items-center justify-between text-secondary">
+<span class="text-[12px] font-label-meta tracking-wider uppercase">Active Sites</span>
+<span class="material-symbols-outlined text-[20px] text-secondary/70" data-icon="domain">domain</span>
+</div>
+<div class="space-y-1.5">
+<div class="text-[34px] font-headline-xl font-semibold tracking-tight text-white">14</div>
+<div class="flex items-center gap-2 text-[12px] font-label-code text-tertiary">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+<span class="">100% Endpoints Healthy</span>
+</div>
+</div>
+<div class="pt-4 border-t border-white/[0.05] text-[12px] font-label-code text-secondary flex items-center justify-between">
+<span class="">11 WP • 3 Next.js</span>
+<a class="text-primary hover:underline flex items-center gap-0.5" href="#sites">
+<span class="">Manage</span>
+<span class="material-symbols-outlined text-[13px]" data-icon="chevron_right">chevron_right</span>
+</a>
+</div>
+</div>
+<!-- KPI 2 -->
+<div class="p-6 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-colors space-y-4">
+<div class="flex items-center justify-between text-secondary">
+<span class="text-[12px] font-label-meta tracking-wider uppercase">Weekly Impressions</span>
+<span class="material-symbols-outlined text-[20px] text-secondary/70" data-icon="trending_up">trending_up</span>
+</div>
+<div class="space-y-1.5">
+<div class="text-[34px] font-headline-xl font-semibold tracking-tight text-white font-label-code">482.9k</div>
+<div class="flex items-center gap-1.5 text-[12px] font-label-code text-tertiary">
+<span class="material-symbols-outlined text-[14px]" data-icon="arrow_upward">arrow_upward</span>
+<span class="">+18.4% vs last week</span>
+</div>
+</div>
+<div class="pt-4 border-t border-white/[0.05] text-[12px] font-label-code text-secondary flex items-center justify-between">
+<span class="">Google Search Console</span>
+<span class="text-tertiary">Live Verified</span>
+</div>
+</div>
+<!-- KPI 3 -->
+<div class="p-6 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-colors space-y-4">
+<div class="flex items-center justify-between text-secondary">
+<span class="text-[12px] font-label-meta tracking-wider uppercase">Quality Gate Pass Rate</span>
+<span class="material-symbols-outlined text-[20px] text-secondary/70" data-icon="verified">verified</span>
+</div>
+<div class="space-y-1.5">
+<div class="text-[34px] font-headline-xl font-semibold tracking-tight text-white font-label-code">94.2%</div>
+<div class="flex items-center gap-2 text-[12px] font-label-code text-secondary">
+<span class="">Avg Score: <strong class="text-white">89.6</strong>/100</span>
+</div>
+</div>
+<div class="pt-4 border-t border-white/[0.05] text-[12px] font-label-code text-secondary flex items-center justify-between">
+<span class="">Hallucination &lt;0.4%</span>
+<span class="text-primary font-medium">2 In Review</span>
+</div>
+</div>
+<!-- KPI 4 -->
+<div class="p-6 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-colors space-y-4">
+<div class="flex items-center justify-between text-secondary">
+<span class="text-[12px] font-label-meta tracking-wider uppercase">Publishing Velocity</span>
+<span class="material-symbols-outlined text-[20px] text-secondary/70" data-icon="speed">speed</span>
+</div>
+<div class="space-y-1.5">
+<div class="text-[34px] font-headline-xl font-semibold tracking-tight text-white">42 <span class="text-[14px] font-normal text-secondary font-body-sm">posts/day</span></div>
+<div class="flex items-center gap-2 text-[12px] font-label-code text-tertiary">
+<span class="">85% Autonomous Flow</span>
+</div>
+</div>
+<div class="pt-4 border-t border-white/[0.05] text-[12px] font-label-code text-secondary flex items-center justify-between">
+<span class="">$0.18 / 1k words</span>
+<span class="text-primary font-medium">On Track</span>
+</div>
+</div>
+</div>
+<!-- SECTION 2: STREAMLINED 2-TIER AUTONOMOUS PIPELINE STREAM (MAX 3 CARDS PER ROW - STRICTLY <= 5) -->
+<div class="space-y-4">
+<div class="flex items-center justify-between px-1">
+<div class="flex items-center gap-2.5">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="conversion_path">conversion_path</span>
+<h2 class="text-[13px] font-label-meta uppercase tracking-wider text-secondary font-semibold">Autonomous Execution Stream</h2>
+</div>
+<span class="text-[12px] font-label-code text-secondary">Global Concurrency: 12 Workers</span>
+</div>
+<!-- 3-Column x 2-Row Layout ensuring strict adherence to ≤ 5 cards per row, spacious & organized -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Stage 1 -->
+<div class="p-5 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-all space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary font-medium">01 // RESEARCH</span>
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">34</div>
+<div class="text-[12px] text-secondary font-body-sm">Topics Discovered</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-secondary/70">
+              Tavily Deep Search
+            </div>
+</div>
+<!-- Stage 2 -->
+<div class="p-5 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-all space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary font-medium">02 // BRIEFS</span>
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">18</div>
+<div class="text-[12px] text-secondary font-body-sm">Outlines Ready</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-tertiary">
+              12 Auto-Approved
+            </div>
+</div>
+<!-- Stage 3 (Active) -->
+<div class="p-5 rounded-xl bg-[#161820] border border-primary-container/30 hover:border-primary-container/50 transition-all space-y-3 relative">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-primary font-medium">03 // SYNTHESIS</span>
+<span class="w-2 h-2 rounded-full bg-primary-container animate-pulse shadow-[0_0_8px_rgba(242,100,58,0.7)]"></span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">9 Active</div>
+<div class="text-[12px] text-primary font-body-sm">In-Flight Generation</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-primary flex items-center justify-between">
+<span class="">Gemini 1.5 Pro</span>
+<span class="material-symbols-outlined text-[13px]" data-icon="autorenew">autorenew</span>
+</div>
+</div>
+<!-- Stage 4 -->
+<div class="p-5 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-all space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary font-medium">04 // MEDIA</span>
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">14</div>
+<div class="text-[12px] text-secondary font-body-sm">Infocards &amp; Charts</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-secondary/70">
+              100% Generated
+            </div>
+</div>
+<!-- Stage 5 -->
+<div class="p-5 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-all space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary font-medium">05 // QUALITY GATE</span>
+<span class="px-1.5 py-0.5 rounded bg-primary-container/20 text-primary text-[10px] font-label-code font-bold">2 REVIEW</span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">7 Audited</div>
+<div class="text-[12px] text-secondary font-body-sm">7-pt Verification</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-secondary/70">
+              Avg Score: 91.4
+            </div>
+</div>
+<!-- Stage 6 -->
+<div class="p-5 rounded-xl bg-[#12141a] border border-white/[0.06] hover:border-white/[0.12] transition-all space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary font-medium">06 // DISPATCH</span>
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+</div>
+<div class="space-y-1">
+<div class="text-[20px] font-headline-md font-semibold text-white">28 Live</div>
+<div class="text-[12px] text-secondary font-body-sm">Published Today</div>
+</div>
+<div class="pt-3 border-t border-white/[0.05] text-[11px] font-label-code text-tertiary">
+              0 Failures (24h)
+            </div>
+</div>
+</div>
+</div>
+<!-- SECTION 3: FOCUSED & UNCLUTTERED LOWER SECTION (Spacious 2/3 and 1/3 Split with generous gap-8) -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<!-- LEFT (2/3 width): Autonomous Stream Activity - 4 Clean, spacious pipeline runs -->
+<div class="lg:col-span-8 space-y-4">
+<div class="flex items-center justify-between px-1">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="history">history</span>
+<h2 class="text-[16px] font-headline-sm font-semibold text-white">Recent Autonomous Dispatches</h2>
+</div>
+<a class="text-[12px] font-label-code text-primary hover:underline flex items-center gap-1" href="#pipeline">
+<span class="">View All Pipeline Runs</span>
+<span class="material-symbols-outlined text-[14px]" data-icon="arrow_forward">arrow_forward</span>
+</a>
+</div>
+<!-- Clean List of 4 Runs with generous padding -->
+<div class="rounded-xl bg-[#12141a] border border-white/[0.06] divide-y divide-white/[0.04] overflow-hidden">
+<!-- Run Item 1 -->
+<div class="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
+<div class="space-y-2 max-w-xl">
+<div class="flex items-center gap-2.5 text-[11px] font-label-code">
+<span class="text-tertiary font-medium flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                    Dispatched to CMS
+                  </span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">fintech-insider.io</span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">4m ago</span>
+</div>
+<h3 class="text-[14px] font-semibold text-white hover:text-primary transition-colors cursor-pointer">
+                  How Autonomous Agents Are Transforming High-Frequency B2B Underwriting
+                </h3>
+</div>
+<div class="flex items-center gap-6 text-[12px] font-label-code text-secondary shrink-0">
+<div class="text-right">
+<div class="text-white font-medium">3,420 words</div>
+<div class="text-secondary/70 text-[11px]">Duration: 4m 12s</div>
+</div>
+<button class="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/[0.06] transition-colors" title="Inspect Run">
+<span class="material-symbols-outlined text-[18px]" data-icon="open_in_new">open_in_new</span>
+</button>
+</div>
+</div>
+<!-- Run Item 2 -->
+<div class="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
+<div class="space-y-2 max-w-xl">
+<div class="flex items-center gap-2.5 text-[11px] font-label-code">
+<span class="text-primary font-medium flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse"></span>
+                    Synthesizing Draft
+                  </span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">cloud-native-dev.org</span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">In progress</span>
+</div>
+<h3 class="text-[14px] font-semibold text-white hover:text-primary transition-colors cursor-pointer">
+                  Benchmarking Kubernetes Ingress Controllers on ARM64 Graviton3
+                </h3>
+</div>
+<div class="flex items-center gap-6 text-[12px] font-label-code text-secondary shrink-0">
+<div class="text-right">
+<div class="text-primary font-medium">Stage 3 of 6</div>
+<div class="text-secondary/70 text-[11px]">Cycle: 2m 45s elapsed</div>
+</div>
+<button class="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/[0.06] transition-colors" title="Inspect Run">
+<span class="material-symbols-outlined text-[18px]" data-icon="visibility">visibility</span>
+</button>
+</div>
+</div>
+<!-- Run Item 3 -->
+<div class="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
+<div class="space-y-2 max-w-xl">
+<div class="flex items-center gap-2.5 text-[11px] font-label-code">
+<span class="text-tertiary font-medium flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                    Dispatched to CMS
+                  </span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">ai-tool-benchmarks.net</span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">32m ago</span>
+</div>
+<h3 class="text-[14px] font-semibold text-white hover:text-primary transition-colors cursor-pointer">
+                  Top 10 Claude 3.5 Sonnet Coding Harnesses for Distributed Teams
+                </h3>
+</div>
+<div class="flex items-center gap-6 text-[12px] font-label-code text-secondary shrink-0">
+<div class="text-right">
+<div class="text-white font-medium">4,810 words</div>
+<div class="text-secondary/70 text-[11px]">Duration: 5m 08s</div>
+</div>
+<button class="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/[0.06] transition-colors" title="Inspect Run">
+<span class="material-symbols-outlined text-[18px]" data-icon="open_in_new">open_in_new</span>
+</button>
+</div>
+</div>
+<!-- Run Item 4 -->
+<div class="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.01] transition-colors">
+<div class="space-y-2 max-w-xl">
+<div class="flex items-center gap-2.5 text-[11px] font-label-code">
+<span class="text-tertiary font-medium flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                    Dispatched to CMS
+                  </span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">saas-growth-weekly.com</span>
+<span class="text-secondary/40">•</span>
+<span class="text-secondary">1h 14m ago</span>
+</div>
+<h3 class="text-[14px] font-semibold text-white hover:text-primary transition-colors cursor-pointer">
+                  PLG Pricing Experiments: What 120 Series-B Startups Learned in 2025
+                </h3>
+</div>
+<div class="flex items-center gap-6 text-[12px] font-label-code text-secondary shrink-0">
+<div class="text-right">
+<div class="text-white font-medium">2,950 words</div>
+<div class="text-secondary/70 text-[11px]">Duration: 3m 48s</div>
+</div>
+<button class="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/[0.06] transition-colors" title="Inspect Run">
+<span class="material-symbols-outlined text-[18px]" data-icon="open_in_new">open_in_new</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- RIGHT (1/3 width): Fleet Attention Needed - Focused, clear review box -->
+<div class="lg:col-span-4 space-y-4">
+<div class="flex items-center justify-between px-1">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[18px]" data-icon="shield">shield</span>
+<h2 class="text-[16px] font-headline-sm font-semibold text-white">Attention Needed</h2>
+</div>
+<span class="px-2.5 py-1 rounded-full text-[11px] font-label-code bg-primary-container/15 text-primary border border-primary-container/30">
+              2 Items
+            </span>
+</div>
+<!-- Focused Card 1: Primary Urgent Review -->
+<div class="p-6 rounded-xl bg-[#12141a] border border-white/[0.06] space-y-4">
+<div class="space-y-2">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-label-code text-secondary">cloud-native-dev.org</span>
+<span class="text-[11px] font-label-code text-primary font-medium bg-primary-container/10 px-2 py-0.5 rounded border border-primary-container/20">Quality Score: 84</span>
+</div>
+<h3 class="text-[14px] font-semibold text-white leading-snug">
+                Complete Guide to Vector Embeddings in PostgreSQL
+              </h3>
+<p class="text-[12px] text-secondary leading-relaxed">
+                Keyword density borderline (3.2%) in H2 sections. Requires 1-click human editorial confirmation before auto-push.
+              </p>
+</div>
+<div class="pt-3 flex items-center gap-3">
+<button class="flex-1 h-9 rounded-lg bg-primary-container hover:bg-[#d8532b] text-white text-[12px] font-semibold flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(242,100,58,0.2)] transition-all">
+<span class="material-symbols-outlined text-[15px]" data-icon="check_circle">check_circle</span>
+<span class="">Approve &amp; Push</span>
+</button>
+<button class="px-3.5 h-9 rounded-lg bg-[#1a1d24] hover:bg-[#232732] text-secondary hover:text-white border border-white/[0.08] text-[12px] font-label-code transition-colors">
+                Diff
+              </button>
+</div>
+</div>
+<!-- Secondary Notice Banner -->
+<div class="p-5 rounded-xl bg-[#14161c] border border-white/[0.05] flex items-center justify-between text-[12px]">
+<div class="space-y-1">
+<div class="text-white font-medium">1 additional draft waiting</div>
+<div class="text-secondary text-[11px]">Missing secondary citation schema</div>
+</div>
+<a class="text-primary hover:underline text-[12px] font-label-code font-medium flex items-center gap-1" href="#briefs">
+<span class="">Review</span>
+<span class="material-symbols-outlined text-[13px]" data-icon="chevron_right">chevron_right</span>
+</a>
+</div>
+</div>
+</div>
+<!-- FOOTER STATUS STRIP: Quiet, uncluttered, breathing space -->
+<div class="pt-8 pb-4 border-t border-white/[0.06] flex flex-col md:flex-row items-center justify-between gap-4 text-[12px] font-label-code text-secondary/70">
+<div class="flex items-center gap-3">
+<span class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+<span class="text-secondary">Core LLM: Gemini 1.5 Pro</span>
+</span>
+<span class="text-white/[0.1]">•</span>
+<span class="">Tavily Deep Search (Active)</span>
+<span class="text-white/[0.1]">•</span>
+<span class="">Pinecone us-east (0 lag)</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="">ContentFTE Console v2.4.9</span>
+<span class="text-white/[0.1]">|</span>
+<a class="text-primary hover:underline" href="#logs">Event Logs</a>
+</div>
+</div>
+</div>
+</main>
+<!-- Lightweight Keyboard Shortcut Script -->
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+          e.preventDefault();
+          const searchInput = document.querySelector('input[type="text"]');
+          if (searchInput) searchInput.focus();
+        }
+      });
+    });
+  </script>
+
+
+</body></html>

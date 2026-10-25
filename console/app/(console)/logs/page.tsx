@@ -2,6 +2,7 @@ import Link from "next/link";
 import { engine, LogsView } from "@/lib/engine";
 import { actionColor, Alert, Empty, PageHeader, fmtCost } from "@/lib/ui";
 import { FileClock } from "lucide-react";
+import { Freshness } from "@/components/freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,7 @@ export default async function LogsPage({
         sub="audit + usage + cost ledger, newest first — click a row for its full payload"
         right={
           <span className="flex items-center gap-4">
+            <Freshness at={new Date().toISOString()} ok={data !== null} />
             <Link href="/insights" className="text-xs text-accent hover:text-accent-strong hover:underline">
               insights (cost) →
             </Link>

@@ -80,6 +80,22 @@ export interface StagesView {
 }
 
 /** GET /sites/{slug}/health — ledger + WP config + live probes (spec §5.6). */
+export interface SiteCadenceStatus {
+  frequency: "manual" | "daily" | "every_2_days" | "twice_a_week" | "weekly" | "biweekly" | "monthly" | string;
+  max_posts_per_cadence: number;
+  require_approval: boolean;
+  auto_publish: boolean;
+  publish_mode: "draft" | "publish" | string;
+  last_published_at: string | null;
+  last_published_id: number | null;
+  last_published_title: string | null;
+  next_allowed_at: string | null;
+  can_publish_now: boolean;
+  seconds_remaining: number;
+  can_auto_publish: boolean;
+}
+
+/** GET /sites/{slug}/health — ledger + WP config + live probes + cadence (spec §5.6). */
 export interface SiteHealth {
   site: string;
   ok: boolean;
@@ -88,6 +104,7 @@ export interface SiteHealth {
   base_url: string;
   checks: string[];
   critical: string[];
+  cadence?: SiteCadenceStatus;
 }
 
 /** GET /search-console — per-site GSC connectivity (one sites.list call). */
@@ -100,6 +117,22 @@ export interface SearchConsoleSiteStatus {
   connected: boolean | null;
   permission_level?: string;
   reason?: string;
+  metrics_28d?: {
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    position: number;
+  };
+}
+
+export interface SpendSummary {
+  site_slug: string;
+  wtd_usd: number;
+  mtd_usd: number;
+  total_usd: number;
+  wtd_formatted: string;
+  mtd_formatted: string;
+  total_formatted: string;
 }
 
 export interface SearchConsoleView {
@@ -152,6 +185,7 @@ export interface ArticleListItem {
   published_at: string | null;
   cost_usd: number | null;
   quality?: number | null;
+  word_count?: number | null;
   summary?: string;
   /** staged image count (meta.images) — the Media page detail-fetches only
       articles with art; 0/undefined mean none. */
@@ -164,6 +198,21 @@ export interface ArticleList {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface ArticleStats {
+  site_slug: string;
+  range_days: number;
+  total: number;
+  by_status: Record<string, number>;
+  scored: number;
+  avg_quality: number | null;
+  quality_pass_rate: number | null;
+  words_total: number;
+  in_range: { created: number; published: number };
+  cost: { total_usd: number; per_kind: Record<string, number>; per_1k_words_usd: number | null };
+  published_per_day: { date: string; created: number }[];
+  sites: { slug: string; articles: number; published: number; approved: number; quality_avg: number | null; words: number }[];
 }
 
 /** research_data worksheet row (GET /sites/{slug}/research). */

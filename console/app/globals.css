@@ -1,45 +1,196 @@
 @import "tailwindcss";
 
-/* Console design tokens (docs/console-dashboard-plan.md §3): dark-only ops
-   console — near-black navy surfaces, teal interactive accent, gold reserved
-   for approved/cost/publish moments, rose for review/destructive. Named
-   colors here surface as Tailwind utilities (bg-page, text-ink, border-line…). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design system tokens based on DESIGN.md:
+   - Primary: Graphite (#16181D)
+   - Secondary: Burnt Clay (#B03E1C)
+   - Tertiary / Action: Clay Orange (#F2643A)
+   - Soft: Sand (#E6E1D8)
+   - Background: Chalk (#F2EEE8)
+   - Dark mode: Deep Night Graphite (#0E1015) with Graphite cards (#16181D)
+*/
+
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-headline: var(--font-jakarta), var(--font-inter), sans-serif;
+  --font-body: var(--font-inter), sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font-label-code: var(--font-jetbrains), ui-monospace, monospace;
 
-  --color-page: #020617;
-  --color-card: #0b1220;
-  --color-surface: #141d2f;
-  --color-line: #1e293b;
+  --color-page: var(--theme-page);
+  --color-card: var(--theme-card);
+  --color-surface: var(--theme-surface);
+  --color-surface-lowest: var(--theme-surface-lowest);
+  --color-surface-low: var(--theme-surface-low);
+  --color-surface-container: var(--theme-surface-container);
+  --color-surface-high: var(--theme-surface-high);
+  --color-surface-highest: var(--theme-surface-highest);
+  --color-line: var(--theme-line);
+  --color-outline-variant: var(--theme-outline-variant);
 
-  --color-ink: #f8fafc;
-  --color-ink-dim: #94a3b8;
-  --color-ink-faint: #64748b;
+  --color-ink: var(--theme-ink);
+  --color-ink-dim: var(--theme-ink-dim);
+  --color-ink-faint: var(--theme-ink-faint);
+  --color-on-surface: var(--theme-ink);
+  --color-secondary: var(--theme-ink-dim);
 
-  --color-accent: #2dd4bf;
-  --color-accent-strong: #14b8a6;
+  --color-accent: var(--theme-accent);
+  --color-accent-strong: var(--theme-accent-strong);
+  --color-primary: #ffb5a0;
+  --color-primary-container: #f2643a;
+  --color-on-primary-container: #541100;
+  --color-tertiary: #4edea3;
+  --color-tertiary-container: #00a572;
+  --color-on-tertiary: #003824;
 
   --color-gold: #f59e0b;
-  --color-danger: #ef4444;
+  --color-danger: var(--theme-danger);
+  --color-success: var(--theme-success);
+}
+
+:root {
+  color-scheme: light;
+  --theme-page: #f4f0ea;       /* Warm Chalk Canvas */
+  --theme-card: #ffffff;       /* Pure white Surface */
+  --theme-surface: #ffffff;
+  --theme-surface-lowest: #ffffff; /* Crisp white card layer */
+  --theme-surface-low: #f8f6f2;
+  --theme-surface-container: #ede6d9;
+  --theme-surface-high: #ded6c6;
+  --theme-surface-highest: #cec4b2;
+  --theme-line: rgba(0, 0, 0, 0.08); /* Crisp hairline outline */
+  --theme-outline-variant: rgba(0, 0, 0, 0.12);
+
+  --theme-ink: #111318;        /* Graphite On-Surface */
+  --theme-ink-dim: #555964;    /* High-contrast Secondary */
+  --theme-ink-faint: #757882;  /* Neutral caption */
+
+  --theme-accent: #f2643a;     /* Clay Orange */
+  --theme-accent-strong: #e4532a;
+
+  --theme-danger: #b3261e;
+  --theme-success: #10b981;
+  --scrollbar-thumb: rgba(22, 24, 29, 0.2);
+  --scrollbar-thumb-hover: rgba(22, 24, 29, 0.4);
+}
+
+.dark {
+  color-scheme: dark;
+  --theme-page: #0a0c10;       /* Canvas Ground Floor (#0a0c10) */
+  --theme-card: #151822;       /* Level 1 Surface Card - clearly elevated from canvas */
+  --theme-surface: #0c0e13;    /* Sidebar & Structural Panels */
+  --theme-surface-lowest: #151822; /* Elevated card layer with distinct contrast */
+  --theme-surface-low: #181c28;    /* Inset areas */
+  --theme-surface-container: #1e2332; /* Elevated controls, inputs, dropdowns */
+  --theme-surface-high: #272d3e;   /* Hover states, active tabs */
+  --theme-surface-highest: #333a50;
+  --theme-line: rgba(255, 255, 255, 0.10); /* Clean, crisp hairline border */
+  --theme-outline-variant: rgba(255, 255, 255, 0.14); /* Visible contrast border */
+
+  --theme-ink: #f4f0ea;        /* Crisp Chalk Primary text */
+  --theme-ink-dim: #9fa2ab;    /* High-legibility Secondary */
+  --theme-ink-faint: #686d79;  /* Readable Neutral */
+
+  --theme-accent: #f2643a;     /* Clay Orange */
+  --theme-accent-strong: #e4532a;
+
+  --theme-danger: #f87171;
+  --theme-success: #4edea3;
+  --scrollbar-thumb: rgba(242, 238, 232, 0.15);
+  --scrollbar-thumb-hover: rgba(242, 238, 232, 0.3);
+}
+
+.dark .shadow-xs {
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.shadow-xs {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 350, 'GRAD' 0, 'opsz' 20;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+html {
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body {
   @apply bg-page text-ink antialiased;
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
 }
 
 ::selection {
-  background: rgba(45, 212, 191, 0.28);
+  background: rgba(242, 100, 58, 0.3);
 }
 
-/* Consistent keyboard focus across the console without restyling each control. */
+/* Custom sleek scrollbar for entire app */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Sidebar scrollbar: ultra-thin, sits right against the right border */
+.custom-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.custom-sidebar-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-accent);
+}
+
+/* Consistent keyboard focus */
 :focus-visible {
-  outline: 2px solid rgba(45, 212, 191, 0.6);
+  outline: 2px solid rgba(242, 100, 58, 0.6);
   outline-offset: 1px;
 }
 
-/* Rendered-markdown preview (article detail → Content tab preview, plan §5).
-   Hand-rolled against the token layer — no typography plugin. */
+/* Respect reduced-motion preferences (UX-20). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Rendered-markdown preview */
 .prose-console {
   @apply text-sm leading-7 text-ink-dim;
 }

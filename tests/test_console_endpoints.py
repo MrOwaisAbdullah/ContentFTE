@@ -629,3 +629,35 @@ def test_article_images_route_serves_allowlisted_file(tmp_path):
     # fetches for articles without art)
     listed = client.get("/sdk/v1/articles?site_slug=media-site").json()
     assert listed["articles"][0]["images"] == 1
+
+
+def test_articles_stats_endpoint():
+    from lib.db import get_session
+    from lib.store import mirror_article
+    from sdk import service
+
+    s = get_session()
+    try:
+        mirror_article(s, title="Tie Guide", content="# Body with several words here", quality_score=92.5,
+                       summary="A strong tie guide.", approved=True, site_slug="acme")
+        mirror_article(s, title="Weak Guide", content="# Body", quality_score=70.0,
+                       summary="A weak one.", approved=False, site_slug="acme")
+    finally:
+        s.close()
+
+    client = _client()
+    body = client.get("/sdk/v1/articles/stats?site_slug=acme").json()
+    assert body["total"] == 2
+    assert body["by_status"]["approved"] == 1
+    assert body["scored"] == 2
+    assert body["avg_quality"] is not None
+    assert body["quality_pass_rate"] == 50.0
+    assert body["words_total"] > 0
+    assert body["cost"]["per_1k_words_usd"] is None or isinstance(body["cost"]["per_1k_words_usd"], float)
+    assert isinstance(body["published_per_day"], list)
+    assert "sites" in body
+    assert any(s["slug"] == "acme" for s in body["sites"])
+
+    # global (no site)
+    g = client.get("/sdk/v1/articles/stats").json()
+    assert g["total"] >= 2

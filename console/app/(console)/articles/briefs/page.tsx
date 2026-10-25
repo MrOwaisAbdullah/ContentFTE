@@ -17,7 +17,7 @@ export default async function BriefsPage({
   let data: BriefsView | null = null;
   try {
     sites = await engine<SiteList>("/sites");
-    if (!slug) slug = sites.sites[0]?.slug || "";
+    if (!slug && sites.sites.length === 1) slug = sites.sites[0].slug;
     if (slug) {
       data = await engine<BriefsView>(`/sites/${encodeURIComponent(slug)}/briefs?limit=200`);
     }
@@ -34,7 +34,18 @@ export default async function BriefsPage({
 
       {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
 
-      {!data || data.briefs.length === 0 ? (
+      {!slug && sites.sites.length > 1 ? (
+        <div className="rounded-xl border border-dashed border-line bg-card/40 p-8 space-y-4">
+          <h2 className="text-[15px] font-headline font-semibold text-ink">Choose a site to view its briefs</h2>
+          <div className="flex flex-wrap gap-2">
+            {sites.sites.map((s) => (
+              <Link key={s.slug} href={`/articles/briefs?site=${encodeURIComponent(s.slug)}`} className="px-3 py-1.5 rounded-lg border border-line bg-surface-container text-ink text-[12px] font-mono hover:border-primary-container hover:text-primary-container transition-colors">
+                {s.name || s.slug}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : !data || data.briefs.length === 0 ? (
         <Empty
           icon={ScrollText}
           title="No briefs yet"

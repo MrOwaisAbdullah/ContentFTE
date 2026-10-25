@@ -102,6 +102,8 @@ class KeywordLedger(Base):
     research_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cluster_id: Mapped[str] = mapped_column(String(120), default="")
+    target_url: Mapped[str] = mapped_column(String(500), default="")
 
     site: Mapped[Site] = relationship()
 
@@ -126,6 +128,9 @@ class Article(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    content_html: Mapped[str] = mapped_column(Text, default="")
 
     site: Mapped[Site] = relationship()
 
@@ -137,14 +142,20 @@ class CostLedger(Base):
     a cost_usd copy; payloads derive it with one grouped SUM."""
 
     __tablename__ = "cost_ledger"
-    __table_args__ = (Index("ix_cost_article", "article_id"),)
+    __table_args__ = (
+        Index("ix_cost_article", "article_id"),
+        Index("ix_cost_site", "site_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), nullable=False)
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(40), nullable=False)  # llm|image|data|total
     amount_usd: Mapped[float] = mapped_column(Float, default=0.0)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    site: Mapped[Site | None] = relationship()
 
 
 class AuditLog(Base):
@@ -296,4 +307,14 @@ def get_session():
 
 
 def init_db() -> None:
-    Base.metadata.create_all(get_engine())
+    eng = get_engine()
+    Base.metadata.create_all(eng)
+    if eng.dialect.name == "sqlite":
+        with eng.connect() as conn:
+            try:
+                cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(cost_ledger)").fetchall()]
+                if cols and "site_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE cost_ledger ADD COLUMN site_id INTEGER REFERENCES sites(id)")
+                    conn.commit()
+            except Exception:
+                pass

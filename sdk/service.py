@@ -24,11 +24,11 @@ import re
 import shutil
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from slugify import slugify
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from lib import custom_site
 from lib import generation
@@ -158,8 +158,18 @@ def get_search_console_status() -> dict:
                               "(Search Console API unreachable)")
         else:
             hit = search_console.match_property(prop, entries)
-            row.update(connected=hit is not None,
+            is_connected = hit is not None
+            row.update(connected=is_connected,
                        permission_level=(hit or {}).get("permission_level", ""))
+            if is_connected:
+                perf = search_console.get_site_totals(days=28, site_url=prop)
+                if perf:
+                    row["metrics_28d"] = {
+                        "clicks": perf.get("clicks", 0),
+                        "impressions": perf.get("impressions", 0),
+                        "ctr": round(perf.get("ctr", 0.0) * 100, 2),
+                        "position": round(perf.get("position", 0.0), 1),
+                    }
         out_sites.append(row)
     return {
         "sites": out_sites,
@@ -171,7 +181,7 @@ def get_search_console_status() -> dict:
 
 
 def upsert_site(slug: str, name: str = "", site_type: str = "",
-                base_url: str = "") -> dict:
+                base_url: str = "", settings: dict | None = None) -> dict:
     """Create a site row, or update the named fields of an existing one.
 
     Empty strings mean "leave alone" on update (create falls back:
@@ -187,7 +197,8 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
         updated = False
         if site is None:
             site = Site(slug=slug, name=name or slug.title(),
-                        site_type=site_type or "custom", base_url=base_url)
+                        site_type=site_type or "custom", base_url=base_url,
+                        settings=settings or {})
             s.add(site)
             s.commit()
             s.refresh(site)
@@ -202,6 +213,11 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
             if (base_url or "").strip():
                 site.base_url = base_url
                 updated = True
+            if settings is not None:
+                current_settings = dict(site.settings or {})
+                current_settings.update(settings)
+                site.settings = current_settings
+                updated = True
             if updated:
                 s.commit()
                 s.refresh(site)
@@ -211,13 +227,117 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
         s.close()
 
 
+def delete_site(slug: str) -> dict:
+    """Delete a site and cascade-clean its associated records if unreferenced."""
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, slug)
+        if site is None:
+            return _err(f"site '{slug}' not found", "run list_sites for valid slugs")
+        site_id = site.id
+        # Delete dependent articles
+        articles = s.execute(select(Article).where(Article.site_id == site_id)).scalars().all()
+        for a in articles:
+            s.execute(delete(CostLedger).where(CostLedger.article_id == a.id))
+            s.execute(delete(BrainEntry).where(BrainEntry.article_id == a.id))
+            s.execute(delete(ReviewFeedback).where(ReviewFeedback.article_id == a.id))
+            s.execute(delete(AuditLog).where(AuditLog.article_id == a.id))
+            s.delete(a)
+        # Delete keywords
+        s.execute(delete(KeywordLedger).where(KeywordLedger.site_id == site_id))
+        s.execute(delete(BrainEntry).where(BrainEntry.site_id == site_id))
+        s.execute(delete(ReviewFeedback).where(ReviewFeedback.site_id == site_id))
+        s.execute(delete(AuditLog).where(AuditLog.site_id == site_id))
+        s.delete(site)
+        s.commit()
+        return {"deleted": slug, "id": site_id}
+    finally:
+        s.close()
+
+
+def delete_article(article_id: int) -> dict:
+    """Delete an article while preserving spend and accounting records."""
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found")
+        site_id = art.site_id
+        # Clean up related records
+        s.execute(delete(CostLedger).where(CostLedger.article_id == article_id))
+        s.execute(delete(BrainEntry).where(BrainEntry.article_id == article_id))
+        s.execute(delete(ReviewFeedback).where(ReviewFeedback.article_id == article_id))
+        s.execute(delete(AuditLog).where(AuditLog.article_id == article_id))
+        s.delete(art)
+        s.commit()
+        return {"deleted": article_id}
+    finally:
+        s.close()
+
+
+def delete_keyword(keyword_id: int) -> dict:
+    """Delete a keyword ledger row."""
+    init_db()
+    s = get_session()
+    try:
+        kw = s.get(KeywordLedger, keyword_id)
+        if kw is None:
+            return _err(f"keyword {keyword_id} not found")
+        # Unbind from articles first if any
+        articles = s.execute(select(Article).where(Article.keyword_id == keyword_id)).scalars().all()
+        for a in articles:
+            a.keyword_id = None
+        s.delete(kw)
+        s.commit()
+        return {"deleted": keyword_id}
+    finally:
+        s.close()
+
+
+def prioritize_keyword(keyword_id: int, boost: float = 100.0) -> dict:
+    """Prioritize a keyword by assigning it the highest priority score in the ledger."""
+    init_db()
+    s = get_session()
+    try:
+        kw = s.get(KeywordLedger, keyword_id)
+        if kw is None:
+            return _err(f"keyword {keyword_id} not found")
+        # Find current maximum priority in the site's ledger
+        max_prio = s.query(func.max(KeywordLedger.priority_score)).filter(KeywordLedger.site_id == kw.site_id).scalar() or 0.0
+        kw.priority_score = max(max_prio + 10.0, boost)
+        kw.status = "approved" if kw.status in ("queued", "researched") else kw.status
+        s.commit()
+        s.refresh(kw)
+        return {
+            "id": kw.id,
+            "keyword": kw.keyword,
+            "priority_score": kw.priority_score,
+            "status": kw.status,
+            "prioritized": True
+        }
+    finally:
+        s.close()
+
+
 def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
-                  offset: int = 0) -> dict:
+                  offset: int = 0, q: str = "", sort: str = "created_at",
+                  order: str = "desc", has_images: bool = False) -> dict:
     """List articles newest-first, optionally scoped to a site and/or status.
 
     Powers the custom-site **content loader** (§5.12 pull): enumerate a site's
     published articles, then fetch each one's `/content` payload by id. Only
     routing fields are returned (no html/markdown) — cheap to page through.
+
+    Additive console filters (Wave 0+):
+      - ``q`` matches title/slug (case-insensitive) in SQL so pagination
+        counts stay correct.
+      - ``sort``/``order`` control ordering: created_at|title|quality|cost|status
+        (quality/cost are resolved in Python because they live in meta/ledger).
+      - ``has_images`` restricts to rows with staged art (client Media page).
+    All new params are optional and default to the legacy newest-first
+    behavior, so existing callers (custom-site loader, MCP) are unaffected.
     """
     init_db()
     s = get_session()
@@ -234,11 +354,65 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
             stmt = stmt.where(Article.site_id == scoped_site.id)
         if (status or "").strip():
             stmt = stmt.where(Article.status == status.strip())
+        if (q or "").strip():
+            needle = f"%{(q or '').strip()}%"
+            stmt = stmt.where(
+                (Article.title.ilike(needle)) | (Article.slug.ilike(needle))
+            )
+        if has_images:
+            cand_rows = s.execute(
+                stmt.with_only_columns(Article.id, Article.meta)
+            ).all()
+            img_ids = [r[0] for r in cand_rows
+                       if isinstance(r[1], dict) and (r[1].get("images") or [])]
+            if not img_ids:
+                return {"articles": [], "count": 0, "total": 0,
+                        "limit": limit, "offset": offset}
+            stmt = stmt.where(Article.id.in_(img_ids))
         total = int(s.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-        rows = s.execute(
-            stmt.order_by(Article.created_at.desc(), Article.id.desc())
-                .limit(limit).offset(offset)
-        ).scalars().all()
+        sort_key = (sort or "created_at").strip().lower()
+        order_desc = (order or "desc").strip().lower() != "asc"
+        if sort_key in ("created_at", "title", "status"):
+            col = {"created_at": Article.created_at, "title": Article.title,
+                   "status": Article.status}[sort_key]
+            order_expr = col.desc() if order_desc else col.asc()
+            rows = s.execute(
+                stmt.order_by(order_expr, Article.id.desc())
+                    .limit(limit).offset(offset)
+            ).scalars().all()
+        elif sort_key == "cost":
+            cost_sub = (select(func.coalesce(func.sum(CostLedger.amount_usd), 0.0))
+                        .where(CostLedger.article_id == Article.id))
+            rows = s.execute(
+                stmt.order_by((cost_sub.scalar_subquery()).desc() if order_desc
+                              else (cost_sub.scalar_subquery()).asc(),
+                              Article.id.desc())
+                    .limit(limit).offset(offset)
+            ).scalars().all()
+        elif sort_key == "quality":
+            all_rows = s.execute(stmt).scalars().all()
+            def _q(a):
+                sc = (a.meta or {}).get("scores") if isinstance(a.meta, dict) else {}
+                if not isinstance(sc, dict):
+                    return 0.0
+                v = sc.get("quality")
+                if v is None:
+                    v = sc.get("overall")
+                if v is None:
+                    sub = sc.get("sub_scores")
+                    if isinstance(sub, dict):
+                        v = sub.get("overall")
+                try:
+                    return float(v) if v is not None else 0.0
+                except (TypeError, ValueError):
+                    return 0.0
+            all_rows.sort(key=_q, reverse=order_desc)
+            rows = all_rows[offset:offset + limit]
+        else:
+            rows = s.execute(
+                stmt.order_by(Article.created_at.desc(), Article.id.desc())
+                    .limit(limit).offset(offset)
+            ).scalars().all()
         slug_by_id: dict[int, str] = ({scoped_site.id: scoped_site.slug}
                                       if scoped_site else {})
         articles: list[dict] = []
@@ -254,14 +428,175 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
                 "cost_usd": costs.get(a.id, 0.0),
                 # console Content screen (generated_posts sheet parity):
                 # Quality Score + Summary columns, still no html/markdown.
-                "quality": article_scores(a).get("quality"),
-                "summary": (a.meta or {}).get("summary", ""),
+                "quality": (
+                    article_scores(a).get("quality")
+                    or article_scores(a).get("overall")
+                    or (article_scores(a).get("sub_scores", {}).get("overall")
+                        if isinstance(article_scores(a).get("sub_scores"), dict) else None)
+                ),
+                "summary": (
+                    (a.meta or {}).get("summary")
+                    or (a.meta or {}).get("content_summary")
+                    or (a.meta or {}).get("description")
+                    or ""
+                ),
                 # console Media page: which articles have art, so it can
                 # detail-fetch only those (still no image rows in the list).
                 "images": len((a.meta or {}).get("images") or []),
+                # real word count (replaces the console's "1,450 words" fallback)
+                "word_count": len((a.content_md or "").split())
+                if (a.content_md or "").strip() else 0,
             })
         return {"articles": articles, "count": len(articles), "total": total,
                 "limit": limit, "offset": offset}
+    finally:
+        s.close()
+
+
+def article_stats(site_slug: str = "", since_days: int = 30) -> dict:
+    """Aggregated, real (engine-backed) stats for the operator console
+    (Overview / Sites / Insights). Returns counts by status, quality
+    aggregates, word totals, spend totals, and a per-day created/published
+    series for the velocity chart. Additive — no change to list_articles
+    behavior. `since_days` scopes the per-day series and the "recent" window;
+    counts/quality are all-time.
+    """
+    init_db()
+    s = get_session()
+    try:
+        since_days = max(1, int(since_days or 30))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        stmt = select(Article)
+        scoped_site = None
+        if (site_slug or "").strip():
+            scoped_site = _site_by_slug(s, site_slug.strip())
+            if scoped_site is None:
+                return _err(f"site '{site_slug}' not found",
+                            "run list_sites for valid slugs")
+            stmt = stmt.where(Article.site_id == scoped_site.id)
+        rows = s.execute(stmt).scalars().all()
+        slug_by_id: dict[int, str] = ({scoped_site.id: scoped_site.slug}
+                                      if scoped_site else {})
+        by_status: dict[str, int] = {}
+        scored = 0
+        qual_sum = 0.0
+        qual_pass = 0  # >= 90 (engine publish gate threshold)
+        words_total = 0
+        in_range_created = 0
+        in_range_published = 0
+        per_day: dict[str, int] = {}
+        per_site: dict[str, dict] = {}
+        for a in rows:
+            st = a.status or "unknown"
+            by_status[st] = by_status.get(st, 0) + 1
+            md = (a.content_md or "").strip()
+            wc = len(md.split()) if md else 0
+            words_total += wc
+            sc = article_scores(a)
+            q = sc.get("quality")
+            if q is None:
+                q = sc.get("overall")
+            if q is None:
+                sub = sc.get("sub_scores")
+                if isinstance(sub, dict):
+                    q = sub.get("overall")
+            if q is not None:
+                try:
+                    qf = float(q)
+                    scored += 1
+                    qual_sum += qf
+                    if qf >= 90:
+                        qual_pass += 1
+                except (TypeError, ValueError):
+                    pass
+            ca = a.created_at
+            if ca is not None:
+                if ca.tzinfo is None:
+                    ca = ca.replace(tzinfo=timezone.utc)
+                if ca >= cutoff:
+                    in_range_created += 1
+                dkey = ca.date().isoformat()
+                per_day[dkey] = per_day.get(dkey, 0) + 1
+                if a.status == "published":
+                    pa = a.published_at or a.created_at
+                    if pa is not None:
+                        if pa.tzinfo is None:
+                            pa = pa.replace(tzinfo=timezone.utc)
+                        if pa >= cutoff:
+                            in_range_published += 1
+            if a.site_id not in slug_by_id:
+                row = s.get(Site, a.site_id)
+                slug_by_id[a.site_id] = row.slug if row else ""
+            sl = slug_by_id[a.site_id]
+            site_row = per_site.setdefault(sl, {
+                "slug": sl, "articles": 0, "published": 0, "approved": 0,
+                "quality_sum": 0.0, "scored": 0, "words": 0,
+            })
+            site_row["articles"] += 1
+            site_row["words"] += wc
+            if a.status == "published":
+                site_row["published"] += 1
+            if a.status == "approved":
+                site_row["approved"] += 1
+            if q is not None:
+                try:
+                    site_row["quality_sum"] += float(q)
+                    site_row["scored"] += 1
+                except (TypeError, ValueError):
+                    pass
+        for sl, sr in per_site.items():
+            sr["quality_avg"] = round(sr["quality_sum"] / sr["scored"], 1) \
+                if sr["scored"] else None
+            del sr["quality_sum"]
+        # cost ledger aggregates
+        cost_base = select(func.coalesce(func.sum(CostLedger.amount_usd), 0.0)).where(
+            CostLedger.kind != "total"
+        )
+        if scoped_site:
+            ids_sub = select(Article.id).where(Article.site_id == scoped_site.id)
+            cost_base = cost_base.where(
+                (CostLedger.site_id == scoped_site.id)
+                | (CostLedger.article_id.in_(ids_sub))
+            )
+        cost_total = float(s.scalar(cost_base) or 0.0)
+        # per-kind split
+        kind_rows = s.execute(
+            select(CostLedger.kind, func.coalesce(func.sum(CostLedger.amount_usd), 0.0))
+            .where(CostLedger.kind != "total")
+            .group_by(CostLedger.kind)
+        ).all()
+        kind_totals = {k: float(v or 0.0) for k, v in kind_rows}
+        if scoped_site:
+            kind_rows = s.execute(
+                select(CostLedger.kind, func.coalesce(func.sum(CostLedger.amount_usd), 0.0))
+                .where(CostLedger.kind != "total")
+                .where((CostLedger.site_id == scoped_site.id)
+                       | (CostLedger.article_id.in_(ids_sub)))
+                .group_by(CostLedger.kind)
+            ).all()
+            kind_totals = {k: float(v or 0.0) for k, v in kind_rows}
+        # per-day series (sorted)
+        series = [{"date": d, "created": per_day[d]} for d in sorted(per_day)]
+        # keep only the last `since_days` entries
+        series = series[-since_days:]
+        return {
+            "site_slug": (site_slug or "").strip(),
+            "range_days": since_days,
+            "total": len(rows),
+            "by_status": by_status,
+            "scored": scored,
+            "avg_quality": round(qual_sum / scored, 1) if scored else None,
+            "quality_pass_rate": round(100.0 * qual_pass / scored, 1) if scored else None,
+            "words_total": words_total,
+            "in_range": {"created": in_range_created,
+                         "published": in_range_published},
+            "cost": {"total_usd": round(cost_total, 4),
+                     "per_kind": kind_totals,
+                     "per_1k_words_usd": round(cost_total / (words_total / 1000.0), 4)
+                     if words_total else None},
+            "published_per_day": series,
+            "sites": list(per_site.values()),
+        }
     finally:
         s.close()
 
@@ -436,6 +771,50 @@ def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
         s.close()
 
 
+def get_spend_summary(site_slug: str = "") -> dict:
+    """Aggregated spend summary computed entirely in SQL (§5.10-6).
+    Returns WTD (week-to-date), MTD (month-to-date), and total spend."""
+    init_db()
+    s = get_session()
+    try:
+        now = datetime.now(timezone.utc)
+        # Week start (Monday 00:00 UTC)
+        day_of_week = now.weekday()
+        wtd_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=day_of_week)
+        # Month start (1st 00:00 UTC)
+        mtd_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        site_id = None
+        if site_slug:
+            site = _site_by_slug(s, site_slug)
+            if site:
+                site_id = site.id
+
+        base_q = select(func.coalesce(func.sum(CostLedger.amount_usd), 0.0)).where(CostLedger.kind != "total")
+        if site_id:
+            # Match directly or through article
+            article_ids = select(Article.id).where(Article.site_id == site_id)
+            base_q = base_q.where(
+                (CostLedger.site_id == site_id) | (CostLedger.article_id.in_(article_ids))
+            )
+
+        wtd_spend = float(s.scalar(base_q.where(CostLedger.created_at >= wtd_start)) or 0.0)
+        mtd_spend = float(s.scalar(base_q.where(CostLedger.created_at >= mtd_start)) or 0.0)
+        total_spend = float(s.scalar(base_q) or 0.0)
+
+        return {
+            "site_slug": site_slug,
+            "wtd_usd": round(wtd_spend, 4),
+            "mtd_usd": round(mtd_spend, 4),
+            "total_usd": round(total_spend, 4),
+            "wtd_formatted": f"${wtd_spend:.2f}" if wtd_spend >= 1 else f"${wtd_spend:.4f}",
+            "mtd_formatted": f"${mtd_spend:.2f}" if mtd_spend >= 1 else f"${mtd_spend:.4f}",
+            "total_formatted": f"${total_spend:.2f}" if total_spend >= 1 else f"${total_spend:.4f}",
+        }
+    finally:
+        s.close()
+
+
 def record_stage_run(stage: str, *, ok: bool, detail: str = "",
                      duration_ms: int = 0,
                      started_at: datetime | None = None) -> None:
@@ -494,6 +873,23 @@ def list_stages(running: list[str] | None = None, limit: int = 200) -> dict:
                 "history": history, "count": len(history)}
     finally:
         s.close()
+
+
+async def run_instant_pipeline(article_id: int) -> dict:
+    """End-to-end instant runner: generates content -> stages images in background."""
+    try:
+        gen_res = await generate_content(article_id)
+        if "error" in gen_res:
+            logger.warning(f"run_instant_pipeline generate error on #{article_id}: {gen_res}")
+            return gen_res
+        try:
+            stage_images(article_id)
+        except Exception as e:
+            logger.warning(f"run_instant_pipeline image staging exception on #{article_id}: {e}")
+        return {"id": article_id, "status": "drafted", "instant_ready": True}
+    except Exception as e:
+        logger.exception(f"run_instant_pipeline failed on #{article_id}: {e}")
+        return {"id": article_id, "error": str(e)}
 
 
 def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None) -> dict:
@@ -679,6 +1075,68 @@ def _wp_config(site=None):
                         username=str(wp.get("username") or ""),
                         app_password=str(wp.get("app_password") or ""))
     return WPConfig.from_env()
+
+
+def test_wp_connection(site_slug: str, wp_config: dict | None = None) -> dict:
+    """Test WordPress REST API connection and authentication.
+
+    If wp_config is provided ({base_url, username, app_password}), tests that config.
+    Otherwise uses the site's configured settings or environment fallback.
+    """
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+
+        import requests
+        from lib.wordpress import WPConfig
+
+        if wp_config and isinstance(wp_config, dict) and wp_config.get("base_url"):
+            cfg = WPConfig(
+                base_url=str(wp_config.get("base_url") or "").rstrip("/"),
+                username=str(wp_config.get("username") or "").strip(),
+                app_password=str(wp_config.get("app_password") or "").strip(),
+            )
+        else:
+            cfg = _wp_config(site)
+
+        if not cfg.base_url:
+            return {"ok": False, "error": "No WordPress base URL configured"}
+        if not cfg.username or not cfg.app_password:
+            return {"ok": False, "error": "Missing WordPress username or application password"}
+
+        url = f"{cfg.base_url}/wp-json/wp/v2/users/me"
+        try:
+            r = requests.get(url, headers=cfg.auth_header(), timeout=8)
+            if r.status_code == 200:
+                data = r.json() or {}
+                return {
+                    "ok": True,
+                    "user_id": data.get("id"),
+                    "username": data.get("slug") or data.get("name") or cfg.username,
+                    "roles": data.get("roles", []),
+                    "base_url": cfg.base_url,
+                    "message": f"Successfully authenticated as {data.get('name', cfg.username)} ({', '.join(data.get('roles', []))})"
+                }
+            elif r.status_code in (401, 403):
+                return {
+                    "ok": False,
+                    "status_code": r.status_code,
+                    "error": f"Authentication failed (HTTP {r.status_code}). Please verify username and application password."
+                }
+            else:
+                return {
+                    "ok": False,
+                    "status_code": r.status_code,
+                    "error": f"WordPress REST API returned HTTP {r.status_code} at {url}."
+                }
+        except Exception as e:
+            return {"ok": False, "error": f"Connection error: {str(e)}"}
+    finally:
+        s.close()
+
 
 
 def _enrich_brief_with_links(art: ArticleModel, brief: dict, keyword: str) -> dict:
@@ -1286,11 +1744,32 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
         art = s.get(ArticleModel, article_id)
         if art is None:
             return _err(f"article {article_id} not found", "run generate_article first")
+        # Normalize the stored score shape so the console's detail page and
+        # the list endpoint agree (UX-03): the DB stores either
+        # {"quality": N} (legacy) or {"overall": N, "sub_scores": {...}}
+        # (eval-gated runs). Expose both keys plus a resolved `overall`.
+        raw_scores = article_scores(art)
+        normalized = dict(raw_scores)
+        if "overall" not in normalized and "quality" in normalized:
+            normalized["overall"] = normalized["quality"]
+        if "quality" not in normalized and "overall" in normalized:
+            normalized["quality"] = normalized["overall"]
+        sub = normalized.get("sub_scores")
+        if not isinstance(sub, dict):
+            sub = {}
+            normalized["sub_scores"] = sub
+        # flatten sub_scores onto the top level so the console's per-subscore
+        # reads (accuracy, depth, seo, voice, originality, citability) work
+        for k, v in sub.items():
+            normalized.setdefault(k, v)
         data: dict[str, Any] = {"id": art.id, "site_id": art.site_id, "title": art.title,
                                 "slug": _resolve_slug(art), "status": art.status,
-                                "scores": article_scores(art),
+                                "scores": normalized,
+                                "raw_scores": raw_scores,
                                 "cost_usd": _cost_map(s, [art.id]).get(art.id, 0.0),
-                                "keyword_id": art.keyword_id}
+                                "keyword_id": art.keyword_id,
+                                "word_count": len((art.content_md or "").split())
+                                if (art.content_md or "").strip() else 0}
         if include_content:
             meta = art.meta or {}
             brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
@@ -1895,7 +2374,8 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     return out
 
 
-def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> dict:
+def publish_article(article_id: int, mode: str = "draft", via: str = "api",
+                    force: bool = False, enforce_cadence: bool = False) -> dict:
     """Publish decision (§5.11 draft default). Requires approved status.
 
     WordPress sites (site_type="wordpress") additionally push the article to
@@ -1911,11 +2391,30 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api") -> d
         art = s.get(ArticleModel, article_id)
         if art is None:
             return _err(f"article {article_id} not found", "run generate_article first")
+
+        site = art.site
+        if site is not None:
+            cadence = get_site_cadence_status(s, site)
+            if cadence.get("require_approval", True) and art.status not in ("approved", "published"):
+                return _err(
+                    f"article {article_id} is '{art.status}' — publish requires 'approved' (operator approval required by site cadence settings)",
+                    "gate: approve the article in the console or via POST /sdk/v1/articles/{id}/approve")
+            if enforce_cadence and not force and not cadence.get("can_publish_now", True):
+                next_time = cadence.get("next_allowed_at")
+                freq = cadence.get("frequency")
+                hours = round((cadence.get("seconds_remaining") or 0) / 3600, 1)
+                return _err(
+                    f"cadence limit reached for site '{site.slug}': frequency is '{freq}'. "
+                    f"Next post allowed at {next_time} ({hours}h remaining)",
+                    "wait for cadence window or pass force=true to override")
+
         if art.status not in ("approved", "published"):
             return _err(
                 f"article {article_id} is '{art.status}' — publish requires 'approved'",
                 "gate: overall >=90 and every sub-score >=80, then POST /sdk/v1/articles/{id}/approve")
         art.status = "published"
+        if art.published_at is None:
+            art.published_at = datetime.now(timezone.utc)
         # §5.10-6 finalize the per-post cost ledger at publish. Spend is read
         # back from the ledger on demand — no denormalized cost_usd copy.
         totals = finalize(s, art.id)
@@ -2194,6 +2693,84 @@ def get_article_image(article_id: int, name: str) -> dict:
         s.close()
 
 
+CADENCE_INTERVALS: dict[str, timedelta | None] = {
+    "manual": None,
+    "daily": timedelta(days=1),
+    "every_2_days": timedelta(days=2),
+    "twice_a_week": timedelta(days=3, hours=12),
+    "weekly": timedelta(days=7),
+    "biweekly": timedelta(days=14),
+    "monthly": timedelta(days=30),
+}
+
+
+def get_site_cadence_status(s, site: Site) -> dict:
+    """Computes the current posting cadence status and next publication slot for a site."""
+    settings = dict(site.settings or {})
+    freq = str(settings.get("posting_frequency") or "daily")
+    max_posts = int(settings.get("max_posts_per_cadence") or 1)
+    require_approval = bool(settings.get("require_approval", True))
+    auto_publish = bool(settings.get("auto_publish", False))
+    publish_mode = str(settings.get("publish_mode") or "draft")
+
+    latest_pub = s.execute(
+        select(Article)
+        .where(Article.site_id == site.id, Article.status == "published")
+        .order_by(Article.published_at.desc(), Article.created_at.desc())
+    ).scalars().first()
+
+    now = datetime.now(timezone.utc)
+    interval = CADENCE_INTERVALS.get(freq, timedelta(days=1))
+
+    last_pub_dt = None
+    if latest_pub is not None:
+        last_pub_dt = latest_pub.published_at or latest_pub.created_at
+        if last_pub_dt and last_pub_dt.tzinfo is None:
+            last_pub_dt = last_pub_dt.replace(tzinfo=timezone.utc)
+
+    can_publish_now = True
+    next_allowed_at = None
+    seconds_remaining = 0
+
+    if freq == "manual":
+        can_auto_publish = False
+    elif interval is not None and last_pub_dt is not None:
+        next_allowed_at = last_pub_dt + interval
+        if now < next_allowed_at:
+            can_publish_now = False
+            seconds_remaining = int((next_allowed_at - now).total_seconds())
+        can_auto_publish = auto_publish and can_publish_now
+    else:
+        can_auto_publish = auto_publish
+
+    return {
+        "frequency": freq,
+        "max_posts_per_cadence": max_posts,
+        "require_approval": require_approval,
+        "auto_publish": auto_publish,
+        "publish_mode": publish_mode,
+        "last_published_at": _iso(last_pub_dt) if last_pub_dt else None,
+        "last_published_id": latest_pub.id if latest_pub else None,
+        "last_published_title": latest_pub.title if latest_pub else None,
+        "next_allowed_at": _iso(next_allowed_at) if next_allowed_at else None,
+        "can_publish_now": can_publish_now,
+        "seconds_remaining": seconds_remaining,
+        "can_auto_publish": can_auto_publish,
+    }
+
+
+def site_cadence(site_slug: str) -> dict:
+    """Direct query for site posting cadence status."""
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, site_slug)
+        if site is None:
+            return _err(f"site '{site_slug}' not found", "run list_sites for valid slugs")
+        return {"site": site.slug, "cadence": get_site_cadence_status(s, site)}
+    finally:
+        s.close()
+
 def site_health(site_slug: str, *, http_get=None) -> dict:
     """§5.6 / pack technical-foundations pre-content gate.
 
@@ -2286,10 +2863,12 @@ def site_health(site_slug: str, *, http_get=None) -> dict:
         else:
             checks.append("site base_url: not set — live probes "
                           "(robots/sitemap/visibility) skipped")
+        cadence = get_site_cadence_status(s, site)
         return {"site": site.slug, "ok": briefable > 0 and not critical,
                 "ledger": {"briefable": briefable, "published": published},
                 "wp_configured": wp_ok, "base_url": base,
-                "checks": checks, "critical": critical}
+                "checks": checks, "critical": critical,
+                "cadence": cadence}
     finally:
         s.close()
 

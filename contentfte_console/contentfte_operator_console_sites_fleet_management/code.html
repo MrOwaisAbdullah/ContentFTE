@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ContentFTE - Sites &amp; Multi-Tenant Fleet</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Plus+Jakarta+Sans:wght@500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "on-tertiary": "#003824",
+            "primary-container": "#f2643a",
+            "on-primary-fixed": "#3b0900",
+            "surface-container-low": "#1a1b21",
+            "on-tertiary-fixed": "#002113",
+            "on-secondary": "#31302d",
+            "secondary-container": "#4a4945",
+            "surface-bright": "#37393f",
+            "surface-dim": "#111318",
+            "tertiary": "#4edea3",
+            "secondary-fixed-dim": "#c9c6c0",
+            "on-background": "#e2e2e9",
+            "tertiary-container": "#00a572",
+            "surface-variant": "#33353a",
+            "tertiary-fixed": "#6ffbbe",
+            "error": "#ffb4ab",
+            "secondary": "#c9c6c0",
+            "tertiary-fixed-dim": "#4edea3",
+            "on-secondary-container": "#bbb8b2",
+            "on-surface-variant": "#e1bfb6",
+            "on-secondary-fixed": "#1c1c18",
+            "on-surface": "#e2e2e9",
+            "on-error-container": "#ffdad6",
+            "surface-container": "#1e2025",
+            "primary": "#ffb5a0",
+            "on-tertiary-container": "#00311f",
+            "inverse-surface": "#e2e2e9",
+            "outline-variant": "#59413b",
+            "surface": "#111318",
+            "surface-container-high": "#282a2f",
+            "on-primary": "#5f1500",
+            "on-tertiary-fixed-variant": "#005236",
+            "secondary-fixed": "#e6e2dc",
+            "error-container": "#93000a",
+            "on-primary-container": "#541100",
+            "primary-fixed": "#ffdbd1",
+            "primary-fixed-dim": "#ffb5a0",
+            "surface-tint": "#ffb5a0",
+            "on-primary-fixed-variant": "#872100",
+            "on-error": "#690005",
+            "on-secondary-fixed-variant": "#484743",
+            "inverse-primary": "#ad330a",
+            "surface-container-highest": "#33353a",
+            "inverse-on-surface": "#2e3036",
+            "outline": "#a88a82",
+            "background": "#111318",
+            "surface-container-lowest": "#0c0e13"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+          "spacing": {
+            "margin": "1rem",
+            "margin-desktop": "2rem",
+            "space-lg": "1.25rem",
+            "gutter": "1rem",
+            "space-xs": "0.25rem",
+            "space-xl": "2rem",
+            "space-md": "0.75rem",
+            "space-sm": "0.5rem",
+            "gutter-desktop": "1.5rem"
+          },
+          "fontFamily": {
+            "label-code": ["JetBrains Mono"],
+            "body-lg": ["Inter"],
+            "headline-sm": ["Plus Jakarta Sans"],
+            "headline-xl": ["Plus Jakarta Sans"],
+            "label-code-sm": ["JetBrains Mono"],
+            "label-meta": ["Inter"],
+            "body-md": ["Inter"],
+            "body-sm": ["Inter"],
+            "headline-md": ["Plus Jakarta Sans"],
+            "headline-xl-mobile": ["Plus Jakarta Sans"],
+            "headline-lg": ["Plus Jakarta Sans"]
+          },
+          "fontSize": {
+            "label-code": ["12px", { "lineHeight": "16px", "letterSpacing": "-0.01em", "fontWeight": "400" }],
+            "body-lg": ["15px", { "lineHeight": "24px", "letterSpacing": "-0.005em", "fontWeight": "400" }],
+            "headline-sm": ["15px", { "lineHeight": "22px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+            "headline-xl": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.03em", "fontWeight": "600" }],
+            "label-code-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+            "label-meta": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "500" }],
+            "body-md": ["13px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "400" }],
+            "body-sm": ["12px", { "lineHeight": "18px", "letterSpacing": "0em", "fontWeight": "400" }],
+            "headline-md": ["18px", { "lineHeight": "26px", "letterSpacing": "-0.015em", "fontWeight": "600" }],
+            "headline-xl-mobile": ["26px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+            "headline-lg": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" }]
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-background text-on-surface antialiased overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar: Fixed Desktop Drawer (ContentFTE Blueprint) -->
+<aside class="fixed top-0 left-0 h-screen w-64 border-r border-outline-variant/30 flex flex-col justify-between p-space-md w-64 z-40 bg-surface-container-lowest">
+<!-- Header/Brand -->
+<div>
+<div class="flex items-center gap-space-sm px-space-md py-space-sm mb-space-md border-b border-outline-variant/20 pb-4">
+<div class="w-8 h-8 rounded bg-primary-container/15 flex items-center justify-center border border-primary-container/40">
+<span class="material-symbols-outlined text-primary-container text-lg" data-icon="deployed_code">deployed_code</span>
+</div>
+<div class="flex flex-col">
+<span class="font-headline-md text-headline-md text-on-surface font-semibold tracking-tight">ContentFTE</span>
+<span class="font-label-code-sm text-label-code-sm text-secondary">Autonomous Fleet Engine</span>
+</div>
+</div>
+<!-- Action Button / Dispatch CTA -->
+<div class="px-space-md mb-space-md">
+<button class="w-full flex items-center justify-center gap-space-xs py-2 px-space-md rounded bg-primary-container text-on-surface font-headline-sm text-headline-sm font-semibold tracking-tight shadow-sm hover:brightness-110 active:scale-[0.99] transition-all duration-75">
+<span class="material-symbols-outlined text-sm font-bold" data-icon="rocket_launch">rocket_launch</span>
+<span>Dispatch Run</span>
+</button>
+</div>
+<!-- Nav Items Stack (Sites active based on target page) -->
+<nav class="space-y-1 px-space-xs">
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#overview">
+<span class="material-symbols-outlined text-[18px]" data-icon="dashboard">dashboard</span>
+<span class="font-label-code text-label-code">Overview</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#pipeline">
+<span class="material-symbols-outlined text-[18px]" data-icon="alt_route">alt_route</span>
+<span class="font-label-code text-label-code">Pipeline</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#keywords">
+<span class="material-symbols-outlined text-[18px]" data-icon="key">key</span>
+<span class="font-label-code text-label-code">Keywords</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#research">
+<span class="material-symbols-outlined text-[18px]" data-icon="query_stats">query_stats</span>
+<span class="font-label-code text-label-code">Research</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#briefs">
+<span class="material-symbols-outlined text-[18px]" data-icon="description">description</span>
+<span class="font-label-code text-label-code">Briefs</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#media">
+<span class="material-symbols-outlined text-[18px]" data-icon="perm_media">perm_media</span>
+<span class="font-label-code text-label-code">Media</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#logs">
+<span class="material-symbols-outlined text-[18px]" data-icon="terminal">terminal</span>
+<span class="font-label-code text-label-code">Logs</span>
+</a>
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:bg-surface-container hover:text-on-surface transition-colors duration-100" href="#insights">
+<span class="material-symbols-outlined text-[18px]" data-icon="monitoring">monitoring</span>
+<span class="font-label-code text-label-code">Insights</span>
+</a>
+<!-- ACTIVE SITES TAB: Exact JSON execution -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded bg-surface-container-high text-on-surface border-l-2 border-primary-container" href="#sites">
+<span class="material-symbols-outlined text-[18px] text-primary-container" data-icon="domain">domain</span>
+<span class="font-label-code text-label-code font-semibold text-on-surface">Sites</span>
+</a>
+</nav>
+</div>
+<!-- Footer System Status & User Profile -->
+<div class="pt-space-md border-t border-outline-variant/20 space-y-2 px-space-xs">
+<div class="flex items-center gap-space-sm px-space-md py-space-xs rounded bg-surface-container-low border border-outline-variant/30 text-secondary">
+<span class="material-symbols-outlined text-[16px] text-tertiary" data-icon="dns">dns</span>
+<div class="flex flex-col">
+<span class="font-label-code-sm text-label-code-sm text-on-surface font-medium">Cluster US-East-1</span>
+<span class="font-label-code-sm text-[10px] text-tertiary">99.98% OK</span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm px-space-md py-space-xs rounded hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[20px] text-secondary" data-icon="account_circle">account_circle</span>
+<div class="flex flex-col">
+<span class="font-label-code-sm text-label-code-sm text-on-surface font-medium">Alex Vance</span>
+<span class="font-label-code-sm text-[10px] text-secondary">Fleet Architect</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- TopNavBar: Fixed Desktop Top Bar -->
+<header class="fixed top-0 right-0 left-64 h-16 border-b border-outline-variant/30 flex items-center justify-between px-gutter-desktop w-[calc(100%-16rem)] ml-64 z-30 bg-surface/90 backdrop-blur-md">
+<!-- Search Bar on Left -->
+<div class="flex items-center gap-space-md w-96">
+<div class="relative w-full">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-secondary pointer-events-none" data-icon="search">search</span>
+<input class="w-full pl-9 pr-4 py-1.5 bg-surface-container-low border border-outline-variant/30 rounded text-on-surface font-label-code-sm text-label-code-sm placeholder-secondary focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="Filter endpoints, slugs, or clusters... (Ctrl+K)" type="text"/>
+</div>
+</div>
+<!-- Cluster Links & Trailing Actions -->
+<div class="flex items-center gap-space-lg">
+<div class="hidden xl:flex items-center gap-space-md text-secondary font-label-code-sm text-label-code-sm">
+<span class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container border border-outline-variant/20 text-on-surface">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+          Cluster: US-East-1 Prod
+        </span>
+<span class="text-secondary/70">/</span>
+<span class="text-secondary hover:text-on-surface transition-colors cursor-pointer">Site: All Fleets</span>
+</div>
+<div class="h-4 w-px bg-outline-variant/30"></div>
+<!-- Icon Actions -->
+<div class="flex items-center gap-1">
+<button class="p-2 text-secondary hover:text-on-surface hover:bg-surface-container-high rounded transition-colors" title="Notifications">
+<span class="material-symbols-outlined text-[20px]" data-icon="notifications">notifications</span>
+</button>
+<button class="p-2 text-secondary hover:text-on-surface hover:bg-surface-container-high rounded transition-colors" title="Dark Mode Toggle">
+<span class="material-symbols-outlined text-[20px]" data-icon="dark_mode">dark_mode</span>
+</button>
+</div>
+<!-- Trailing Action Buttons -->
+<div class="flex items-center gap-space-sm">
+<button class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-outline-variant/30 bg-surface-container text-on-surface font-label-code-sm text-label-code-sm hover:bg-surface-container-high transition-colors active:scale-[0.98]">
+<span class="material-symbols-outlined text-[16px] text-tertiary" data-icon="sync">sync</span>
+<span>Telemetry Sync</span>
+</button>
+<button class="flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-primary-container text-on-surface font-label-code-sm text-label-code-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined text-[16px]" data-icon="speed">speed</span>
+<span>Deploy Fleet</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Canvas Content Area (Offset for Fixed Sidebar & Top Bar) -->
+<main class="ml-64 pt-16 min-h-screen bg-background">
+<div class="p-8 max-w-[1600px] mx-auto space-y-8">
+<!-- Header / Title Section -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-6 border-b border-outline-variant/20">
+<div class="space-y-1.5">
+<div class="flex items-center gap-3">
+<h1 class="font-headline-xl text-headline-xl text-on-surface font-bold tracking-tight">Sites &amp; Multi-Tenant Fleet</h1>
+<span class="px-2.5 py-0.5 rounded-full text-label-code-sm font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-tertiary">
+              14 Active Endpoints
+            </span>
+</div>
+<p class="font-body-md text-body-md text-secondary max-w-3xl">
+            Configure CMS endpoints, publishing webhook targets, and real-time health telemetry across all 14 managed properties.
+          </p>
+</div>
+<!-- Action Buttons -->
+<div class="flex items-center gap-3 shrink-0">
+<button class="flex items-center gap-2 px-4 py-2 rounded border border-outline-variant/40 bg-surface-container-low text-on-surface font-label-code text-label-code hover:bg-surface-container hover:border-outline-variant/60 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined text-sm text-secondary" data-icon="file_download">file_download</span>
+<span>Export Config</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 rounded bg-primary-container text-on-surface font-label-code text-label-code font-semibold shadow-sm hover:brightness-110 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined text-base font-bold" data-icon="add">add</span>
+<span>+ Add New Site</span>
+</button>
+</div>
+</div>
+<!-- KPI Metric Summary Row (Exactly 4 cards in a single row) -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+<!-- Metric 1: Total Managed Sites -->
+<div class="p-5 rounded bg-surface-container-low border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-secondary mb-3">
+<span class="font-label-meta text-label-meta tracking-wider uppercase">TOTAL MANAGED SITES</span>
+<span class="material-symbols-outlined text-lg text-primary" data-icon="domain_verification">domain_verification</span>
+</div>
+<div class="space-y-1">
+<div class="flex items-baseline gap-2">
+<span class="font-headline-xl text-headline-xl font-bold text-on-surface font-label-code">14</span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary flex items-center gap-0.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                100% Endpoints Passing
+              </span>
+</div>
+<p class="font-label-code-sm text-label-code-sm text-secondary pt-1 border-t border-outline-variant/15">
+              11 WP REST • 3 Next.js Webhook
+            </p>
+</div>
+</div>
+<!-- Metric 2: Publish Velocity -->
+<div class="p-5 rounded bg-surface-container-low border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-secondary mb-3">
+<span class="font-label-meta text-label-meta tracking-wider uppercase">PUBLISH VELOCITY</span>
+<span class="material-symbols-outlined text-lg text-primary-container" data-icon="bolt">bolt</span>
+</div>
+<div class="space-y-1">
+<div class="flex items-baseline gap-2">
+<span class="font-headline-xl text-headline-xl font-bold text-on-surface font-label-code">42</span>
+<span class="font-body-sm text-body-sm text-secondary">posts / day</span>
+</div>
+<p class="font-label-code-sm text-label-code-sm text-secondary pt-1 border-t border-outline-variant/15">
+              85% Autonomous Flow, $0.18 / 1k words
+            </p>
+</div>
+</div>
+<!-- Metric 3: GSC Health Probes -->
+<div class="p-5 rounded bg-surface-container-low border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-secondary mb-3">
+<span class="font-label-meta text-label-meta tracking-wider uppercase">GSC HEALTH PROBES</span>
+<span class="material-symbols-outlined text-lg text-tertiary" data-icon="search_check">search_check</span>
+</div>
+<div class="space-y-1">
+<div class="flex items-baseline gap-2">
+<span class="font-headline-xl text-headline-xl font-bold text-on-surface font-label-code">14 / 14</span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">Live Verified</span>
+</div>
+<p class="font-label-code-sm text-label-code-sm text-secondary pt-1 border-t border-outline-variant/15">
+              Google Search Console • Avg Latency 112ms
+            </p>
+</div>
+</div>
+<!-- Metric 4: Quality Pass Rate -->
+<div class="p-5 rounded bg-surface-container-low border border-outline-variant/30 flex flex-col justify-between hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-secondary mb-3">
+<span class="font-label-meta text-label-meta tracking-wider uppercase">QUALITY PASS RATE</span>
+<span class="material-symbols-outlined text-lg text-primary" data-icon="verified">verified</span>
+</div>
+<div class="space-y-1">
+<div class="flex items-baseline gap-2">
+<span class="font-headline-xl text-headline-xl font-bold text-on-surface font-label-code">94.2%</span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">▲ +1.4%</span>
+</div>
+<p class="font-label-code-sm text-label-code-sm text-secondary pt-1 border-t border-outline-variant/15">
+              Avg Score 89.6/100, Hallucination &lt;0.4%
+            </p>
+</div>
+</div>
+</div>
+<!-- Main Layout: 2-Column Responsive Workspace -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<!-- Left Column: Connected Fleet Endpoints Table (7 cols on 12-col grid) -->
+<div class="lg:col-span-7 space-y-4">
+<div class="p-6 rounded bg-surface-container-low border border-outline-variant/30 space-y-5">
+<!-- Table Header & Filter Pills -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-outline-variant/20">
+<div>
+<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold flex items-center gap-2">
+<span>Connected Fleet Endpoints</span>
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+</h2>
+<p class="font-body-sm text-body-sm text-secondary">Active edge connections, ingestion schemas, and latency</p>
+</div>
+<!-- Filter Pills -->
+<div class="flex flex-wrap items-center gap-1.5">
+<button class="px-2.5 py-1 rounded font-label-code-sm text-label-code-sm bg-primary-container text-on-surface font-semibold shadow-sm">
+                  All Sites (14)
+                </button>
+<button class="px-2.5 py-1 rounded font-label-code-sm text-label-code-sm bg-surface-container text-secondary hover:text-on-surface border border-outline-variant/20 transition-colors">
+                  WordPress REST (11)
+                </button>
+<button class="px-2.5 py-1 rounded font-label-code-sm text-label-code-sm bg-surface-container text-secondary hover:text-on-surface border border-outline-variant/20 transition-colors">
+                  Next.js Webhooks (3)
+                </button>
+<button class="px-2.5 py-1 rounded font-label-code-sm text-label-code-sm bg-surface-container text-secondary hover:text-on-surface border border-outline-variant/20 transition-colors">
+                  Auto-Mode (12)
+                </button>
+<button class="px-2.5 py-1 rounded font-label-code-sm text-label-code-sm bg-surface-container text-secondary hover:text-on-surface border border-outline-variant/20 transition-colors">
+                  Draft-Mode (2)
+                </button>
+</div>
+</div>
+<!-- Table Container -->
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-outline-variant/30 text-secondary font-label-meta text-label-meta uppercase tracking-wider">
+<th class="py-3 px-3">SLUG / SITE</th>
+<th class="py-3 px-3">ARCHITECTURE</th>
+<th class="py-3 px-3">MODE</th>
+<th class="py-3 px-3">HEALTH PROBE</th>
+<th class="py-3 px-3 text-right">GSC DELTA</th>
+<th class="py-3 px-3 text-right">ACTIONS</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/15 font-body-sm text-body-sm">
+<!-- Row 1: fintech-insider.io -->
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<div class="flex flex-col">
+<span class="font-label-code text-label-code font-semibold text-on-surface">fintech-insider.io</span>
+<span class="text-[11px] text-secondary">Fintech Insider Daily</span>
+</div>
+</div>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-on-surface">
+                        Next.js Webhook
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-primary-container/15 text-primary border border-primary-container/30">
+<span class="material-symbols-outlined text-[12px]" data-icon="bolt">bolt</span>
+                        Auto
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">200 OK</span>
+<span class="text-secondary text-[11px]">• 84ms</span>
+</div>
+</td>
+<td class="py-3.5 px-3 text-right">
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">+24.8%</span>
+<span class="text-secondary block text-[10px]">impressions/mo</span>
+</td>
+<td class="py-3.5 px-3 text-right">
+<div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Visit Site">
+<span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Configure Endpoint">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+</button>
+<button class="p-1 text-secondary hover:text-error rounded hover:bg-surface-container-high" title="Disconnect">
+<span class="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2: saas-growth-weekly.com -->
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<div class="flex flex-col">
+<span class="font-label-code text-label-code font-semibold text-on-surface">saas-growth-weekly.com</span>
+<span class="text-[11px] text-secondary">SaaS Growth Weekly</span>
+</div>
+</div>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-on-surface">
+                        WordPress REST
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-primary-container/15 text-primary border border-primary-container/30">
+<span class="material-symbols-outlined text-[12px]" data-icon="bolt">bolt</span>
+                        Auto
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">200 OK</span>
+<span class="text-secondary text-[11px]">• 118ms</span>
+</div>
+</td>
+<td class="py-3.5 px-3 text-right">
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">+18.2%</span>
+<span class="text-secondary block text-[10px]">impressions/mo</span>
+</td>
+<td class="py-3.5 px-3 text-right">
+<div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Visit Site">
+<span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Configure Endpoint">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+</button>
+<button class="p-1 text-secondary hover:text-error rounded hover:bg-surface-container-high" title="Disconnect">
+<span class="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3: cloud-native-dev.org -->
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<div class="flex flex-col">
+<span class="font-label-code text-label-code font-semibold text-on-surface">cloud-native-dev.org</span>
+<span class="text-[11px] text-secondary">Cloud Native Architecture</span>
+</div>
+</div>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-on-surface">
+                        WordPress REST
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container text-secondary border border-outline-variant/30">
+<span class="material-symbols-outlined text-[12px]" data-icon="edit_note">edit_note</span>
+                        Draft Only
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">200 OK</span>
+<span class="text-secondary text-[11px]">• 92ms</span>
+</div>
+</td>
+<td class="py-3.5 px-3 text-right">
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">+31.4%</span>
+<span class="text-secondary block text-[10px]">impressions/mo</span>
+</td>
+<td class="py-3.5 px-3 text-right">
+<div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Visit Site">
+<span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Configure Endpoint">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+</button>
+<button class="p-1 text-secondary hover:text-error rounded hover:bg-surface-container-high" title="Disconnect">
+<span class="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4: ai-tool-benchmarks.net -->
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<div class="flex flex-col">
+<span class="font-label-code text-label-code font-semibold text-on-surface">ai-tool-benchmarks.net</span>
+<span class="text-[11px] text-secondary">AI Tool Benchmarks Hub</span>
+</div>
+</div>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-on-surface">
+                        Next.js Webhook
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-primary-container/15 text-primary border border-primary-container/30">
+<span class="material-symbols-outlined text-[12px]" data-icon="bolt">bolt</span>
+                        Auto
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">200 OK</span>
+<span class="text-secondary text-[11px]">• 64ms</span>
+</div>
+</td>
+<td class="py-3.5 px-3 text-right">
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">+44.1%</span>
+<span class="text-secondary block text-[10px]">impressions/mo</span>
+</td>
+<td class="py-3.5 px-3 text-right">
+<div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Visit Site">
+<span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Configure Endpoint">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+</button>
+<button class="p-1 text-secondary hover:text-error rounded hover:bg-surface-container-high" title="Disconnect">
+<span class="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 5: devops-chronicles.io -->
+<tr class="hover:bg-surface-container transition-colors group">
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<div class="flex flex-col">
+<span class="font-label-code text-label-code font-semibold text-on-surface">devops-chronicles.io</span>
+<span class="text-[11px] text-secondary">DevOps &amp; SRE Intel</span>
+</div>
+</div>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-surface-container-high border border-outline-variant/40 text-on-surface">
+                        WordPress REST
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-label-code-sm bg-primary-container/15 text-primary border border-primary-container/30">
+<span class="material-symbols-outlined text-[12px]" data-icon="bolt">bolt</span>
+                        Auto
+                      </span>
+</td>
+<td class="py-3.5 px-3">
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span class="font-label-code-sm text-label-code-sm text-tertiary">200 OK</span>
+<span class="text-secondary text-[11px]">• 104ms</span>
+</div>
+</td>
+<td class="py-3.5 px-3 text-right">
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">+12.0%</span>
+<span class="text-secondary block text-[10px]">impressions/mo</span>
+</td>
+<td class="py-3.5 px-3 text-right">
+<div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Visit Site">
+<span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="p-1 text-secondary hover:text-on-surface rounded hover:bg-surface-container-high" title="Configure Endpoint">
+<span class="material-symbols-outlined text-[16px]" data-icon="settings">settings</span>
+</button>
+<button class="p-1 text-secondary hover:text-error rounded hover:bg-surface-container-high" title="Disconnect">
+<span class="material-symbols-outlined text-[16px]" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Table Pagination / Summary Footer -->
+<div class="flex items-center justify-between pt-3 border-t border-outline-variant/20 text-secondary font-label-code-sm text-label-code-sm">
+<span>Showing 5 of 14 provisioned sites</span>
+<div class="flex items-center gap-2">
+<button class="px-2.5 py-1 rounded bg-surface-container border border-outline-variant/30 text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-40" disabled="">
+                  Prev
+                </button>
+<button class="px-2.5 py-1 rounded bg-surface-container border border-outline-variant/30 text-on-surface hover:bg-surface-container-high transition-colors">
+                  Next
+                </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Provision New Site Endpoint Form (5 cols on 12-col grid) -->
+<div class="lg:col-span-5 space-y-4">
+<div class="p-6 rounded bg-surface-container-low border border-outline-variant/30 space-y-6">
+<div class="pb-4 border-b border-outline-variant/20">
+<div class="flex items-center justify-between">
+<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-base" data-icon="add_circle">add_circle</span>
+<span>Provision New Site Endpoint</span>
+</h2>
+<span class="font-label-code-sm text-[11px] text-tertiary bg-tertiary/10 border border-tertiary/20 px-2 py-0.5 rounded">
+                  Instant Verification
+                </span>
+</div>
+<p class="font-body-sm text-body-sm text-secondary mt-1">
+                Attach a WordPress REST target or Next.js ISR webhook to the autonomous publishing pipeline.
+              </p>
+</div>
+<form class="space-y-4" onsubmit="event.preventDefault()">
+<!-- Input 1: Site Display Name -->
+<div class="space-y-1.5">
+<label class="block font-label-meta text-label-meta uppercase tracking-wider text-secondary">
+                  Site Display Name
+                </label>
+<input class="w-full px-3.5 py-2 bg-surface-dim border border-outline-variant/40 rounded text-on-surface font-body-md text-body-md placeholder-secondary/50 focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="e.g. Acme Tech Journal" type="text" value="Fintech Insider Daily"/>
+</div>
+<!-- Input 2: Target Slug / Domain -->
+<div class="space-y-1.5">
+<label class="block font-label-meta text-label-meta uppercase tracking-wider text-secondary">
+                  Target Slug / Domain
+                </label>
+<div class="relative flex items-center">
+<span class="absolute left-3 text-secondary font-label-code text-label-code font-bold">#</span>
+<input class="w-full pl-8 pr-3.5 py-2 bg-surface-dim border border-outline-variant/40 rounded text-on-surface font-label-code text-label-code placeholder-secondary/50 focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="domain.com" type="text" value="fintech-insider.io"/>
+</div>
+</div>
+<!-- Input 3: CMS Engine Architecture -->
+<div class="space-y-1.5">
+<label class="block font-label-meta text-label-meta uppercase tracking-wider text-secondary">
+                  CMS Engine Architecture
+                </label>
+<div class="relative">
+<select class="w-full px-3.5 py-2 bg-surface-dim border border-outline-variant/40 rounded text-on-surface font-body-md text-body-md focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all appearance-none pr-10">
+<option value="wp">WordPress REST API (v2)</option>
+<option selected="" value="next">Next.js ISR Webhook</option>
+<option value="ghost">Ghost CMS Content API</option>
+<option value="strapi">Strapi Headless GraphQL</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-base" data-icon="unfold_more">unfold_more</span>
+</div>
+</div>
+<!-- Input 4: Webhook / REST Base URL -->
+<div class="space-y-1.5">
+<label class="block font-label-meta text-label-meta uppercase tracking-wider text-secondary">
+                  Webhook / REST Base URL
+                </label>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-secondary text-[16px]" data-icon="language">language</span>
+<input class="w-full pl-9 pr-3.5 py-2 bg-surface-dim border border-outline-variant/40 rounded text-on-surface font-label-code-sm text-label-code-sm placeholder-secondary/50 focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="https://yourdomain.com/wp-json/wp/v2/posts" type="url" value="https://api.fintech-insider.io/v1/publish"/>
+</div>
+</div>
+<!-- Input 5: Publishing Default Mode (Toggle / Segmented Control) -->
+<div class="space-y-2 pt-1">
+<label class="block font-label-meta text-label-meta uppercase tracking-wider text-secondary">
+                  Publishing Default Mode
+                </label>
+<div class="grid grid-cols-2 gap-2 p-1 bg-surface-dim border border-outline-variant/40 rounded">
+<label class="flex items-center justify-center gap-1.5 py-2 px-2 rounded cursor-pointer transition-all bg-surface-container-high border border-outline-variant/30 text-on-surface font-label-code-sm text-label-code-sm font-semibold shadow-sm">
+<input checked="" class="hidden" name="publish_mode" type="radio" value="auto"/>
+<span class="material-symbols-outlined text-primary-container text-sm" data-icon="bolt">bolt</span>
+<span>Full Autonomous</span>
+</label>
+<label class="flex items-center justify-center gap-1.5 py-2 px-2 rounded cursor-pointer transition-all text-secondary hover:text-on-surface font-label-code-sm text-label-code-sm">
+<input class="hidden" name="publish_mode" type="radio" value="manual"/>
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="rate_review">rate_review</span>
+<span>Human Review</span>
+</label>
+</div>
+</div>
+<!-- Action Row: Test Health Probe & Provision -->
+<div class="pt-4 border-t border-outline-variant/20 flex items-center justify-between gap-3">
+<button class="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded border border-outline-variant/40 bg-surface-container text-on-surface font-label-code text-label-code hover:bg-surface-container-high active:scale-[0.98] transition-all" type="button">
+<span class="material-symbols-outlined text-[16px] text-tertiary" data-icon="network_check">network_check</span>
+<span>Test Probe</span>
+</button>
+<button class="flex-[1.5] flex items-center justify-center gap-1.5 py-2.5 px-4 rounded bg-primary-container text-on-surface font-label-code text-label-code font-semibold shadow-sm hover:brightness-110 active:scale-[0.98] transition-all" type="submit">
+<span class="material-symbols-outlined text-[16px] font-bold" data-icon="add">add</span>
+<span>+ Provision Fleet Site</span>
+</button>
+</div>
+</form>
+</div>
+<!-- Quick Telemetry Diagnostic Card -->
+<div class="p-4 rounded bg-surface-container-lowest border border-outline-variant/20 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center border border-outline-variant/30">
+<span class="material-symbols-outlined text-tertiary text-base" data-icon="verified_user">verified_user</span>
+</div>
+<div>
+<div class="font-label-code-sm text-label-code-sm text-on-surface font-medium">Automatic Invalidation Cache</div>
+<div class="font-body-sm text-[11px] text-secondary">Cloudflare edge purge synced with 0ms overhead</div>
+</div>
+</div>
+<span class="font-label-code-sm text-label-code-sm text-tertiary font-semibold">Active</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

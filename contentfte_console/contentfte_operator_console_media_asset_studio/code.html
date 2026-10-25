@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ContentFTE - Media & Asset Studio</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=JetBrains+Mono:wght@100..900&family=Plus+Jakarta+Sans:wght@100..900&display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "primary-fixed-dim": "#ffb5a0",
+            "surface-dim": "#111318",
+            "on-primary-container": "#541100",
+            "on-primary": "#5f1500",
+            "on-primary-fixed": "#3b0900",
+            "on-surface": "#e2e2e9",
+            "primary": "#ffb5a0",
+            "secondary": "#c9c6c0",
+            "secondary-container": "#4a4945",
+            "outline": "#a88a82",
+            "surface-variant": "#33353a",
+            "on-primary-fixed-variant": "#872100",
+            "on-secondary-container": "#bbb8b2",
+            "surface-bright": "#37393f",
+            "inverse-primary": "#ad330a",
+            "surface": "#111318",
+            "on-tertiary-fixed-variant": "#005236",
+            "tertiary": "#4edea3",
+            "on-error": "#690005",
+            "error": "#ffb4ab",
+            "surface-container-highest": "#33353a",
+            "on-background": "#e2e2e9",
+            "background": "#111318",
+            "on-tertiary-container": "#00311f",
+            "surface-container-high": "#282a2f",
+            "secondary-fixed-dim": "#c9c6c0",
+            "on-secondary": "#31302d",
+            "surface-tint": "#ffb5a0",
+            "on-error-container": "#ffdad6",
+            "inverse-surface": "#e2e2e9",
+            "tertiary-container": "#00a572",
+            "secondary-fixed": "#e6e2dc",
+            "on-surface-variant": "#e1bfb6",
+            "tertiary-fixed": "#6ffbbe",
+            "on-secondary-fixed-variant": "#484743",
+            "surface-container-low": "#1a1b21",
+            "primary-fixed": "#ffdbd1",
+            "outline-variant": "#59413b",
+            "inverse-on-surface": "#2e3036",
+            "error-container": "#93000a",
+            "tertiary-fixed-dim": "#4edea3",
+            "surface-container": "#1e2025",
+            "on-tertiary-fixed": "#002113",
+            "on-secondary-fixed": "#1c1c18",
+            "primary-container": "#f2643a",
+            "on-tertiary": "#003824",
+            "surface-container-lowest": "#0c0e13"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+          "spacing": {
+            "margin": "1rem",
+            "margin-desktop": "2rem",
+            "gutter": "1rem",
+            "space-xl": "2rem",
+            "space-md": "0.75rem",
+            "space-xs": "0.25rem",
+            "gutter-desktop": "1.5rem",
+            "space-sm": "0.5rem",
+            "space-lg": "1.25rem"
+          },
+          "fontFamily": {
+            "label-code-sm": ["JetBrains Mono"],
+            "headline-md": ["Plus Jakarta Sans"],
+            "headline-sm": ["Plus Jakarta Sans"],
+            "body-lg": ["Inter"],
+            "headline-xl-mobile": ["Plus Jakarta Sans"],
+            "label-meta": ["Inter"],
+            "label-code": ["JetBrains Mono"],
+            "headline-lg": ["Plus Jakarta Sans"],
+            "headline-xl": ["Plus Jakarta Sans"],
+            "body-md": ["Inter"],
+            "body-sm": ["Inter"]
+          },
+          "fontSize": {
+            "label-code-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+            "headline-md": ["18px", { "lineHeight": "26px", "letterSpacing": "-0.015em", "fontWeight": "600" }],
+            "headline-sm": ["15px", { "lineHeight": "22px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+            "body-lg": ["15px", { "lineHeight": "24px", "letterSpacing": "-0.005em", "fontWeight": "400" }],
+            "headline-xl-mobile": ["26px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+            "label-meta": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "500" }],
+            "label-code": ["12px", { "lineHeight": "16px", "letterSpacing": "-0.01em", "fontWeight": "400" }],
+            "headline-lg": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+            "headline-xl": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.03em", "fontWeight": "600" }],
+            "body-md": ["13px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "400" }],
+            "body-sm": ["12px", { "lineHeight": "18px", "letterSpacing": "0em", "fontWeight": "400" }]
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+      font-size: 18px;
+      display: inline-block;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #0c0e13;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #282a2f;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-surface text-on-surface font-body-md antialiased overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container min-h-screen">
+<!-- Desktop Fixed Left Drawer (SideNavBar JSON Anchor) -->
+<aside class="fixed top-0 left-0 h-screen w-64 border-r border-outline-variant/30 bg-surface-container-lowest z-40 flex flex-col justify-between p-space-md">
+<!-- Header Brand Section -->
+<div class="flex flex-col gap-space-md">
+<div class="flex items-center gap-space-sm px-space-xs py-space-xs">
+<div class="w-8 h-8 rounded bg-primary-container flex items-center justify-center text-on-primary font-headline-md font-bold text-headline-sm shadow-sm">
+          CF
+        </div>
+<div class="flex flex-col">
+<span class="text-headline-md font-headline-md text-on-surface font-semibold tracking-tight leading-none">ContentFTE</span>
+<span class="text-label-code-sm font-label-code-sm text-secondary leading-none mt-1">Autonomous Fleet Engine</span>
+</div>
+</div>
+<!-- Quick Action CTA -->
+<button class="w-full py-space-sm px-space-md bg-surface-container-high hover:bg-surface-container text-on-surface rounded border border-outline-variant/40 flex items-center justify-between text-body-md font-body-md transition-colors duration-100 active:scale-[0.99]">
+<span class="flex items-center gap-space-xs text-primary-container font-medium">
+<span class="material-symbols-outlined" data-icon="rocket_launch">rocket_launch</span>
+<span>Dispatch Run</span>
+</span>
+<span class="text-label-code-sm font-label-code-sm text-secondary">⌘R</span>
+</button>
+<!-- Navigation Links List (Total 9 tabs from JSON) -->
+<nav aria-label="Main Navigation" class="flex flex-col space-y-0.5 mt-space-xs">
+<!-- Tab 1: Overview -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="text-label-code font-label-code">Overview</span>
+</a>
+<!-- Tab 2: Pipeline -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="alt_route">alt_route</span>
+<span class="text-label-code font-label-code">Pipeline</span>
+</a>
+<!-- Tab 3: Keywords -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="key">key</span>
+<span class="text-label-code font-label-code">Keywords</span>
+</a>
+<!-- Tab 4: Research -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="query_stats">query_stats</span>
+<span class="text-label-code font-label-code">Research</span>
+</a>
+<!-- Tab 5: Briefs -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+<span class="text-label-code font-label-code">Briefs</span>
+</a>
+<!-- Tab 6: Media (ACTIVE Destination) -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded bg-surface-container-high text-on-surface border-l-2 border-primary-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined text-primary-container" data-icon="perm_media">perm_media</span>
+<span class="text-label-code font-label-code font-medium text-on-surface">Media</span>
+<span class="ml-auto text-label-code-sm font-label-code-sm text-primary-container bg-surface-container px-1.5 py-0.5 rounded border border-outline-variant/30">Active</span>
+</a>
+<!-- Tab 7: Logs -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="terminal">terminal</span>
+<span class="text-label-code font-label-code">Logs</span>
+</a>
+<!-- Tab 8: Insights -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="monitoring">monitoring</span>
+<span class="text-label-code font-label-code">Insights</span>
+</a>
+<!-- Tab 9: Sites -->
+<a class="flex items-center gap-space-sm px-space-md py-space-sm rounded text-secondary hover:text-on-surface hover:bg-surface-container transition-colors duration-100 text-body-md font-body-md" href="#">
+<span class="material-symbols-outlined" data-icon="domain">domain</span>
+<span class="text-label-code font-label-code">Sites</span>
+</a>
+</nav>
+</div>
+<!-- Sidebar Footer Context (JSON Anchors) -->
+<div class="flex flex-col gap-space-xs pt-space-sm border-t border-outline-variant/30">
+<div class="flex items-center gap-space-xs px-space-xs py-1 text-label-code-sm font-label-code-sm text-secondary">
+<span class="w-2 h-2 rounded-full bg-tertiary animate-pulse inline-block"></span>
+<span class="material-symbols-outlined text-secondary" data-icon="dns">dns</span>
+<span class="truncate">Cluster US-East-1 99.98% OK</span>
+</div>
+<div class="flex items-center justify-between px-space-xs py-1 text-label-code-sm font-label-code-sm text-on-surface rounded hover:bg-surface-container cursor-pointer transition-colors">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-secondary" data-icon="account_circle">account_circle</span>
+<span class="font-medium">Alex Vance</span>
+</div>
+<span class="text-[10px] text-secondary font-label-code-sm">Lead Ops</span>
+</div>
+</div>
+</aside>
+<!-- Top Navigation Bar (JSON Anchor) -->
+<header class="fixed top-0 right-0 left-64 h-16 border-b border-outline-variant/30 bg-surface/90 backdrop-blur-md z-30 flex items-center justify-between px-gutter-desktop w-[calc(100%-16rem)] ml-64">
+<!-- Left Section: Search & Cluster Badges -->
+<div class="flex items-center gap-space-md flex-1 max-w-xl">
+<!-- Cluster Status Badges -->
+<div class="hidden lg:flex items-center gap-1.5 bg-surface-container-low px-space-sm py-1 rounded border border-outline-variant/20 text-label-code-sm font-label-code-sm text-secondary">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+<span>Cluster: US-East-1 Prod</span>
+</div>
+<div class="hidden lg:flex items-center gap-1.5 bg-surface-container-low px-space-sm py-1 rounded border border-outline-variant/20 text-label-code-sm font-label-code-sm text-secondary">
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="language">language</span>
+<span>Site: All Fleets</span>
+</div>
+<!-- Search Input Container -->
+<div class="relative w-full max-w-md">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-secondary pointer-events-none" data-icon="search">search</span>
+<input class="w-full pl-9 pr-12 py-1.5 bg-surface-container-lowest border border-outline-variant/30 rounded text-body-md font-body-md text-on-surface placeholder:text-secondary focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" placeholder="Filter media assets, prompts, articles..." type="text"/>
+<span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-label-code-sm text-secondary bg-surface-container px-1 py-0.5 rounded border border-outline-variant/20">⌘K</span>
+</div>
+</div>
+<!-- Right Controls & Actions -->
+<div class="flex items-center gap-space-sm">
+<!-- Telemetry Sync Pill -->
+<button class="flex items-center gap-1 px-space-sm py-1.5 rounded bg-surface-container-high border border-outline-variant/30 text-label-code-sm font-label-code-sm text-secondary hover:text-on-surface hover:bg-surface-container transition-colors">
+<span class="material-symbols-outlined text-tertiary text-sm" data-icon="sync">sync</span>
+<span>Telemetry Sync</span>
+</button>
+<!-- Trailing Action Icons -->
+<button class="w-8 h-8 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Notifications">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="w-8 h-8 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Toggle Theme">
+<span class="material-symbols-outlined" data-icon="dark_mode">dark_mode</span>
+</button>
+<div class="h-4 w-[1px] bg-outline-variant/30 mx-1"></div>
+<!-- Primary Action -->
+<button class="flex items-center gap-1.5 px-space-md py-1.5 bg-primary-container text-on-primary-container font-headline-sm text-body-md font-semibold rounded hover:bg-[#d8532b] active:scale-[0.98] transition-all duration-75 shadow-sm">
+<span class="material-symbols-outlined font-bold text-sm" data-icon="add">add</span>
+<span>Deploy Fleet</span>
+</button>
+</div>
+</header>
+<!-- Main Canvas Workspace (/media) -->
+<main class="ml-64 pt-16 min-h-screen bg-surface-container-lowest custom-scrollbar">
+<div class="p-gutter-desktop max-w-[1720px] mx-auto flex flex-col gap-space-lg">
+<!-- 1. Breadcrumbs & Header Section -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-space-md pb-space-sm border-b border-outline-variant/20">
+<div class="flex flex-col gap-1">
+<!-- Breadcrumb Context -->
+<div class="flex items-center gap-2 text-label-code-sm font-label-code-sm text-secondary">
+<span>Fleet Operations</span>
+<span class="text-outline-variant">/</span>
+<span>Asset Orchestration</span>
+<span class="text-outline-variant">/</span>
+<span class="text-primary-container">Media Studio</span>
+</div>
+<!-- Page Title & Micro Status Badge -->
+<div class="flex items-center gap-space-sm flex-wrap mt-0.5">
+<h1 class="text-headline-lg font-headline-lg text-on-surface font-bold tracking-tight">
+              Media & Generative Asset Studio
+            </h1>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-label-code-sm font-label-code-sm bg-surface-container-high text-primary-container border border-primary-container/30">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse"></span>
+              Auto-Render Engine • SVGs & Infographics
+            </span>
+</div>
+<p class="text-body-md font-body-md text-secondary max-w-3xl">
+            Automated diagram generation, architectural schematics, responsive infographics, and featured images for published briefs.
+          </p>
+</div>
+<!-- Primary Top Canvas CTAs -->
+<div class="flex items-center gap-space-sm flex-shrink-0">
+<button class="px-space-md py-2 rounded bg-surface-container-high/60 border border-outline-variant/30 text-on-surface text-body-md font-body-md hover:bg-surface-container hover:border-outline-variant/60 flex items-center gap-2 transition-all">
+<span class="material-symbols-outlined text-secondary" data-icon="file_download">file_download</span>
+<span>Batch Export</span>
+</button>
+<button class="px-space-md py-2 rounded bg-primary-container text-on-primary-container text-body-md font-body-md font-semibold hover:bg-[#d8532b] active:scale-[0.98] flex items-center gap-2 shadow-sm transition-all duration-75">
+<span class="material-symbols-outlined text-sm font-bold" data-icon="palette">palette</span>
+<span>+ Generate New Asset</span>
+</button>
+</div>
+</div>
+<!-- 2. Summary KPI Metrics (Strictly 4 Cards in a single grid row) -->
+<section aria-label="Media Fleet Telemetry" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-md">
+<!-- KPI 1 -->
+<div class="bg-surface-container-low/80 p-space-md rounded border border-outline-variant/30 relative overflow-hidden group hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-label-meta font-label-meta text-secondary mb-1">
+<span>TOTAL GENERATED ASSETS</span>
+<span class="material-symbols-outlined text-secondary group-hover:text-primary-container transition-colors" data-icon="auto_awesome">auto_awesome</span>
+</div>
+<div class="text-headline-xl font-headline-xl text-on-surface font-semibold tracking-tight">
+            1,420
+          </div>
+<div class="flex items-center gap-1.5 mt-2 text-label-code-sm font-label-code-sm text-tertiary">
+<span class="material-symbols-outlined text-sm" data-icon="trending_up">trending_up</span>
+<span>+142 this week</span>
+<span class="text-secondary ml-auto text-[10px]">Fleet Wide</span>
+</div>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-primary-container/40 to-transparent"></div>
+</div>
+<!-- KPI 2 -->
+<div class="bg-surface-container-low/80 p-space-md rounded border border-outline-variant/30 relative overflow-hidden group hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-label-meta font-label-meta text-secondary mb-1">
+<span>ASSET TYPES</span>
+<span class="material-symbols-outlined text-secondary group-hover:text-tertiary transition-colors" data-icon="pie_chart">pie_chart</span>
+</div>
+<div class="text-headline-xl font-headline-xl text-on-surface font-semibold tracking-tight">
+            68% SVGs
+          </div>
+<div class="flex items-center gap-1.5 mt-2 text-label-code-sm font-label-code-sm text-secondary">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+<span>32% High-res Charts & WebP</span>
+</div>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-tertiary/40 to-transparent"></div>
+</div>
+<!-- KPI 3 -->
+<div class="bg-surface-container-low/80 p-space-md rounded border border-outline-variant/30 relative overflow-hidden group hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-label-meta font-label-meta text-secondary mb-1">
+<span>AVG GENERATION TIME</span>
+<span class="material-symbols-outlined text-secondary group-hover:text-primary-container transition-colors" data-icon="speed">speed</span>
+</div>
+<div class="text-headline-xl font-headline-xl text-on-surface font-semibold tracking-tight">
+            3.8s
+          </div>
+<div class="flex items-center gap-1.5 mt-2 text-label-code-sm font-label-code-sm text-secondary truncate">
+<span class="material-symbols-outlined text-sm text-primary-container" data-icon="bolt">bolt</span>
+<span>Using vector template workers</span>
+</div>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-primary-container/40 to-transparent"></div>
+</div>
+<!-- KPI 4 -->
+<div class="bg-surface-container-low/80 p-space-md rounded border border-outline-variant/30 relative overflow-hidden group hover:border-outline-variant/60 transition-colors">
+<div class="flex items-center justify-between text-label-meta font-label-meta text-secondary mb-1">
+<span>BRAND COMPLIANCE</span>
+<span class="material-symbols-outlined text-secondary group-hover:text-tertiary transition-colors" data-icon="verified">verified</span>
+</div>
+<div class="text-headline-xl font-headline-xl text-on-surface font-semibold tracking-tight">
+            99.8%
+          </div>
+<div class="flex items-center gap-1.5 mt-2 text-label-code-sm font-label-code-sm text-secondary truncate">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+<span>Palette & typography locked</span>
+</div>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-tertiary/40 to-transparent"></div>
+</div>
+</section>
+<!-- 3. Category Tabs & Secondary Controls Toolbar -->
+<section class="flex flex-col gap-space-sm bg-surface-container-low/40 p-space-sm rounded border border-outline-variant/20">
+<!-- Top Row: Functional Filter Tabs -->
+<div class="flex items-center justify-between border-b border-outline-variant/20 pb-space-xs overflow-x-auto custom-scrollbar">
+<nav aria-label="Asset Class Tabs" class="flex items-center gap-1">
+<button class="px-space-md py-1.5 rounded bg-surface-container-high text-on-surface font-label-code text-label-code font-medium border-b-2 border-primary-container flex items-center gap-1.5">
+<span>All Assets</span>
+<span class="px-1.5 py-0.2 bg-surface-container text-secondary rounded text-[10px]">1,420</span>
+</button>
+<button class="px-space-md py-1.5 rounded text-secondary hover:text-on-surface hover:bg-surface-container font-label-code text-label-code flex items-center gap-1.5 transition-colors">
+<span>Technical Diagrams</span>
+<span class="px-1.5 py-0.2 bg-surface-container-lowest text-secondary rounded text-[10px]">620</span>
+</button>
+<button class="px-space-md py-1.5 rounded text-secondary hover:text-on-surface hover:bg-surface-container font-label-code text-label-code flex items-center gap-1.5 transition-colors">
+<span>Feature Headers</span>
+<span class="px-1.5 py-0.2 bg-surface-container-lowest text-secondary rounded text-[10px]">410</span>
+</button>
+<button class="px-space-md py-1.5 rounded text-secondary hover:text-on-surface hover:bg-surface-container font-label-code text-label-code flex items-center gap-1.5 transition-colors">
+<span>Infographics</span>
+<span class="px-1.5 py-0.2 bg-surface-container-lowest text-secondary rounded text-[10px]">280</span>
+</button>
+<button class="px-space-md py-1.5 rounded text-secondary hover:text-on-surface hover:bg-surface-container font-label-code text-label-code flex items-center gap-1.5 transition-colors">
+<span>Code Snippet Cards</span>
+<span class="px-1.5 py-0.2 bg-surface-container-lowest text-secondary rounded text-[10px]">110</span>
+</button>
+</nav>
+<!-- Render Status Micro-Indicator -->
+<div class="hidden xl:flex items-center gap-2 text-label-code-sm font-label-code-sm text-secondary">
+<span class="flex h-2 w-2 relative">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-container opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-primary-container"></span>
+</span>
+<span>4 Workers Active in Cluster</span>
+</div>
+</div>
+<!-- Bottom Row: Filter Toolbar -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm pt-space-xs">
+<div class="flex flex-wrap items-center gap-space-sm flex-1">
+<!-- Search Inside Current Tab -->
+<div class="relative w-72">
+<span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-secondary text-sm" data-icon="filter_list">filter_list</span>
+<input class="w-full pl-8 pr-3 py-1 bg-surface-container-lowest border border-outline-variant/30 rounded text-label-code font-label-code text-on-surface placeholder:text-secondary focus:outline-none focus:border-primary-container" placeholder="Filter current view..." type="text"/>
+</div>
+<!-- Site Selector Dropdown -->
+<div class="relative">
+<select class="appearance-none bg-surface-container-lowest border border-outline-variant/30 rounded pl-3 pr-8 py-1 text-label-code font-label-code text-on-surface focus:outline-none focus:border-primary-container cursor-pointer">
+<option>All Tenant Sites</option>
+<option>fintech-insider.io</option>
+<option>datascience-weekly.co</option>
+<option>cloudnative-dev.org</option>
+<option>algo-security.net</option>
+</select>
+<span class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-secondary pointer-events-none text-sm" data-icon="expand_more">expand_more</span>
+</div>
+<!-- Aspect Ratio Selector Group -->
+<div class="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant/30 text-label-code-sm font-label-code-sm">
+<span class="text-secondary px-2 text-[10px] uppercase tracking-wider font-label-meta">Ratio</span>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface font-medium">16:9</button>
+<button class="px-2 py-0.5 rounded text-secondary hover:text-on-surface">1:1</button>
+<button class="px-2 py-0.5 rounded text-secondary hover:text-on-surface">4:3</button>
+</div>
+</div>
+<!-- Secondary Grid View Controls -->
+<div class="flex items-center gap-2">
+<span class="text-label-code-sm font-label-code-sm text-secondary">Displaying 4 of 1,420 items</span>
+<div class="flex items-center bg-surface-container-lowest rounded border border-outline-variant/30 p-0.5">
+<button class="p-1 rounded bg-surface-container text-on-surface" title="Grid View">
+<span class="material-symbols-outlined text-sm" data-icon="grid_view">grid_view</span>
+</button>
+<button class="p-1 rounded text-secondary hover:text-on-surface" title="List View">
+<span class="material-symbols-outlined text-sm" data-icon="table_rows">table_rows</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- 4. Media Grid (Strictly 4 Spacious Cards per row) -->
+<section aria-label="Media Cards Catalog" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-space-md">
+<!-- CARD 1: Vector Architecture Diagram -->
+<article class="bg-surface-container-low rounded border border-outline-variant/30 hover:border-outline-variant/60 flex flex-col justify-between overflow-hidden group transition-all duration-200">
+<div>
+<!-- Thumbnail Canvas Container -->
+<div class="relative w-full aspect-[16/9] bg-surface-container-lowest overflow-hidden border-b border-outline-variant/20 flex items-center justify-center">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="A clean technical vector architectural schematic diagram illustrating Kubernetes Ingress Controllers routing traffic to microservices. The visual features crisp hairline strokes in dark slate and black background with sharp amber orange routing nodes, clean directional arrows, and minimalist server cluster icons in a modern engineering style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB-TLh8FUeYfvraw5mQW33RlXqIDVYy0CJru0U7_O7pg5cw-sh6S2Y1TKEbwJE98vAL-u9seFECXHzil0Q-7gaPSj0KzzfIJ6S9WyWRsmXx2IZ2yWj9TpOM3ITntJ_lJ1Ol4kT-ByoBdAcXTtTbAx8EeEjxRnNBwYc_wzGjLJBVE_0JeRoqGMnzi_gr-hk_M4FOqRlpwNQ9K9Ph-BtWDPtTqsbRSjMUkt4fuw9p5YXa80xMcWV1R41i"/>
+<!-- Overlay Badges -->
+<div class="absolute top-2 left-2 flex items-center gap-1.5">
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-label-code-sm font-label-code-sm text-primary-container border border-primary-container/30">
+                  SVG
+                </span>
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-label-code-sm text-secondary border border-outline-variant/30">
+                  1200x675
+                </span>
+</div>
+<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-7 h-7 rounded bg-surface-container-highest/90 text-on-surface flex items-center justify-center hover:bg-primary-container hover:text-on-primary-container transition-colors" title="View Fullscreen">
+<span class="material-symbols-outlined text-sm" data-icon="fullscreen">fullscreen</span>
+</button>
+</div>
+</div>
+<!-- Card Body & Metadata -->
+<div class="p-space-md flex flex-col gap-2">
+<div class="flex items-center justify-between text-label-code-sm font-label-code-sm text-secondary">
+<span class="truncate text-secondary">fintech-insider.io</span>
+<span class="text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                  Ready
+                </span>
+</div>
+<h2 class="text-headline-sm font-headline-sm text-on-surface font-semibold line-clamp-1 group-hover:text-primary-container transition-colors" title="Kubernetes Ingress Controllers">
+                Kubernetes Ingress Controllers
+              </h2>
+<p class="text-body-sm font-body-sm text-secondary line-clamp-2">
+                Ingress-nginx gateway edge routing, TLS termination boundaries, and weighted canary routing flow.
+              </p>
+<!-- Attachment Context -->
+<div class="mt-1 pt-2 border-t border-outline-variant/20 flex items-center gap-1.5 text-label-code-sm font-label-code-sm text-secondary">
+<span class="material-symbols-outlined text-xs text-secondary" data-icon="link">link</span>
+<span class="truncate">Attached to Article #4029</span>
+</div>
+</div>
+</div>
+<!-- Bottom Actions Toolbar -->
+<div class="px-space-md py-2.5 bg-surface-container-high/40 border-t border-outline-variant/20 flex items-center justify-between">
+<button class="text-secondary hover:text-primary-container flex items-center gap-1 text-label-code-sm font-label-code-sm transition-colors" title="Regenerate from Prompt">
+<span class="material-symbols-outlined text-sm" data-icon="refresh">refresh</span>
+<span>Regen Prompt</span>
+</button>
+<div class="flex items-center gap-1">
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Copy Vector Code">
+<span class="material-symbols-outlined text-sm" data-icon="code">code</span>
+</button>
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Download SVG">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+</div>
+</div>
+</article>
+<!-- CARD 2: Minimalist Dark Infographic -->
+<article class="bg-surface-container-low rounded border border-outline-variant/30 hover:border-outline-variant/60 flex flex-col justify-between overflow-hidden group transition-all duration-200">
+<div>
+<!-- Thumbnail Canvas Container -->
+<div class="relative w-full aspect-[16/9] bg-surface-container-lowest overflow-hidden border-b border-outline-variant/20 flex items-center justify-center">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="A minimalist dark editorial infographic comparing Vector Embeddings versus Sparse Indexing in modern retrieval architectures. The infographic features dual-tone columns, high-contrast typography, mathematical similarity matrix indicators, and subtle warm orange accent highlights against a deep charcoal graphite canvas." src="https://lh3.googleusercontent.com/aida-public/AB6AXuABnRuJYbuGSquo3FqIw9Sq6-jrImX0AQQIhTnewjwcnSt74llu88_Z2uieXBvzWTqzNeheWevo8VfiXelwp_uLK2Yi2GOSM9BiCsrBlDuJ4zFBMJhxjRvm45PAALo8Z2ZVdjqoqCYWHd8aVx38HlpguCXtktpZ2VycehV2vY5YhiSFoR7OjjSK1Q87g_GbuXAxlhekXazBxQGmqsq3u_7RhRosVg4A0GL-V6Qua9PIiy5H8TDR-9M-"/>
+<!-- Overlay Badges -->
+<div class="absolute top-2 left-2 flex items-center gap-1.5">
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-label-code-sm font-label-code-sm text-secondary border border-outline-variant/30">
+                  PNG
+                </span>
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-label-code-sm text-secondary border border-outline-variant/30">
+                  1600x900
+                </span>
+</div>
+<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-7 h-7 rounded bg-surface-container-highest/90 text-on-surface flex items-center justify-center hover:bg-primary-container hover:text-on-primary-container transition-colors" title="View Fullscreen">
+<span class="material-symbols-outlined text-sm" data-icon="fullscreen">fullscreen</span>
+</button>
+</div>
+</div>
+<!-- Card Body & Metadata -->
+<div class="p-space-md flex flex-col gap-2">
+<div class="flex items-center justify-between text-label-code-sm font-label-code-sm text-secondary">
+<span class="truncate text-secondary">datascience-weekly.co</span>
+<span class="text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                  Ready
+                </span>
+</div>
+<h2 class="text-headline-sm font-headline-sm text-on-surface font-semibold line-clamp-1 group-hover:text-primary-container transition-colors" title="Vector Embeddings vs Sparse Index">
+                Vector Embeddings vs Sparse Index
+              </h2>
+<p class="text-body-sm font-body-sm text-secondary line-clamp-2">
+                Comparative semantic recall breakdown across high-dimensional HNSW spaces vs BM25 inverted indexes.
+              </p>
+<!-- Attachment Context -->
+<div class="mt-1 pt-2 border-t border-outline-variant/20 flex items-center gap-1.5 text-label-code-sm font-label-code-sm text-secondary">
+<span class="material-symbols-outlined text-xs text-secondary" data-icon="link">link</span>
+<span class="truncate">Attached to Article #3981</span>
+</div>
+</div>
+</div>
+<!-- Bottom Actions Toolbar -->
+<div class="px-space-md py-2.5 bg-surface-container-high/40 border-t border-outline-variant/20 flex items-center justify-between">
+<button class="text-secondary hover:text-primary-container flex items-center gap-1 text-label-code-sm font-label-code-sm transition-colors" title="Regenerate from Prompt">
+<span class="material-symbols-outlined text-sm" data-icon="refresh">refresh</span>
+<span>Regen Prompt</span>
+</button>
+<div class="flex items-center gap-1">
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Copy Vector Code">
+<span class="material-symbols-outlined text-sm" data-icon="code">code</span>
+</button>
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Download PNG">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+</div>
+</div>
+</article>
+<!-- CARD 3: Metric Comparison Bar Chart -->
+<article class="bg-surface-container-low rounded border border-outline-variant/30 hover:border-outline-variant/60 flex flex-col justify-between overflow-hidden group transition-all duration-200">
+<div>
+<!-- Thumbnail Canvas Container -->
+<div class="relative w-full aspect-[16/9] bg-surface-container-lowest overflow-hidden border-b border-outline-variant/20 flex items-center justify-center">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="An analytical metric comparison bar chart showing ClickHouse versus Snowflake IOPS throughput benchmarks. The graphic showcases clean horizontal data bars in fiery burnt orange and crisp off-white tones set against a deep carbon background, with monospaced data callouts and clean axis labels." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBS_Bl_Jt1nZKgTR6RQ8ZHQ7OelYOVGYsJcdDwvUb7OxsWYwSvOOIE7UHlXSYeAO4QKS97ac7w5weuM8MrQfCBZFsbyX7__QdOwgenYnE6ZsQL0oPmKRbnpU5FxUBSDRRPCC6PMP-YMF31zu3L-Aaxl0uiGShgKt-1J-zPatYVzUitd1uHznZAFzA2RDYgTupA9HJon3elz4OKz7dcfbMK9xGuSdPAHXMmZTgXIhrNa8xYID5F3QDV_"/>
+<!-- Overlay Badges -->
+<div class="absolute top-2 left-2 flex items-center gap-1.5">
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-label-code-sm font-label-code-sm text-primary-container border border-primary-container/30">
+                  SVG Interactive
+                </span>
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-label-code-sm text-secondary border border-outline-variant/30">
+                  Adaptive
+                </span>
+</div>
+<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-7 h-7 rounded bg-surface-container-highest/90 text-on-surface flex items-center justify-center hover:bg-primary-container hover:text-on-primary-container transition-colors" title="View Fullscreen">
+<span class="material-symbols-outlined text-sm" data-icon="fullscreen">fullscreen</span>
+</button>
+</div>
+</div>
+<!-- Card Body & Metadata -->
+<div class="p-space-md flex flex-col gap-2">
+<div class="flex items-center justify-between text-label-code-sm font-label-code-sm text-secondary">
+<span class="truncate text-secondary">cloudnative-dev.org</span>
+<span class="text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                  Ready
+                </span>
+</div>
+<h2 class="text-headline-sm font-headline-sm text-on-surface font-semibold line-clamp-1 group-hover:text-primary-container transition-colors" title="ClickHouse vs Snowflake IOPS">
+                ClickHouse vs Snowflake IOPS
+              </h2>
+<p class="text-body-sm font-body-sm text-secondary line-clamp-2">
+                Real-time analytical engine scan speed comparison executing 100M row aggregations on c6i.8xlarge.
+              </p>
+<!-- Attachment Context -->
+<div class="mt-1 pt-2 border-t border-outline-variant/20 flex items-center gap-1.5 text-label-code-sm font-label-code-sm text-secondary">
+<span class="material-symbols-outlined text-xs text-secondary" data-icon="link">link</span>
+<span class="truncate">Attached to Article #4112</span>
+</div>
+</div>
+</div>
+<!-- Bottom Actions Toolbar -->
+<div class="px-space-md py-2.5 bg-surface-container-high/40 border-t border-outline-variant/20 flex items-center justify-between">
+<button class="text-secondary hover:text-primary-container flex items-center gap-1 text-label-code-sm font-label-code-sm transition-colors" title="Regenerate from Prompt">
+<span class="material-symbols-outlined text-sm" data-icon="refresh">refresh</span>
+<span>Regen Prompt</span>
+</button>
+<div class="flex items-center gap-1">
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Copy Vector Code">
+<span class="material-symbols-outlined text-sm" data-icon="code">code</span>
+</button>
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Download SVG">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+</div>
+</div>
+</article>
+<!-- CARD 4: Synthetic Cloud Topology Map -->
+<article class="bg-surface-container-low rounded border border-outline-variant/30 hover:border-outline-variant/60 flex flex-col justify-between overflow-hidden group transition-all duration-200">
+<div>
+<!-- Thumbnail Canvas Container -->
+<div class="relative w-full aspect-[16/9] bg-surface-container-lowest overflow-hidden border-b border-outline-variant/20 flex items-center justify-center">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" data-alt="A synthetic cloud network topology map depicting eBPF kernel network probing routines. The layout features subtle wireframe node meshes, packet interception hook indicators, and telemetry tracing lines styled in dark mode with surgical precision lines and vivid glowing orange probe coordinates." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB3OEktI08hNDEwCEqfjGo-RULWCIgOdLmyAmfrpemdiJHucC9NRUwG-18D28Y9ilK-r7vYHDsBwfVxk8POkM8hK6xblp7j1ZHAuB5-1y8UP166US4u7cS7e2dv1p9I7p1gtHf_Ha0bZik_iuWd6BgfL4pC8S8IxNLyOAG6Lg_xsJkqXaDt1JCZSwudYbrvxzvWr8H_6MuBWN1XOuslHEzVjC-quSzviPQ6LqWIaPfWxfqdLyeKGERz"/>
+<!-- Overlay Badges -->
+<div class="absolute top-2 left-2 flex items-center gap-1.5">
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-label-code-sm font-label-code-sm text-primary-container border border-primary-container/30">
+                  SVG
+                </span>
+<span class="bg-surface-container-lowest/90 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-label-code-sm text-secondary border border-outline-variant/30">
+                  1440x810
+                </span>
+</div>
+<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-7 h-7 rounded bg-surface-container-highest/90 text-on-surface flex items-center justify-center hover:bg-primary-container hover:text-on-primary-container transition-colors" title="View Fullscreen">
+<span class="material-symbols-outlined text-sm" data-icon="fullscreen">fullscreen</span>
+</button>
+</div>
+</div>
+<!-- Card Body & Metadata -->
+<div class="p-space-md flex flex-col gap-2">
+<div class="flex items-center justify-between text-label-code-sm font-label-code-sm text-secondary">
+<span class="truncate text-secondary">cloudnative-dev.org</span>
+<span class="text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+                  Ready
+                </span>
+</div>
+<h2 class="text-headline-sm font-headline-sm text-on-surface font-semibold line-clamp-1 group-hover:text-primary-container transition-colors" title="eBPF Kernel Network Probing">
+                eBPF Kernel Network Probing
+              </h2>
+<p class="text-body-sm font-body-sm text-secondary line-clamp-2">
+                Linux kernel bytecode hook attachment points, socket filter layers, and XDP packet processing topology.
+              </p>
+<!-- Attachment Context -->
+<div class="mt-1 pt-2 border-t border-outline-variant/20 flex items-center gap-1.5 text-label-code-sm font-label-code-sm text-secondary">
+<span class="material-symbols-outlined text-xs text-secondary" data-icon="link">link</span>
+<span class="truncate">Attached to Article #4092</span>
+</div>
+</div>
+</div>
+<!-- Bottom Actions Toolbar -->
+<div class="px-space-md py-2.5 bg-surface-container-high/40 border-t border-outline-variant/20 flex items-center justify-between">
+<button class="text-secondary hover:text-primary-container flex items-center gap-1 text-label-code-sm font-label-code-sm transition-colors" title="Regenerate from Prompt">
+<span class="material-symbols-outlined text-sm" data-icon="refresh">refresh</span>
+<span>Regen Prompt</span>
+</button>
+<div class="flex items-center gap-1">
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Copy Vector Code">
+<span class="material-symbols-outlined text-sm" data-icon="code">code</span>
+</button>
+<button class="w-7 h-7 rounded flex items-center justify-center text-secondary hover:text-on-surface hover:bg-surface-container transition-colors" title="Download SVG">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+</div>
+</div>
+</article>
+</section>
+<!-- 5. Prompt Orchestration & Template Drawer Preview Banner -->
+<section class="bg-surface-container-low/70 border border-outline-variant/30 rounded p-space-md flex flex-col lg:flex-row items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="w-10 h-10 rounded bg-surface-container-high border border-outline-variant/40 flex items-center justify-center text-primary-container flex-shrink-0">
+<span class="material-symbols-outlined" data-icon="tune">tune</span>
+</div>
+<div class="flex flex-col">
+<span class="text-headline-sm font-headline-sm text-on-surface font-semibold">Active Vector Synthesis Engine: v2.4-NeuralDiagram</span>
+<span class="text-body-sm font-body-sm text-secondary">
+              Direct rendering via headless Chromium with SVG DOM injection. Color palette token constraint is strictly enforced across all fleet tenants.
+            </span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm flex-shrink-0 w-full lg:w-auto justify-end">
+<button class="px-space-md py-1.5 rounded bg-surface-container border border-outline-variant/30 text-secondary hover:text-on-surface text-label-code-sm font-label-code-sm transition-colors">
+            Configure Template Constraints
+          </button>
+<button class="px-space-md py-1.5 rounded bg-surface-container-high text-primary-container border border-primary-container/30 hover:bg-primary-container hover:text-on-primary-container text-label-code-sm font-label-code-sm transition-all">
+            Worker Queue Diagnostics
+          </button>
+</div>
+</section>
+</div>
+</main>
+</body></html>

@@ -51,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -88,6 +89,7 @@ class ArticleSubmit(BaseModel):
     site_slug: str
     keyword: str | None = None
     brief: dict[str, Any] = {}
+    instant: bool = False
 
 
 class ArticleApprove(BaseModel):
@@ -101,6 +103,8 @@ class ArticleGenerate(BaseModel):
 
 class ArticlePublish(BaseModel):
     mode: str = "draft"  # draft (default for new sites) | publish
+    force: bool = False
+    enforce_cadence: bool = False
 
 
 class SiteUpsert(BaseModel):
@@ -108,11 +112,16 @@ class SiteUpsert(BaseModel):
     name: str = ""
     site_type: str = ""  # custom | wordpress; empty = keep existing (create defaults to custom)
     base_url: str = ""
+    settings: dict[str, Any] | None = None
 
 
 class ContentPatch(BaseModel):
     content_md: str
     note: str = ""
+
+
+class StageRunRequest(BaseModel):
+    site_slug: str | None = None
 
 
 class ElementorSave(BaseModel):
@@ -129,6 +138,7 @@ class ElementorBuild(BaseModel):
 @router.post("/articles")
 def submit_article(
     body: ArticleSubmit,
+    background_tasks: BackgroundTasks,
     x_site_key: str | None = Header(default=None),
     idempotency_key: str | None = Header(default=None),
 ) -> dict:
@@ -143,14 +153,32 @@ def submit_article(
                                     brief=body.brief)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    if body.instant and "id" in result:
+        art_id = result["id"]
+        background_tasks.add_task(service.run_instant_pipeline, art_id)
+        result["instant_triggered"] = True
     if cache_key:
         _idempotency[cache_key] = result
     return result
 
 
+@router.get("/articles/stats")
+def article_stats(site_slug: str = "", since_days: int = 30,
+                  x_site_key: str | None = Header(default=None)) -> dict:
+    """Aggregated real (engine-backed) stats for the console (Overview,
+    Sites, Insights): counts by status, quality aggregates, word totals,
+    spend totals, and a per-day created series for the velocity chart.
+    """
+    _check_site_key(x_site_key)
+    return _resolve(service.article_stats(site_slug=site_slug,
+                                          since_days=since_days))
+
+
 @router.get("/articles")
 def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
-                  offset: int = 0, x_site_key: str | None = Header(default=None)) -> dict:
+                  offset: int = 0, q: str = "", sort: str = "created_at",
+                  order: str = "desc", has_images: bool = False,
+                  x_site_key: str | None = Header(default=None)) -> dict:
     """List articles newest-first, optionally scoped to a site and/or status.
 
     Powers the custom-site content loader: enumerate a site's published
@@ -158,7 +186,9 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
     """
     _check_site_key(x_site_key)
     return _resolve(service.list_articles(site_slug=site_slug, status=status,
-                                          limit=limit, offset=offset))
+                                          limit=limit, offset=offset, q=q,
+                                          sort=sort, order=order,
+                                          has_images=has_images))
 
 
 @router.get("/articles/{article_id}")
@@ -200,9 +230,14 @@ def publish_article(article_id: int, body: ArticlePublish | None = None,
     _check_site_key(x_site_key)
     result = service.publish_article(article_id,
                                      mode=(body.mode if body else "draft"),
-                                     via="sdk")
+                                     via="sdk",
+                                     force=(body.force if body else False),
+                                     enforce_cadence=(body.enforce_cadence if body else False))
     if "error" in result:
-        if "requires 'approved'" in result["error"]:
+        err_msg = str(result["error"])
+        if "cadence limit reached" in err_msg.lower():
+            raise HTTPException(status_code=429, detail=result["error"])
+        if "requires 'approved'" in err_msg:
             raise HTTPException(status_code=409, detail=result["error"])
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -276,6 +311,24 @@ def get_article_image(article_id: int, name: str,
                         headers={"Cache-Control": "private, max-age=60"})
 
 
+@router.delete("/articles/{article_id}")
+def delete_article(article_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.delete_article(article_id))
+
+
+@router.delete("/keywords/{keyword_id}")
+def delete_keyword(keyword_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.delete_keyword(keyword_id))
+
+
+@router.post("/keywords/{keyword_id}/prioritize")
+def prioritize_keyword(keyword_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.prioritize_keyword(keyword_id))
+
+
 @router.get("/sites")
 def list_sites(x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
@@ -286,7 +339,14 @@ def list_sites(x_site_key: str | None = Header(default=None)) -> dict:
 def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return service.upsert_site(body.slug, name=body.name,
-                               site_type=body.site_type, base_url=body.base_url)
+                               site_type=body.site_type, base_url=body.base_url,
+                               settings=body.settings)
+
+
+@router.delete("/sites/{site_slug}")
+def delete_site(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.delete_site(site_slug))
 
 
 @router.get("/search-console")
@@ -299,6 +359,26 @@ def search_console_status(x_site_key: str | None = Header(default=None)) -> dict
     Tri-state: true / false / null when the check couldn't run."""
     _check_site_key(x_site_key)
     return service.get_search_console_status()
+
+
+class WpTestPayload(BaseModel):
+    base_url: str | None = None
+    username: str | None = None
+    app_password: str | None = None
+
+
+@router.post("/sites/{site_slug}/test-connection")
+def test_site_connection(site_slug: str, body: WpTestPayload | None = None,
+                         x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    cfg = body.model_dump() if body else None
+    return service.test_wp_connection(site_slug, wp_config=cfg)
+
+
+@router.get("/sites/{site_slug}/cadence")
+def site_cadence(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    _check_site_key(x_site_key)
+    return _resolve(service.site_cadence(site_slug))
 
 
 @router.get("/sites/{site_slug}/health")
@@ -379,6 +459,14 @@ def get_logs(kind: str = "", limit: int = 200, offset: int = 0,
     return _resolve(service.list_logs(kind=kind, limit=limit, offset=offset))
 
 
+@router.get("/spend/summary")
+def get_spend_summary(site_slug: str = "",
+                      x_site_key: str | None = Header(default=None)) -> dict:
+    """Aggregated SQL spend summary (WTD, MTD, Total) for mission control dashboard."""
+    _check_site_key(x_site_key)
+    return service.get_spend_summary(site_slug=site_slug)
+
+
 @router.patch("/articles/{article_id}/content")
 def patch_content(article_id: int, body: ContentPatch,
                   x_site_key: str | None = Header(default=None)) -> dict:
@@ -419,12 +507,14 @@ def get_stages(limit: int = 200,
 
 @router.post("/run/{stage}", status_code=202)
 def run_stage(stage: str, background_tasks: BackgroundTasks,
+              body: StageRunRequest | None = None,
               x_site_key: str | None = Header(default=None)) -> dict:
     """Trigger a legacy pipeline stage in the background (console).
 
     Wraps scripts/run_stage.STAGE_HANDLERS — the same stage functions the
     scheduler runs. One concurrent run per stage (409 on overlap)."""
     _check_site_key(x_site_key)
+    site_slug = (body.site_slug if body and body.site_slug else "").strip()
     try:
         from scripts import run_stage as run_stage_mod
     except Exception as e:  # pragma: no cover - env-dependent import
@@ -441,22 +531,31 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
         _running_stages.add(stage)
 
     def _invoke() -> None:
-        started = datetime.now(timezone.utc)
-        t0 = time.monotonic()
-        ok, detail = True, ""
         try:
-            asyncio.run(handlers[stage]())
-        except Exception as e:
-            ok, detail = False, f"{type(e).__name__}: {e}"
-            raise
-        finally:
+            started = datetime.now(timezone.utc)
+            t0 = time.monotonic()
+            ok, detail = True, ""
+            old_slug = os.environ.get("SITE_SLUG")
             try:
-                service.record_stage_run(
-                    stage, ok=ok, detail=detail,
-                    duration_ms=int((time.monotonic() - t0) * 1000),
-                    started_at=started)
-            except Exception:  # telemetry must never mask the stage outcome
-                logger.exception("stage.run record failed for %r", stage)
+                if site_slug:
+                    os.environ["SITE_SLUG"] = site_slug
+                asyncio.run(handlers[stage]())
+            except Exception as e:
+                ok, detail = False, f"{type(e).__name__}: {e}"
+                raise
+            finally:
+                if old_slug is None:
+                    os.environ.pop("SITE_SLUG", None)
+                else:
+                    os.environ["SITE_SLUG"] = old_slug
+                try:
+                    service.record_stage_run(
+                        stage, ok=ok, detail=detail,
+                        duration_ms=int((time.monotonic() - t0) * 1000),
+                        started_at=started)
+                except Exception:  # telemetry must never mask the stage outcome
+                    logger.exception("stage.run record failed for %r", stage)
+        finally:
             with _run_lock:
                 _running_stages.discard(stage)
 

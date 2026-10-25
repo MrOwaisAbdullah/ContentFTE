@@ -47,15 +47,15 @@ export function SectionCard({
    Scale: drafted=slate · briefed=sky · generated=violet · approved=gold ·
    needs_review=rose · published=emerald (docs/console-dashboard-plan.md §3). */
 const STATUS_STYLES: Record<string, { dot: string; text: string; ring: string }> = {
-  drafted: { dot: "bg-slate-400", text: "text-slate-300", ring: "border-slate-800 bg-slate-950/60" },
-  briefed: { dot: "bg-sky-400", text: "text-sky-300", ring: "border-sky-900/70 bg-sky-950/50" },
-  generated: { dot: "bg-violet-400", text: "text-violet-300", ring: "border-violet-900/70 bg-violet-950/50" },
-  approved: { dot: "bg-gold", text: "text-gold", ring: "border-amber-900/70 bg-amber-950/50" },
-  needs_review: { dot: "bg-danger", text: "text-rose-300", ring: "border-rose-900/70 bg-rose-950/50" },
-  published: { dot: "bg-emerald-400", text: "text-emerald-300", ring: "border-emerald-900/70 bg-emerald-950/50" },
+  drafted: { dot: "bg-slate-400", text: "text-slate-700 dark:text-slate-300 font-mono", ring: "border-line bg-surface-container/60" },
+  briefed: { dot: "bg-sky-500", text: "text-sky-700 dark:text-sky-300 font-mono", ring: "border-sky-500/30 bg-sky-500/10" },
+  generated: { dot: "bg-primary-container animate-pulse", text: "text-primary-container font-semibold font-mono", ring: "border-primary-container/30 bg-primary-container/10 shadow-[0_0_8px_rgba(242,100,58,0.15)]" },
+  approved: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-400 font-semibold font-mono", ring: "border-emerald-500/30 bg-emerald-500/10 shadow-[0_0_8px_rgba(16,185,129,0.12)]" },
+  needs_review: { dot: "bg-rose-500", text: "text-rose-700 dark:text-rose-400 font-semibold font-mono", ring: "border-rose-500/30 bg-rose-500/10 shadow-[0_0_8px_rgba(239,68,68,0.12)]" },
+  published: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-400 font-semibold font-mono", ring: "border-emerald-500/30 bg-emerald-500/10 shadow-[0_0_8px_rgba(16,185,129,0.12)]" },
 };
 
-const FALLBACK_STATUS = { dot: "bg-slate-400", text: "text-slate-300", ring: "border-slate-800 bg-slate-950/60" };
+const FALLBACK_STATUS = { dot: "bg-slate-400", text: "text-slate-700 dark:text-slate-300 font-mono", ring: "border-line bg-surface-container/60" };
 
 export function statusStyle(status: string) {
   const key = Object.keys(STATUS_STYLES).find(
@@ -67,7 +67,7 @@ export function statusStyle(status: string) {
 export function Pill({ status }: { status: string }) {
   const s = statusStyle(status);
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${s.ring}`}>
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${s.ring}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} aria-hidden />
       <span className={s.text}>{status}</span>
     </span>
@@ -76,9 +76,9 @@ export function Pill({ status }: { status: string }) {
 
 /* Alerts — one component for the err / success / started banners. */
 const ALERT_TONES: Record<"error" | "success" | "info" | "warn", { box: string; text: string; icon: LucideIcon }> = {
-  error: { box: "border-rose-900/70 bg-rose-950/40", text: "text-rose-300", icon: CircleX },
-  success: { box: "border-emerald-900/70 bg-emerald-950/40", text: "text-emerald-300", icon: CircleCheck },
-  warn: { box: "border-amber-900/70 bg-amber-950/40", text: "text-amber-300", icon: TriangleAlert },
+  error: { box: "border-rose-200 bg-rose-50/80 dark:border-rose-900/60 dark:bg-rose-950/40", text: "text-rose-800 dark:text-rose-300", icon: CircleX },
+  success: { box: "border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/40", text: "text-emerald-800 dark:text-emerald-300", icon: CircleCheck },
+  warn: { box: "border-amber-200 bg-amber-50/80 dark:border-amber-900/60 dark:bg-amber-950/40", text: "text-amber-800 dark:text-amber-300", icon: TriangleAlert },
   info: { box: "border-line bg-surface/60", text: "text-ink-dim", icon: Info },
 };
 
@@ -117,7 +117,7 @@ export function Empty({
       {cta ? (
         <Link
           href={cta.href}
-          className="rounded-md bg-accent-strong px-3.5 py-1.5 text-xs font-medium text-page hover:bg-accent"
+          className="rounded-md bg-accent-strong px-3.5 py-1.5 text-xs font-medium text-white hover:bg-accent"
         >
           {cta.label}
         </Link>
@@ -130,9 +130,9 @@ export function Empty({
 export const BTN =
   "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 export const BTN_GHOST = `${BTN} border border-line bg-page text-ink-dim hover:border-ink-faint hover:text-ink`;
-export const BTN_PRIMARY = `${BTN} bg-accent-strong text-page hover:bg-accent`;
-export const BTN_GOLD = `${BTN} bg-gold text-page hover:bg-amber-400`;
-export const BTN_DANGER = `${BTN} border border-rose-900 bg-rose-950/40 text-rose-300 hover:bg-rose-950/70`;
+export const BTN_PRIMARY = `${BTN} bg-accent-strong text-white hover:bg-accent`;
+export const BTN_GOLD = `${BTN} bg-gold text-white hover:bg-amber-500`;
+export const BTN_DANGER = `${BTN} border border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/70`;
 
 /* Formatters — plan finding F4: zeros are “—”, real money keeps 4 decimals. */
 export function fmtCost(v: number | null | undefined): string {

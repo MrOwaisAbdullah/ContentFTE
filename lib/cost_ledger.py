@@ -11,7 +11,7 @@ import os
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lib.db import CostLedger
+from lib.db import Article, CostLedger
 
 KINDS = ("llm", "image", "data")
 
@@ -96,10 +96,16 @@ def usage_cost(usage: dict) -> tuple[float, dict]:
     return round(usd, 6), detail
 
 
-def record_cost(session: Session, article_id: int, kind: str, amount_usd: float, detail: dict | None = None) -> CostLedger:
+def record_cost(session: Session, article_id: int | None, kind: str, amount_usd: float,
+                detail: dict | None = None, site_id: int | None = None) -> CostLedger:
     if kind not in (*KINDS, "total"):
         raise ValueError(f"unknown cost kind: {kind}")
-    row = CostLedger(article_id=article_id, kind=kind, amount_usd=float(amount_usd), detail=detail or {})
+    if site_id is None and article_id is not None:
+        art = session.get(Article, article_id)
+        if art is not None:
+            site_id = art.site_id
+    row = CostLedger(article_id=article_id, site_id=site_id, kind=kind,
+                     amount_usd=float(amount_usd), detail=detail or {})
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -131,13 +137,17 @@ def finalize(session: Session, article_id: int) -> dict:
         select(CostLedger).where(
             CostLedger.article_id == article_id, CostLedger.kind == "total")
     ).scalars().first()
+    art = session.get(Article, article_id)
+    site_id = art.site_id if art is not None else None
     if row is None:
-        row = CostLedger(article_id=article_id, kind="total",
+        row = CostLedger(article_id=article_id, site_id=site_id, kind="total",
                          amount_usd=totals["total_usd"], detail=totals["by_kind"])
         session.add(row)
     else:
         row.amount_usd = totals["total_usd"]
         row.detail = totals["by_kind"]
+        if site_id is not None:
+            row.site_id = site_id
     session.commit()
     session.refresh(row)
     return totals

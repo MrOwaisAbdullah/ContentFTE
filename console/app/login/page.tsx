@@ -1,11 +1,28 @@
 "use client";
 
-import { useActionState } from "react";
+import { Suspense, useActionState, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { loginAction } from "@/actions/auth";
-import { Bot } from "lucide-react";
+import { Bot, Lock } from "lucide-react";
 
-export default function LoginPage() {
+function LoginPageInner() {
   const [state, formAction, pending] = useActionState(loginAction, null);
+  const sp = useSearchParams();
+  const [next, setNext] = useState("/");
+
+  useEffect(() => {
+    const n = sp.get("next");
+    if (n && n.startsWith("/") && !n.startsWith("//")) {
+      setNext(n);
+    } else {
+      // preserve the last visited path if it was saved client-side
+      try {
+        const last = window.sessionStorage.getItem("console:lastPath");
+        if (last && last.startsWith("/") && last !== "/login") setNext(last);
+      } catch {}
+    }
+  }, [sp]);
+
   return (
     <main className="mx-auto mt-24 max-w-sm rounded-2xl border border-line bg-card p-8 shadow-lg shadow-black/40">
       <div className="mb-6 flex items-center gap-3">
@@ -14,18 +31,23 @@ export default function LoginPage() {
         </span>
         <div>
           <h1 className="text-lg font-semibold text-ink">ContentFTE Console</h1>
-          <p className="text-xs text-ink-faint">Operator sign-in</p>
+          <p className="text-xs text-ink-faint">Internal operator console — sign in with your operator password.</p>
         </div>
       </div>
       <form action={formAction} className="space-y-4">
-        <input
-          type="password"
-          name="password"
-          autoFocus
-          placeholder="Operator password"
-          aria-label="Operator password"
-          className="w-full rounded-md border border-line bg-page px-3 py-2.5 text-sm outline-none focus:border-accent"
-        />
+        <input type="hidden" name="next" value={next} />
+        <label className="block text-xs text-ink-faint">Operator password</label>
+        <div className="relative">
+          <input
+            type="password"
+            name="password"
+            autoFocus
+            placeholder="Operator password"
+            aria-label="Operator password"
+            className="w-full rounded-md border border-line bg-page px-3 py-2.5 text-sm outline-none focus:border-accent"
+          />
+          <Lock className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" aria-hidden />
+        </div>
         {state?.error ? <p className="text-xs text-rose-300">{state.error}</p> : null}
         <button
           type="submit"
@@ -34,7 +56,18 @@ export default function LoginPage() {
         >
           {pending ? "Signing in…" : "Sign in"}
         </button>
+        <p className="text-[11px] text-ink-faint">
+          The password is set in <code className="font-mono">console/.env.local</code> as <code className="font-mono">OPERATOR_PASSWORD</code>.
+        </p>
       </form>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="mx-auto mt-24 max-w-sm rounded-2xl border border-line bg-card p-8 shadow-lg shadow-black/40" />}>
+      <LoginPageInner />
+    </Suspense>
   );
 }

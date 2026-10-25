@@ -1,337 +1,403 @@
 import Link from "next/link";
 import {
   ArticleList,
+  ArticleStats,
   BriefPeek,
   engine,
   LogsView,
   QueueView,
+  SearchConsoleView,
   SiteHealth,
   SiteList,
+  SpendSummary,
 } from "@/lib/engine";
-import { Alert, Empty, Pill, SectionCard, checkTier, fmtCost, fmtDate } from "@/lib/ui";
-import { CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
+import { runStageAction } from "@/actions/stages";
+import { approveArticleAction } from "@/actions/articles";
+import { PendingButton } from "@/lib/interactive";
+import { Alert, checkTier, fmtCost, fmtDate } from "@/lib/ui";
+import { InteractiveKpiCards, InteractiveStreamStages } from "@/components/interactive-overview-cards";
+import { Freshness } from "@/components/freshness";
+import { Glyph } from "@/components/glyph";
+import { rangeDays, isWithinDays } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const CHECK_ICONS = { fail: CircleX, warn: TriangleAlert, info: Info } as const;
-const CHECK_CLASSES = {
-  fail: "text-rose-400",
-  warn: "text-amber-300",
-  info: "text-ink-faint",
-} as const;
-
-/** Monday 00:00 UTC of the current week — the WTD cost window. */
-function startOfWeekUTC(now = new Date()): Date {
-  const day = (now.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day),
-  );
-}
-
-function parseStamp(v: string | null): Date | null {
-  if (!v) return null;
-  const iso = /(Z|[+-]\d\d:?\d\d)$/.test(v) ? v : `${v}Z`;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function Kpi({
-  label,
-  value,
-  sub,
-  href,
-  tone = "",
+export default async function DashboardPage({
+  searchParams,
 }: {
-  label: string;
-  value: string;
-  sub: string;
-  href: string;
-  tone?: string;
+  searchParams: Promise<{ site?: string; range?: string; err?: string }>;
 }) {
-  return (
-    <Link
-      href={href}
-      className="rounded-xl border border-line bg-card px-4 py-3.5 transition-colors hover:border-ink-faint/60"
-    >
-      <p className="text-xs text-ink-faint">{label}</p>
-      <p className={`mt-1.5 font-mono text-2xl font-semibold leading-none ${tone || "text-ink"}`}>
-        {value}
-      </p>
-      <p className="mt-1.5 text-[11px] text-ink-faint/80">{sub}</p>
-    </Link>
-  );
-}
+  const { site = "", range = "30d", err = "" } = await searchParams;
+  const days = rangeDays(range);
 
-export default async function DashboardPage() {
   let sites: SiteList = { sites: [], count: 0 };
   let queue: QueueView | null = null;
   let brief: BriefPeek | null = null;
   let articles: ArticleList | null = null;
-  let logs: LogsView | null = null;
+  let spend: SpendSummary | null = null;
   let health: (SiteHealth | null)[] = [];
+  let gsc: SearchConsoleView | null = null;
+  let stats: ArticleStats | null = null;
   let error = "";
+
   try {
     sites = await engine<SiteList>("/sites");
-    if (sites.sites.length > 0) {
-      const slug = sites.sites[0].slug;
-      [queue, brief, articles, logs, health] = await Promise.all([
-        engine<QueueView>(`/sites/${encodeURIComponent(slug)}/queue?limit=5`).catch(() => null),
-        engine<BriefPeek>(`/sites/${encodeURIComponent(slug)}/brief`).catch(() => null),
-        engine<ArticleList>("/articles?limit=500").catch(() => null),
-        engine<LogsView>("/logs?kind=cost&limit=500").catch(() => null),
-        // Live probes run per site in parallel; a failed/unreachable site
-        // renders as a warning row instead of failing the whole dashboard.
-        Promise.all(
-          sites.sites.map((s) =>
-            engine<SiteHealth>(`/sites/${encodeURIComponent(s.slug)}/health`).catch(() => null),
-          ),
-        ),
-      ]);
-    }
+
+    const effectiveSlug = site || (sites.sites.length > 0 ? sites.sites[0].slug : "");
+    const siteParam = site ? `?site_slug=${encodeURIComponent(site)}&limit=500` : "?limit=500";
+    const spendParam = site ? `?site_slug=${encodeURIComponent(site)}` : "";
+    const statsParam = site
+      ? `?site_slug=${encodeURIComponent(site)}&since_days=${days}`
+      : `?since_days=${days}`;
+
+    [queue, brief, articles, spend, gsc, stats] = await Promise.all([
+      effectiveSlug
+        ? engine<QueueView>(`/sites/${encodeURIComponent(effectiveSlug)}/queue?limit=10`).catch(() => null)
+        : null,
+      effectiveSlug
+        ? engine<BriefPeek>(`/sites/${encodeURIComponent(effectiveSlug)}/brief`).catch(() => null)
+        : null,
+      engine<ArticleList>(`/articles${siteParam}`).catch(() => null),
+      engine<SpendSummary>(`/spend/summary${spendParam}`).catch(() => null),
+      engine<SearchConsoleView>("/search-console").catch(() => null),
+      engine<ArticleStats>(`/articles/stats${statsParam}`).catch(() => null),
+    ]);
+
+    const healthTargets = site ? sites.sites.filter((s) => s.slug === site) : sites.sites;
+    health = await Promise.all(
+      healthTargets.map((s) =>
+        engine<SiteHealth>(`/sites/${encodeURIComponent(s.slug)}/health`).catch(() => null),
+      ),
+    );
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  const all = articles?.articles ?? [];
-  const awaiting = all.filter((a) => a.status === "generated" || a.status === "needs_review");
-  const reviewQueue = awaiting.slice(0, 6);
-  const briefable = health.reduce((n, h) => n + (h?.ledger.briefable ?? 0), 0);
-  const published = health.reduce((n, h) => n + (h?.ledger.published ?? 0), 0);
+  const rawArticles = articles?.articles ?? [];
+  const allArticles = site ? rawArticles.filter((a) => a.site_slug === site) : rawArticles;
+  const inRangeArticles = allArticles.filter((a) => isWithinDays(a.created_at, days));
+  const awaiting = allArticles.filter((a) => a.status === "generated" || a.status === "needs_review");
+  const approvedQueue = allArticles.filter((a) => a.status === "approved");
+  const publishedArticles = allArticles.filter((a) => a.status === "published");
+  const publishedCount = publishedArticles.length;
 
-  const weekStart = startOfWeekUTC();
-  const costs = logs?.costs ?? [];
-  const wtd = costs.reduce((sum, c) => {
-    const ts = parseStamp(c.created_at);
-    return ts && ts >= weekStart ? sum + Number(c.amount_usd || 0) : sum;
-  }, 0);
-  const wtdFmt = logs ? (wtd >= 1 ? `$${wtd.toFixed(2)}` : `$${wtd.toFixed(4)}`) : "—";
+  const totalSites = sites.sites.length;
+  const wpSites = sites.sites.filter((s) => s.site_type === "wordpress").length;
+  const customSites = totalSites - wpSites;
+  const healthySites = health.filter(
+    (h) => h && h.critical.length === 0 && !h.checks.some((c) => checkTier(c) === "warn"),
+  ).length;
+
+  const briefableTotal = health.reduce((n, h) => n + (h?.ledger.briefable ?? 0), 0);
+  const wtdFmt = spend?.wtd_formatted ?? "—";
+
+  const scoredArticles = allArticles.filter((a) => a.quality != null);
+  const avgQuality =
+    scoredArticles.length > 0
+      ? Math.round(
+          scoredArticles.reduce((sum, a) => sum + (a.quality || 0), 0) / scoredArticles.length,
+        )
+      : null;
+  const passRate =
+    scoredArticles.length > 0
+      ? Math.round(
+          (scoredArticles.filter((a) => (a.quality || 0) >= 90).length / scoredArticles.length) * 100,
+        )
+      : null;
+
+  const generatingCount = allArticles.filter((a) => a.status === "generating").length;
+  const mediaCount = allArticles.filter((a) => (a.images && a.images > 0) || a.status === "published").length;
+  const realQueueCount = queue?.count ?? briefableTotal;
+  const realBriefCount = brief?.keyword ? 1 : 0;
+
+  const connectedGsc = (gsc?.sites ?? []).filter((s) => !site || s.slug === site);
+  const gscImpressionsTotal = connectedGsc.reduce((acc, s) => acc + (s.metrics_28d?.impressions ?? 0), 0);
+  const gscClicksTotal = connectedGsc.reduce((acc, s) => acc + (s.metrics_28d?.clicks ?? 0), 0);
+  const gscConnectedSitesCount = connectedGsc.filter((s) => s.connected === true).length;
+
+  const recentArticles = allArticles.slice(0, 6);
+  const autoPublishSites = sites.sites.filter((s) => s.publish_mode === "auto").length;
+
+  const withRange = (r: string) => {
+    const qs = new URLSearchParams();
+    if (site) qs.set("site", site);
+    qs.set("range", r);
+    return `/?${qs.toString()}`;
+  };
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
-      {error ? <Alert tone="error">Engine unreachable: {error}</Alert> : null}
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Key metrics">
-        <Kpi
-          label="Needs your review"
-          value={String(awaiting.length)}
-          sub="generated or flagged — approve or bounce"
-          href={"/articles?status=generated"}
-          tone={awaiting.length > 0 ? "text-gold" : "text-ink"}
-        />
-        <Kpi
-          label="Briefable now"
-          value={String(briefable)}
-          sub="ledger rows ready for the brief stage"
-          href="/articles/keywords"
-          tone={briefable > 0 ? "text-accent" : "text-ink"}
-        />
-        <Kpi
-          label="Published"
-          value={String(published)}
-          sub="live posts across all sites"
-          href="/articles?status=published"
-        />
-        <Kpi
-          label="Cost this week"
-          value={wtdFmt}
-          sub="LLM + image spend since Monday"
-          href="/logs?kind=cost"
-          tone="text-gold"
-        />
-      </section>
-
-      <SectionCard
-        title="Needs your review"
-        right={
-          <Link href="/articles?status=needs_review" className="text-xs text-accent hover:text-accent-strong hover:underline">
-            all flagged →
-          </Link>
-        }
-      >
-        {reviewQueue.length === 0 ? (
-          <p className="flex items-center gap-2 text-sm text-ink-dim">
-            <CircleCheck className="h-4 w-4 text-emerald-300" aria-hidden />
-            Queue clear — nothing is waiting on a human decision.
-          </p>
-        ) : (
-          <ul className="divide-y divide-line/60">
-            {reviewQueue.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 first:pt-0 last:pb-0">
-                <Link href={`/articles/${a.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">
-                  {a.title || `#${a.id}`}
-                </Link>
-                <span className="font-mono text-xs text-ink-faint">{a.site_slug}</span>
-                <Pill status={a.status} />
-                <span className="font-mono text-xs text-ink-faint">{fmtDate(a.created_at)}</span>
-                <Link
-                  href={`/articles/${a.id}`}
-                  className="rounded-md border border-line bg-page px-2.5 py-1 text-xs text-ink-dim hover:border-gold/50 hover:text-gold"
-                >
-                  Review →
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
-
-      {sites.sites.length > 0 ? (
-        <SectionCard title="Site health">
-          <div className="grid gap-4 sm:grid-cols-2">
-            {sites.sites.map((s, i) => {
-              const h = health[i];
-              if (!h) {
-                return (
-                  <Alert key={s.id} tone="warn">
-                    {s.name || s.slug}: health unreachable
-                  </Alert>
-                );
-              }
-              const warnCount = h.checks.filter((c) => checkTier(c) === "warn").length;
-              const tier = h.critical.length > 0 ? "fail" : warnCount > 0 ? "watch" : "healthy";
-              return (
-                <div key={s.id} className="rounded-lg border border-line bg-page px-4 py-3">
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="font-medium text-ink">{s.name || s.slug}</span>
-                    <span
-                      className={
-                        tier === "fail"
-                          ? "flex items-center gap-1 text-xs text-rose-300"
-                          : tier === "watch"
-                            ? "flex items-center gap-1 text-xs text-amber-300"
-                            : "flex items-center gap-1 text-xs text-emerald-300"
-                      }
-                    >
-                      <span
-                        className={
-                          tier === "fail"
-                            ? "h-1.5 w-1.5 rounded-full bg-danger"
-                            : tier === "watch"
-                              ? "h-1.5 w-1.5 rounded-full bg-gold"
-                              : "h-1.5 w-1.5 rounded-full bg-emerald-400"
-                        }
-                        aria-hidden
-                      />
-                      {tier}
-                    </span>
-                  </div>
-                  <p className="mb-2 text-xs text-ink-faint">
-                    ledger: {h.ledger.briefable} briefable · {h.ledger.published} published ·{" "}
-                    {h.wp_configured ? "WP config OK" : "WP not configured"}
-                  </p>
-                  {h.critical.length > 0 ? (
-                    <ul className="mb-2 space-y-1 text-xs">
-                      {h.critical.map((c) => (
-                        <li key={c} className="flex items-start gap-1.5 text-rose-300">
-                          <CircleX className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <ul className="space-y-1 text-xs">
-                    {h.checks.slice(0, 6).map((c) => {
-                      const tierC = checkTier(c);
-                      const Icon = CHECK_ICONS[tierC];
-                      return (
-                        <li
-                          key={c}
-                          className={`flex items-start gap-1.5 ${
-                            tierC === "warn" ? "text-amber-300/90" : "text-ink-faint"
-                          }`}
-                        >
-                          <Icon className={`mt-0.5 h-3 w-3 shrink-0 ${CHECK_CLASSES[tierC]}`} aria-hidden />
-                          {c}
-                        </li>
-                      );
-                    })}
-                    {h.checks.length > 6 ? (
-                      <li className="text-ink-faint">… +{h.checks.length - 6} more</li>
-                    ) : null}
-                  </ul>
-                </div>
-              );
-            })}
+    <div className="space-y-10">
+      <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6 pb-4 border-b border-outline-variant/20">
+        <div className="space-y-2 min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h1 className="text-[28px] lg:text-[34px] font-headline font-bold tracking-tight text-ink">
+              {site ? `${site} Overview` : "Fleet Overview"}
+            </h1>
+            <span className="px-2.5 py-1 rounded-full text-[11px] font-mono bg-surface-container border border-outline-variant/40 text-secondary">
+              {sites.sites.length ? `${totalSites} site${totalSites === 1 ? "" : "s"} · ${stats?.total ?? allArticles.length} articles` : "engine offline"}
+            </span>
           </div>
-        </SectionCard>
-      ) : null}
+          <p className="text-[13px] text-secondary max-w-2xl leading-relaxed">
+            {site ? (
+              <>
+                Operational health and publishing throughput for{" "}
+                <strong className="text-ink">{site}</strong>.{" "}
+                <Link href="/" className="text-primary-container hover:underline ml-1">View all sites</Link>
+              </>
+            ) : (
+              <>High-level operational health and publishing throughput across{" "}
+                <strong className="text-ink">{totalSites} connected tenant site{totalSites === 1 ? "" : "s"}</strong>.
+              </>
+            )}
+          </p>
+          {error ? <Alert tone="error">Fleet engine unreachable: {error}</Alert> : null}
+          <Freshness at={new Date().toISOString()} ok={sites.sites.length > 0} />
+        </div>
 
-      <section className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <SectionCard
-          title="Recent articles"
-          right={
-            <Link href="/articles" className="text-xs text-accent hover:text-accent-strong hover:underline">
-              all →
+        <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+          <div className="inline-flex p-1 rounded-lg bg-surface-lowest border border-outline-variant/30 text-[12px] font-mono">
+            <Link href={withRange("24h")} className={`px-3 py-1 rounded transition-colors ${range === "24h" ? "bg-surface-container text-ink font-medium shadow-xs" : "text-secondary hover:text-ink"}`}>24h</Link>
+            <Link href={withRange("7d")} className={`px-3 py-1 rounded transition-colors ${range === "7d" ? "bg-surface-container text-ink font-medium shadow-xs" : "text-secondary hover:text-ink"}`}>7d</Link>
+            <Link href={withRange("30d")} className={`px-3 py-1 rounded transition-colors ${range === "30d" || !range ? "bg-surface-container text-ink font-medium shadow-xs" : "text-secondary hover:text-ink"}`}>30d</Link>
+          </div>
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-[12px] font-mono text-ink">
+            <span className={`w-2 h-2 rounded-full ${autoPublishSites > 0 ? "bg-tertiary animate-pulse" : "bg-secondary"}`} />
+            <span className="font-medium">Auto-publish: {autoPublishSites > 0 ? `${autoPublishSites} of ${totalSites} sites` : "off"}</span>
+          </div>
+        </div>
+      </div>
+
+      <InteractiveKpiCards
+        totalSites={totalSites}
+        healthySites={healthySites}
+        wpSites={wpSites}
+        customSites={customSites}
+        site={site}
+        totalArticles={stats?.total ?? allArticles.length}
+        publishedCount={stats?.by_status?.published ?? publishedCount}
+        awaitingCount={awaiting.length}
+        generatingCount={generatingCount}
+        queueCount={realQueueCount}
+        briefCount={realBriefCount}
+        avgQuality={stats?.avg_quality ?? avgQuality}
+        passRate={stats?.quality_pass_rate ?? passRate}
+        wtdFmt={wtdFmt}
+        gscImpressions={gscImpressionsTotal}
+        gscClicks={gscClicksTotal}
+        gscConnectedSites={gscConnectedSitesCount}
+      />
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2.5">
+            <Glyph name="conversion_path" className="text-primary-container text-[18px]" />
+            <h2 className="text-[12px] font-mono uppercase tracking-wider text-secondary font-semibold">
+              Autonomous Execution Stream
+            </h2>
+          </div>
+          <span className="text-[12px] font-mono text-secondary">
+            {realQueueCount} queued · {realBriefCount} briefable
+          </span>
+        </div>
+        <InteractiveStreamStages
+          queueCount={realQueueCount}
+          briefCount={realBriefCount}
+          awaitingCount={awaiting.length}
+          publishedCount={stats?.by_status?.published ?? publishedCount}
+          generatingCount={generatingCount}
+          mediaCount={mediaCount}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div className="lg:col-span-8 space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center gap-2">
+              <Glyph name="history" className="text-primary-container text-[18px]" />
+              <h2 className="text-[15px] font-headline font-semibold text-ink">Recent Autonomous Dispatches</h2>
+            </div>
+            <Link className="text-[12px] font-mono text-primary-container hover:underline flex items-center gap-1" href="/articles">
+              <span>View All Pipeline Runs</span>
+              <Glyph name="arrow_forward" className="text-[14px]" />
             </Link>
-          }
-        >
-          {all.length === 0 ? (
-            <Empty
-              title="No articles yet"
-              hint="Add a keyword on the ledger — the engine briefs, researches and writes it end-to-end."
-              cta={{ href: "/articles/keywords", label: "Open keyword ledger" }}
-            />
-          ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {all.slice(0, 8).map((a) => (
-                  <tr key={a.id} className="border-t border-line first:border-t-0">
-                    <td className="py-2.5 pr-4">
-                      <Link href={`/articles/${a.id}`} className="hover:text-accent">
-                        {a.title || `#${a.id}`}
+          </div>
+
+          <div className="rounded-xl bg-surface-lowest border border-outline-variant/30 divide-y divide-outline-variant/15 overflow-hidden shadow-xs">
+            {recentArticles.length > 0 ? (
+              recentArticles.map((art) => {
+                const isPublished = art.status === "published";
+                const isGenerating = art.status === "generating";
+                return (
+                  <div key={art.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container/40 transition-colors">
+                    <div className="space-y-1.5 max-w-xl min-w-0">
+                      <div className="flex items-center gap-2.5 text-[11px] font-mono">
+                        {isPublished ? (
+                          <span className="text-tertiary font-medium flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-tertiary" />
+                            Dispatched to CMS
+                          </span>
+                        ) : isGenerating ? (
+                          <span className="text-primary-container font-medium flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse" />
+                            Synthesizing Draft
+                          </span>
+                        ) : (
+                          <span className="text-secondary font-medium flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
+                            {art.status}
+                          </span>
+                        )}
+                        <span className="text-secondary/40">•</span>
+                        <span className="text-secondary truncate">{art.site_slug}</span>
+                        <span className="text-secondary/40">•</span>
+                        <span className="text-secondary/70">
+                          {art.published_at ? fmtDate(art.published_at) : fmtDate(art.created_at)}
+                        </span>
+                      </div>
+                      <Link
+                        href={`/articles/${art.id}`}
+                        className="text-[14px] font-semibold text-ink hover:text-primary-container transition-colors block truncate"
+                      >
+                        {art.title || art.slug || `Article #${art.id}`}
                       </Link>
-                    </td>
-                    <td className="hidden py-2.5 pr-4 font-mono text-xs text-ink-faint sm:table-cell">
-                      {a.site_slug}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right font-mono text-xs text-ink-faint">
-                      {fmtCost(a.cost_usd)}
-                    </td>
-                    <td className="py-2.5 text-right">
-                      <Pill status={a.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </SectionCard>
+                    </div>
 
-        <SectionCard
-          title="Keyword ledger"
-          right={
-            <Link href="/articles/keywords" className="text-xs text-accent hover:text-accent-strong hover:underline">
-              open →
-            </Link>
-          }
-        >
-          {!queue ? (
-            <p className="text-sm text-ink-faint">—</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(queue.counts).map(([status, n]) => (
+                    <div className="flex items-center gap-5 text-[12px] font-mono text-secondary shrink-0">
+                      <div className="text-right">
+                        <div className="text-ink font-medium">
+                          {art.word_count ? `${art.word_count.toLocaleString()} words` : "—"}
+                        </div>
+                        <div className="text-secondary/70 text-[11px]">
+                          Quality: {art.quality != null ? `${Math.round(art.quality)}/100` : "Not scored"}
+                        </div>
+                      </div>
+                      <Link
+                        href={`/articles/${art.id}`}
+                        className="p-2 rounded-lg text-secondary hover:text-ink hover:bg-surface-container transition-colors"
+                        title="Inspect Run"
+                      >
+                        <Glyph name="open_in_new" className="text-[18px]" />
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-8 text-center text-secondary font-mono text-[12px]">
+                No recent pipeline runs recorded. Trigger a dispatch to begin autonomous flow.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="lg:col-span-4 space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center gap-2">
+              <Glyph name="shield" className="text-primary-container text-[18px]" />
+              <h2 className="text-[15px] font-headline font-semibold text-ink">Attention Needed</h2>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-primary-container/15 text-primary-container border border-primary-container/30">
+              {awaiting.length} Items
+            </span>
+          </div>
+          <p className="text-[11px] font-mono text-secondary -mt-2 px-1">
+            Articles waiting for an editorial decision before publishing.
+          </p>
+
+          {awaiting.length > 0 ? (
+            <div className="p-6 rounded-xl bg-surface-lowest border border-outline-variant/30 space-y-4 shadow-xs">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono text-secondary truncate max-w-[140px]">
+                    {awaiting[0].site_slug}
+                  </span>
+                  <span className="text-[11px] font-mono text-primary-container font-medium bg-primary-container/10 px-2 py-0.5 rounded border border-primary-container/20">
+                    Quality: {awaiting[0].quality != null ? `${Math.round(awaiting[0].quality)}/100` : "Not scored"}
+                  </span>
+                </div>
+                <h3 className="text-[14px] font-semibold text-ink leading-snug">
+                  {awaiting[0].title || awaiting[0].slug}
+                </h3>
+                <p className="text-[12px] text-secondary leading-relaxed">
+                  Requires editorial confirmation before publishing.
+                </p>
+              </div>
+
+              <div className="pt-2 flex items-center gap-3">
+                <form action={approveArticleAction} className="flex-1">
+                  <input type="hidden" name="id" value={String(awaiting[0].id)} />
+                  <input type="hidden" name="approved" value="1" />
+                  <input type="hidden" name="from" value="/" />
+                  <PendingButton
+                    confirmTitle="Approve Article"
+                    confirmMessage={`Approve "${awaiting[0].title || `#${awaiting[0].id}`}"? It will move to the publish queue.`}
+                    confirmButtonLabel="Approve"
+                    pendingLabel="Approving…"
+                    className="w-full h-9 rounded-lg bg-primary-container hover:brightness-110 text-white text-[12px] font-semibold flex items-center justify-center gap-1.5 shadow-xs transition-all"
+                    leftIcon={<Glyph name="check_circle" className="text-[15px]" />}
+                  >
+                    Approve
+                  </PendingButton>
+                </form>
                 <Link
-                  key={status}
-                  href={`/articles/keywords?status=${encodeURIComponent(status)}`}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-page px-3 py-1 text-xs text-ink-dim hover:border-ink-faint hover:text-ink"
+                  href={`/articles/${awaiting[0].id}`}
+                  className="px-3.5 h-9 rounded-lg bg-surface-container hover:bg-surface-high text-secondary hover:text-ink border border-outline-variant/30 text-[12px] font-mono flex items-center justify-center transition-colors"
                 >
-                  {status} <span className="font-medium text-accent">{n}</span>
+                  Review
                 </Link>
-              ))}
-              {Object.keys(queue.counts).length === 0 ? (
-                <p className="text-sm text-ink-faint">Ledger empty.</p>
-              ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="p-6 rounded-xl bg-surface-lowest border border-outline-variant/30 space-y-3">
+              <div className="flex items-center gap-2 text-tertiary font-mono text-[12px]">
+                <Glyph name="verified" className="text-[18px]" />
+                <span>Work Queue Clear</span>
+              </div>
+              <p className="text-[12px] text-secondary leading-relaxed">
+                All generated content has passed automated checks with 0 manual escalations pending.
+              </p>
             </div>
           )}
-          {brief && brief.keyword ? (
-            <p className="mt-4 border-t border-line pt-3 text-xs text-ink-dim">
-              Next briefable:{" "}
-              <span className="rounded bg-surface px-1.5 py-0.5 text-ink">{brief.keyword}</span>
-            </p>
-          ) : null}
-        </SectionCard>
-      </section>
+
+          <div className="p-5 rounded-xl bg-surface-lowest border border-outline-variant/30 space-y-3">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-secondary block">
+              Direct Stage Trigger
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <form action={runStageAction}>
+                <input type="hidden" name="stage" value="research" />
+                <input type="hidden" name="site" value={site} />
+                <PendingButton
+                  confirmTitle="Run Research Stage"
+                  confirmMessage="Run the research stage now? It spends model credits."
+                  confirmButtonLabel="Run"
+                  confirmVariant="primary"
+                  pendingLabel="…"
+                  className="w-full py-1.5 px-2 rounded bg-surface-container border border-outline-variant/30 hover:bg-surface-high text-ink text-[11px] font-mono flex items-center justify-center gap-1"
+                >
+                  <Glyph name="search" className="text-[13px] text-primary-container" />
+                  <span>Research</span>
+                </PendingButton>
+              </form>
+              <form action={runStageAction}>
+                <input type="hidden" name="stage" value="content" />
+                <input type="hidden" name="site" value={site} />
+                <PendingButton
+                  confirmTitle="Run Content Stage"
+                  confirmMessage="Generate content now? It spends LLM/image credits."
+                  confirmButtonLabel="Run"
+                  confirmVariant="primary"
+                  pendingLabel="…"
+                  className="w-full py-1.5 px-2 rounded bg-surface-container border border-outline-variant/30 hover:bg-surface-high text-ink text-[11px] font-mono flex items-center justify-center gap-1"
+                >
+                  <Glyph name="edit_note" className="text-[13px] text-tertiary" />
+                  <span>Drafts</span>
+                </PendingButton>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
