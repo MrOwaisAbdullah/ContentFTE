@@ -274,3 +274,39 @@ def test_credentials_embedded_in_connection_urls_are_masked(raw, secret):
 def test_urls_without_credentials_are_untouched():
     s = "fetching https://example.com:8443/path?x=1 and postgresql://db.internal:5432/app"
     assert redact_text(s) == s
+
+
+# ---- SEC-19: the screenshot browser re-validates every request, not just the first URL ------------------
+def test_screenshot_url_check_uses_the_shared_guard():
+    from tools.screenshot_tool import _url_is_safe_public
+    for bad in ("http://127.0.0.1:8000/", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd",
+                "http://user:pw@example.com/", "ftp://example.com/x", "http://[::1]/"):
+        assert _url_is_safe_public(bad), bad
+
+
+def test_request_guard_aborts_internal_subrequests_and_allows_data_urls():
+    import asyncio
+    from tools.screenshot_tool import _install_request_guard
+
+    class _Req:
+        def __init__(self, url): self.url = url
+
+    class _Route:
+        def __init__(self, url): self.request, self.action = _Req(url), None
+        async def abort(self, reason): self.action = ("abort", reason)
+        async def continue_(self): self.action = ("continue",)
+
+    class _Page:
+        async def route(self, pattern, handler): self.handler = handler
+
+    async def run():
+        page, blocked = _Page(), []
+        await _install_request_guard(page, blocked)
+        internal, data = _Route("http://169.254.169.254/latest/"), _Route("data:image/png;base64,AAAA")
+        await page.handler(internal)
+        await page.handler(data)
+        return internal, data, blocked
+
+    internal, data, blocked = asyncio.run(run())
+    assert internal.action[0] == "abort" and data.action == ("continue",)
+    assert blocked and "169.254.169.254" in blocked[0]["url"]

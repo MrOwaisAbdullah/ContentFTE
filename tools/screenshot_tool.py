@@ -1,11 +1,12 @@
+import asyncio
 import logging
-import socket
 import tempfile
-from ipaddress import ip_address
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from agents import function_tool
+
+from lib.safe_fetch import UnsafeURL, check_url
 
 logger = logging.getLogger(__name__)
 
@@ -13,30 +14,48 @@ _ALLOWED_SCHEMES = {"http", "https"}
 
 
 def _url_is_safe_public(url: str) -> Optional[str]:
-    """Returns an error message if `url` should not be navigated to, None if it's
-    fine. This tool hands an LLM-directed headless browser the ability to fetch
-    whatever URL the agent decides to visit -- without a check like this, that is
-    a straightforward SSRF vector (a prompt-injected or simply mistaken agent
-    could point the browser at an internal network service instead of the public
-    site it meant to screenshot). Blocks non-http(s) schemes and any hostname that
-    resolves to a private/loopback/link-local/reserved address."""
+    """An error message if `url` should not be navigated to, else None.
+
+    This tool hands an LLM-directed headless browser the ability to fetch whatever URL the agent decides to
+    visit - without a check that is an SSRF vector (a prompt-injected or merely mistaken agent pointing the
+    browser at an internal service). Uses the shared `lib.safe_fetch.check_url` (http/https only, no
+    embedded credentials, every resolved address must be public - IPv4 and IPv6)."""
     try:
-        parsed = urlparse(url)
-    except Exception:
-        return "URL could not be parsed."
-    if parsed.scheme not in _ALLOWED_SCHEMES:
-        return f"Scheme '{parsed.scheme}' is not allowed; only http/https."
-    hostname = parsed.hostname
-    if not hostname:
-        return "URL has no hostname."
-    try:
-        resolved = socket.gethostbyname(hostname)
-        addr = ip_address(resolved)
-    except Exception as e:
-        return f"Could not resolve hostname '{hostname}': {e}"
-    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
-        return f"'{hostname}' resolves to a non-public address ({resolved}); refusing to navigate there."
+        check_url(url)
+    except UnsafeURL as e:
+        return str(e)
+    except Exception as e:  # noqa: BLE001 - an unparseable URL is a refusal, not a crash
+        return f"URL could not be checked: {e}"
     return None
+
+
+_NON_NETWORK_SCHEMES = ("data:", "blob:", "about:")
+
+
+async def _install_request_guard(page, blocked: list) -> None:
+    """Re-validate EVERY request the page makes - the main navigation, each redirect hop, subresources,
+    fetch/XHR - not just the first URL (SEC-19). A public page that redirects to, or embeds, an internal
+    address (http://169.254.169.254/, http://localhost:8000/...) is aborted before any connection is made.
+    Hostnames are checked once per page load to keep the extra DNS cost small."""
+    verdicts: Dict[str, Optional[str]] = {}
+
+    async def _guard(route) -> None:
+        url = route.request.url
+        if url.startswith(_NON_NETWORK_SCHEMES):
+            await route.continue_()
+            return
+        host = (urlparse(url).hostname or "").lower()
+        if host not in verdicts:
+            verdicts[host] = await asyncio.to_thread(_url_is_safe_public, url)
+        error = verdicts[host]
+        if error:
+            blocked.append({"url": url, "reason": error})
+            logger.warning(f"capture_screenshot_tool: blocked request to '{url}': {error}")
+            await route.abort("blockedbyclient")
+        else:
+            await route.continue_()
+
+    await page.route("**/*", _guard)
 
 
 @function_tool
@@ -79,11 +98,13 @@ async def capture_screenshot_tool(url: str, full_page: bool = False, wait_ms: in
         return {"error": "playwright is not installed in this environment."}
 
     local_path = None
+    blocked: list = []
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             try:
                 page = await browser.new_page(viewport={"width": 1280, "height": 800})
+                await _install_request_guard(page, blocked)
                 await page.goto(url, timeout=20000, wait_until="load")
                 await page.wait_for_timeout(wait_ms)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -93,6 +114,9 @@ async def capture_screenshot_tool(url: str, full_page: bool = False, wait_ms: in
                 await browser.close()
     except Exception as e:
         logger.error(f"capture_screenshot_tool: failed to capture '{url}': {e}")
+        if blocked:
+            return {"error": f"Screenshot refused: the page tried to load a non-public address "
+                             f"({blocked[0]['reason']})"}
         return {"error": f"Screenshot capture failed: {e}"}
 
     hostname = urlparse(url).hostname or url
