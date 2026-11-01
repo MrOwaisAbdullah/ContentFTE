@@ -20,6 +20,8 @@ SECRET_FIELDS: Tuple[Tuple[str, str, str], ...] = (
     ("indexing", "indexnow_key", "indexnow_key"),
     ("indexing", "bing_wmt_key", "bing_wmt_key"),
     ("notifications", "discord_webhook_url", "discord_webhook_url"),
+    ("delivery", "webhook_url", "delivery_webhook_url"),
+    ("delivery", "secret", "delivery_secret"),
 )
 
 # Safety net for secret-looking keys nobody has listed yet. Applied to non-empty

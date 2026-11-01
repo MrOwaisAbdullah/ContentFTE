@@ -81,8 +81,9 @@
       "note": "root and discord_bot .dockerignore"
     },
     "SEC-13": {
-      "status": "open",
-      "note": "HMAC-signed custom-site webhook + outbox; revalidate webhook: header secret + timingSafeEqual"
+      "status": "done",
+      "branch": "p5",
+      "note": "custom-site pushes are HMAC-signed with timestamp and delivery id, retried, per-site URL/secret; revalidate webhook compares in constant time, drops the body/query secret by default and uses after() for IndexNow"
     },
     "SEC-14": {
       "status": "open",
@@ -324,8 +325,9 @@
       "branch": "p4"
     },
     "ADP-04": {
-      "status": "open",
-      "note": "custom-site webhook: HMAC, delivery id, retry, per-site URL (same work as SEC-13)"
+      "status": "partial",
+      "branch": "p5",
+      "note": "signed, retried, per-site delivery wired into publish; a persistent outbox (survives a crash mid-retry) is still open"
     },
     "ADP-05": {
       "status": "open",

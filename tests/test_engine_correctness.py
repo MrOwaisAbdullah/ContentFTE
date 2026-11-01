@@ -343,3 +343,62 @@ def test_the_entry_points_opt_in_only_for_the_default_site_or_by_env(svc, monkey
     assert svc._may_autocreate_site("anything-else") is False
     monkeypatch.setenv("SDK_AUTO_CREATE_SITES", "1")
     assert svc._may_autocreate_site("anything-else") is True
+
+
+# ------------------------------------------------------------------ ADP-04 / SEC-13: custom-site delivery
+def _approved_custom(svc, settings):
+    from lib.db import Article, get_session
+    svc.upsert_site("hooked", "H", "custom", "https://hooked.test", settings)
+    aid = svc.submit_article("hooked", keyword="hook me")["id"]
+    s = get_session()
+    try:
+        a = s.get(Article, aid)
+        a.status, a.content_md, a.title = "approved", "# T\n\nbody text here", "T"
+        s.commit()
+    finally:
+        s.close()
+    return aid
+
+
+def test_publish_pushes_a_signed_delivery_to_the_sites_own_webhook(svc, monkeypatch):
+    sent = []
+    from lib import custom_site
+    monkeypatch.setattr(custom_site, "deliver", lambda payload, webhook_url="", secret="", **k:
+                        sent.append((webhook_url, secret, payload)) or {"status": "ok", "status_code": 200,
+                                                                         "attempts": 1, "delivery_id": "d1", "signed": True})
+    aid = _approved_custom(svc, {"require_approval": False,
+                                 "delivery": {"webhook_url": "https://hooked.test/api/cfte", "secret": "shh"}})
+    out = svc.publish_article(aid)
+    assert out["delivery"]["status"] == "ok"
+    url, secret, payload = sent[0]
+    assert url == "https://hooked.test/api/cfte" and secret == "shh"
+    assert payload["article_id"] == aid and payload["event"] == "article.published" and "html" in payload
+    # the audit row records the outcome but never the secret
+    from lib.db import AuditLog, get_session
+    s = get_session()
+    try:
+        row = s.query(AuditLog).filter_by(article_id=aid, action="article.delivery").one()
+        assert "shh" not in str(row.payload) and row.payload["status"] == "ok"
+    finally:
+        s.close()
+
+
+def test_no_webhook_configured_means_no_delivery_and_no_noise(svc, monkeypatch):
+    monkeypatch.delenv("SITE_PUBLISH_WEBHOOK", raising=False)
+    aid = _approved_custom(svc, {"require_approval": False})
+    assert "delivery" not in svc.publish_article(aid)
+
+
+def test_the_process_wide_webhook_is_not_used_in_shared_mode(svc, monkeypatch):
+    monkeypatch.setenv("SITE_PUBLISH_WEBHOOK", "https://one-site.test/hook")
+    monkeypatch.setenv("TENANCY_MODE", "shared")
+    assert svc._delivery_target(type("S", (), {"settings": {}})()) == ("", "")
+    monkeypatch.setenv("TENANCY_MODE", "isolated")
+    assert svc._delivery_target(type("S", (), {"settings": {}})())[0] == "https://one-site.test/hook"
+
+
+def test_delivery_secrets_never_leave_through_the_site_api(svc):
+    from lib.secrets_redact import redact_settings
+    clean, flags = redact_settings({"delivery": {"webhook_url": "https://x.test/h?token=abc", "secret": "shh"}})
+    assert "shh" not in str(clean) and "token=abc" not in str(clean)
+    assert flags["delivery_secret"] is True and flags["delivery_webhook_url"] is True

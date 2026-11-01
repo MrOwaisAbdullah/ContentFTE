@@ -2876,6 +2876,10 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
                                "cost_usd": totals["total_usd"], "event": "article.published"}
         if wp_state is not None:
             out["wp"] = wp_state
+        elif site_type != "wordpress":
+            delivery = _deliver_to_custom_site(art)
+            if delivery is not None:
+                out["delivery"] = delivery
         # §5.6 concrete URL submission (IndexNow + Bing WMT) — best-effort,
         # after the status flip; a ping failure never fails the publish.
         live_url = str((wp_state or {}).get("url") or "")
@@ -2897,6 +2901,51 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
         return out
     finally:
         s.close()
+
+
+_DELIVERY_KEYS = ("title", "slug", "url", "excerpt", "html", "markdown", "markdown_alternate",
+                  "faq_html", "schema", "seo")
+
+
+def _delivery_target(site) -> tuple[str, str]:
+    """(webhook_url, signing_secret) for a custom site: its own `Site.settings.delivery`, else - for a
+    single-site instance only - SITE_PUBLISH_WEBHOOK / SITE_PUBLISH_SECRET. In shared mode a process-global
+    URL would push every tenant's articles to one site, so it is not used."""
+    group = ((getattr(site, "settings", None) or {}).get("delivery")) if site is not None else None
+    group = group if isinstance(group, dict) else {}
+    url, secret = str(group.get("webhook_url") or "").strip(), str(group.get("secret") or "").strip()
+    if not url:
+        from lib.site_env import is_shared_mode
+        if not is_shared_mode():
+            url = (os.environ.get("SITE_PUBLISH_WEBHOOK") or "").strip()
+            secret = secret or (os.environ.get("SITE_PUBLISH_SECRET") or "").strip()
+    return url, secret
+
+
+def _deliver_to_custom_site(art: ArticleModel) -> dict | None:
+    """Push the rendered article to a custom site's publish webhook when one is configured (ADP-04).
+    Signed, retried, idempotent by delivery id. Returns None when nothing is configured (the pull route
+    `GET /articles/{id}/content` is still the default); never raises, never fails the publish."""
+    url, secret = _delivery_target(art.site)
+    if not url:
+        return None
+    try:
+        data = get_article(art.id, include_content=True)
+        payload = {k: data.get(k) for k in _DELIVERY_KEYS if k in data}
+        payload["article_id"] = art.id
+        payload["event"] = "article.published"
+        res = custom_site.deliver(payload, webhook_url=url, secret=secret)
+        s = get_session()
+        try:
+            s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.delivery",
+                           payload={k: res.get(k) for k in ("status", "status_code", "attempts", "delivery_id",
+                                                             "signed", "message") if k in res}))
+            s.commit()
+        finally:
+            s.close()
+        return res
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
 
 
 def _indexing_keys(site) -> dict:
