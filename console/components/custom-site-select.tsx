@@ -26,6 +26,8 @@ export function CustomSiteSelect({
   const [search, setSearch] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const selectedSite = sites.find((s) => s.slug === currentSite);
 
@@ -38,6 +40,7 @@ export function CustomSiteSelect({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && open) {
         setOpen(false);
+        triggerRef.current?.focus(); // return focus to where the user was (a11y)
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -51,8 +54,31 @@ export function CustomSiteSelect({
   useEffect(() => {
     if (open) {
       setSearch("");
+      // Put the keyboard user inside the popup: the filter box when there is one, else the current option.
+      queueMicrotask(() => {
+        if (searchInputRef.current) searchInputRef.current.focus();
+        else (listRef.current?.querySelector('[aria-selected="true"]') as HTMLElement | null)?.focus();
+      });
     }
   }, [open]);
+
+  /** Arrow/Home/End move between options (the popup is a listbox, so it must behave like one). */
+  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
+    if (!keys.includes(e.key)) return;
+    const options = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>('[role="option"]'),
+    );
+    if (options.length === 0) return;
+    e.preventDefault();
+    const at = options.indexOf(document.activeElement as HTMLElement);
+    let next = at;
+    if (e.key === "ArrowDown") next = at < 0 ? 0 : Math.min(options.length - 1, at + 1);
+    if (e.key === "ArrowUp") next = at <= 0 ? 0 : at - 1;
+    if (e.key === "Home") next = 0;
+    if (e.key === "End") next = options.length - 1;
+    options[next].focus();
+  };
 
   const filteredSites = sites.filter((s) => {
     if (!search.trim()) return true;
@@ -69,10 +95,12 @@ export function CustomSiteSelect({
     <div className={`relative flex items-center gap-1.5 ${className}`} ref={dropdownRef}>
       {/* Trigger Button */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(!open)}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={`Site filter: ${selectedSite ? selectedSite.name || selectedSite.slug : "All sites"}`}
         className="flex items-center gap-2 h-8 px-2.5 rounded-lg bg-surface-container border border-outline-variant/30 hover:border-outline-variant/60 hover:bg-surface-high text-xs font-mono transition-colors focus:outline-none focus:ring-1 focus:ring-primary-container cursor-pointer select-none"
       >
         <span className="text-secondary/70">site:</span>
@@ -135,9 +163,12 @@ export function CustomSiteSelect({
             </div>
           )}
 
-          {/* All Sites Option */}
+          {/* All Sites Option + the site list form one listbox (role=option, aria-selected) */}
+          <div role="listbox" aria-label="Sites" ref={listRef} onKeyDown={onListKeyDown}>
           <button
             type="button"
+            role="option"
+            aria-selected={!currentSite}
             onClick={() => handleSelect("")}
             className={`flex w-full items-center justify-between px-2.5 py-2 rounded-lg transition-colors cursor-pointer text-left ${
               !currentSite
@@ -178,6 +209,8 @@ export function CustomSiteSelect({
                   <button
                     key={site.slug}
                     type="button"
+                    role="option"
+                    aria-selected={isSelected}
                     onClick={() => handleSelect(site.slug)}
                     className={`flex w-full items-center justify-between px-2.5 py-2 rounded-lg transition-colors cursor-pointer text-left ${
                       isSelected
@@ -211,6 +244,7 @@ export function CustomSiteSelect({
                 );
               })
             )}
+          </div>
           </div>
         </div>
       )}
