@@ -17,6 +17,10 @@ env:
   # must be hardcoded to your actual lowercase GitHub username/org.
   IMAGE: ghcr.io/mrowaisabdullah/seo-blog-agent-discord-bot
 
+# Least privilege (plan SEC-23): jobs get a read-only GITHUB_TOKEN unless they declare more.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

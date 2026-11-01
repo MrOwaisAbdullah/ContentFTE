@@ -1,0 +1,43 @@
+# Keep secrets, local databases and bulk out of every docker build context (plan SEC-12).
+# The root Dockerfile does `COPY . .`, so anything not listed here lands in an image layer.
+
+# secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+google-credentials.json
+*credentials*.json
+*service-account*.json
+console/.env.local
+console/instances.json
+
+# local state / databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
+.test-tmp-*/
+.pytest_cache/
+
+# vcs, tooling, caches
+.git/
+.github/
+.venv/
+.uv-cache/
+__pycache__/
+*.pyc
+node_modules/
+console/.next/
+.claude/
+
+# images and scratch files that are not part of the app
+*.jpg
+*.png
+!sdk/**/*.png
+docs/
+# NOTE: brain/ and skills/ are deliberately NOT ignored -- the engine reads them at runtime.

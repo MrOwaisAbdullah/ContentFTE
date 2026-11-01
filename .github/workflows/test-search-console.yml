@@ -9,6 +9,10 @@ name: Test Search Console Access
 on:
   workflow_dispatch: {}
 
+# Least privilege (plan SEC-23): jobs get a read-only GITHUB_TOKEN unless they declare more.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
