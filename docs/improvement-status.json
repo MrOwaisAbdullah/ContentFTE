@@ -1,0 +1,631 @@
+{
+  "_about": "Single source of truth for progress on docs/improvement-plan-2026-11.md. Edit a status here, then run `python scripts/improvement_status.py`. Statuses: done | partial | open | decision | owner | other-repo.",
+  "branches": {
+    "p0": {
+      "name": "improve/phase0-console-engine-hardening",
+      "summary": "Console + engine hardening: secrets out of the browser, session/login, fail-closed auth incl. /mcp, WP renderer XSS, decay-job and Discord-notice fixes, redirect/save bugs"
+    },
+    "p1": {
+      "name": "improve/phase1-quality-gates",
+      "summary": "Quality gate enforced at approval, strict fact-check, AEO lint, real Article structured data, honest dateModified, cadence cap, cannibalization v2, REFRESH_POLICY switch"
+    },
+    "p2": {
+      "name": "improve/phase2-site-api-keys",
+      "summary": "Per-site API keys with scopes + fail-closed route authorization and the cross-tenant test matrix"
+    },
+    "p3": {
+      "name": "improve/phase3-tenant-isolation",
+      "summary": "No silent cross-tenant widening, site-filtered logs, per-site monthly spend cap"
+    },
+    "p4": {
+      "name": "improve/phase4-remaining-hardening",
+      "summary": "SSRF guard, log redaction, Discord access control, restricted sheet tool, client retry rules, adapter fixes, /ready, upgraded dependencies, this status board"
+    }
+  },
+  "items": {
+    "SEC-01": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEC-02": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEC-03": {
+      "status": "done",
+      "branch": "p2"
+    },
+    "SEC-04": {
+      "status": "done",
+      "branch": "p0",
+      "note": "console strips secrets AND the engine redacts list_sites/MCP"
+    },
+    "SEC-05": {
+      "status": "done",
+      "branch": "p4",
+      "note": "safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py"
+    },
+    "SEC-06": {
+      "status": "done",
+      "branch": "p4",
+      "note": "WP renderer (scheme allow-list, JSON-LD escaping) and the SDK React HTML fallback"
+    },
+    "SEC-07": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "SEC-08": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEC-09": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEC-10": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEC-11": {
+      "status": "done",
+      "branch": "p4",
+      "note": "Sanity prints/headers, IndexNow/Bing keys, tool-result logging, DB-URL credentials"
+    },
+    "SEC-12": {
+      "status": "done",
+      "branch": "p4",
+      "note": "root and discord_bot .dockerignore"
+    },
+    "SEC-13": {
+      "status": "open",
+      "note": "HMAC-signed custom-site webhook + outbox; revalidate webhook: header secret + timingSafeEqual"
+    },
+    "SEC-14": {
+      "status": "open",
+      "note": "encrypt Site.settings secrets and console instances.json at rest (tenant_secrets table)"
+    },
+    "SEC-15": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "security headers + media proxy done; nonce-based CSP, explicit engine CORS origins, auth on /docs still open"
+    },
+    "SEC-16": {
+      "status": "owner",
+      "note": "confirm/rotate the Google service-account key in GCP IAM (same action as SEC-22)"
+    },
+    "SEC-17": {
+      "status": "done",
+      "branch": "p4",
+      "note": "restricted sheet tool for the generator, evaluator and brief agents"
+    },
+    "SEC-18": {
+      "status": "done",
+      "branch": "p4",
+      "note": "allow-list defaults to the Discord application owner; set ALLOWED_DISCORD_USER_IDS to add others"
+    },
+    "SEC-19": {
+      "status": "open",
+      "note": "re-validate every request/redirect in the Playwright screenshot tool (page.route)"
+    },
+    "SEC-20": {
+      "status": "open",
+      "note": "drop fetch_url_title from agents reading untrusted text; restrict Tavily URL tools to this run's results"
+    },
+    "SEC-21": {
+      "status": "open",
+      "note": "stop re-feeding log_coverage summaries to the generator as instructions; site-scope brain reads (partly done in p3)"
+    },
+    "SEC-22": {
+      "status": "owner",
+      "note": "rotate/delete the key in GCP IAM; delete local branches Extending-AgentRunner and backup-bb314a6; git reflog expire + gc"
+    },
+    "SEC-23": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "workflow permissions: contents: read done; move secrets to a master-only GitHub Environment and split log_coverage into its own job (repo settings)"
+    },
+    "SEC-24": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "uv.lock upgraded (starlette 0.50, pillow 12.3, urllib3 2.8, requests 2.34); discord_bot/requirements.txt is still unpinned"
+    },
+    "ENG-01": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "ENG-02": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "ENG-03": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "per-process single-flight done; a DB-level claim is needed for multi-worker deployments"
+    },
+    "ENG-04": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "single-flight done; LAST_USAGE module global and cost-in-finally still open"
+    },
+    "ENG-05": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "race and no-op env mutation removed, REST+MCP share one lock; handlers are not site-scoped yet (needs TenantContext)"
+    },
+    "ENG-06": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "ENG-07": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "ENG-08": {
+      "status": "done",
+      "branch": "p3"
+    },
+    "ENG-09": {
+      "status": "partial",
+      "branch": "p3",
+      "note": "/logs is site-filtered; stage history/stage rows still have no site_id (platform-only)"
+    },
+    "ENG-10": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "approving a published article no longer regresses it; full transition table open; event name kept for compatibility"
+    },
+    "ENG-11": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "ENG-12": {
+      "status": "open",
+      "note": "unique (site_id, keyword_id), atomic Tavily meter increment, finalize unique constraint"
+    },
+    "ENG-13": {
+      "status": "open",
+      "note": "stop auto-creating sites on read/submit; validate slugs"
+    },
+    "ENG-14": {
+      "status": "open",
+      "note": "move the idempotency cache to the database with a TTL and unique key"
+    },
+    "ENG-15": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "create_all now runs once per engine; Alembic, SQLite WAL/busy_timeout and a UTC TypeDecorator still open"
+    },
+    "ENG-16": {
+      "status": "open",
+      "note": "typed ServiceError(code, http, message, next) instead of everything-is-404"
+    },
+    "ENG-17": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "limit clamping done; typed patch_meta body, LIKE escaping and bad-settings int() still open"
+    },
+    "ENG-18": {
+      "status": "open",
+      "note": "article_stats: SQL aggregates instead of loading every article's markdown"
+    },
+    "ENG-19": {
+      "status": "done",
+      "branch": "p4",
+      "note": "Python and TypeScript clients"
+    },
+    "ENG-20": {
+      "status": "open",
+      "note": "publish in draft mode should not set status=published or ping IndexNow for a draft URL"
+    },
+    "ENG-21": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "/ready added (DB + auth + tenancy); request-id middleware and JSON logs still open"
+    },
+    "ENG-22": {
+      "status": "open",
+      "note": "split sdk/service.py (3.4k lines) along the seams in the plan"
+    },
+    "PIPE-01": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "tool renamed + contract test; the SDK path enforces the gate in code, the Sheets run_content path is still prompt-driven"
+    },
+    "PIPE-02": {
+      "status": "open"
+    },
+    "PIPE-03": {
+      "status": "open"
+    },
+    "PIPE-04": {
+      "status": "open"
+    },
+    "PIPE-05": {
+      "status": "open"
+    },
+    "PIPE-06": {
+      "status": "open"
+    },
+    "PIPE-07": {
+      "status": "open"
+    },
+    "PIPE-08": {
+      "status": "open"
+    },
+    "PIPE-09": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "PIPE-10": {
+      "status": "partial",
+      "branch": "p1",
+      "note": "arrays-have-items contract test; Optional/union params and retries/delay on the full sheet tool remain"
+    },
+    "PIPE-11": {
+      "status": "open"
+    },
+    "PIPE-12": {
+      "status": "open"
+    },
+    "PIPE-13": {
+      "status": "open"
+    },
+    "PIPE-14": {
+      "status": "open"
+    },
+    "PIPE-15": {
+      "status": "open"
+    },
+    "PIPE-16": {
+      "status": "open"
+    },
+    "PIPE-17": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "TAVILY key no longer required at import; OPENROUTER_API_KEY is still read at import in blog_agents"
+    },
+    "PIPE-18": {
+      "status": "open"
+    },
+    "PIPE-19": {
+      "status": "open"
+    },
+    "PIPE-20": {
+      "status": "open"
+    },
+    "PIPE-21": {
+      "status": "open"
+    },
+    "PIPE-22": {
+      "status": "open",
+      "note": "no PR CI (pytest/lint) exists; deps use >= floors"
+    },
+    "PIPE-23": {
+      "status": "open"
+    },
+    "ADP-01": {
+      "status": "open",
+      "note": "Sanity createIfNotExists silently ignores a changed re-publish; no draft mode"
+    },
+    "ADP-02": {
+      "status": "open",
+      "note": "replace the regex inline renderer with a markdown AST (linked images, nested lists, code spans)"
+    },
+    "ADP-03": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "ADP-04": {
+      "status": "open",
+      "note": "custom-site webhook: HMAC, delivery id, retry, per-site URL (same work as SEC-13)"
+    },
+    "ADP-05": {
+      "status": "open",
+      "note": "markdown_parser: tables in fences, ==/~~ in code, blockquotes, hr, html_block, relative links"
+    },
+    "ADP-06": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "429/5xx retry and the UnboundLocalError fixed; ifRevisionID on update_post_content still open"
+    },
+    "ADP-07": {
+      "status": "open",
+      "note": "custom payload: featured image, canonical, OG, meta_title; buildMetadata helper"
+    },
+    "ADP-08": {
+      "status": "open",
+      "note": "probe registered SEO meta keys; wrap JSON-LD in wp:html; Rank Math/SEOPress/AIOSEO"
+    },
+    "ADP-09": {
+      "status": "open",
+      "note": "refresh_article must rewrite _elementor_data"
+    },
+    "ADP-10": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "ADP-11": {
+      "status": "done",
+      "branch": "p4"
+    },
+    "ADP-12": {
+      "status": "done",
+      "branch": "p4",
+      "note": "Content-Disposition, sniffed MIME, checked alt-text write; dedupe of media on retry still open"
+    },
+    "ADP-13": {
+      "status": "done",
+      "branch": "p0",
+      "note": "also fixed a hidden second bug (unterminated regex) that stopped the module importing"
+    },
+    "ADP-14": {
+      "status": "open",
+      "note": "Sanity: publish without mainImage, publishedAt/updatedAt/canonical/ogImage fields"
+    },
+    "ADP-15": {
+      "status": "open",
+      "note": "per-site IndexNow/Bing keys"
+    },
+    "SEO-01": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-02": {
+      "status": "done",
+      "branch": "p1",
+      "note": "SDK/approve path; the Sheets path still relies on the prompt"
+    },
+    "SEO-03": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "SEO-04": {
+      "status": "decision",
+      "branch": "p1",
+      "note": "REFRESH_POLICY switch is built (escalate|in_place); you choose — recommended in_place"
+    },
+    "SEO-05": {
+      "status": "partial",
+      "branch": "p1",
+      "note": "posting cap enforced as a sliding window; embedding near-duplicate and cross-tenant duplicate checks open"
+    },
+    "SEO-06": {
+      "status": "open",
+      "note": "make PAA atomization opt-in with a unique-data minimum and per-site cap; prune gray-policy tactics"
+    },
+    "SEO-07": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-08": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-09": {
+      "status": "open",
+      "note": "compute the overall score in code from sub-scores; verify code snippets against current docs"
+    },
+    "SEO-10": {
+      "status": "decision",
+      "note": "requires real brain/ voice notes first; you must write entries before a gate can demand them"
+    },
+    "SEO-11": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-12": {
+      "status": "open",
+      "note": "link validator: compare final path, soft-404 detection, treat 403/429 as unverifiable (partly in quality gate)"
+    },
+    "SEO-13": {
+      "status": "open",
+      "note": "linkguard: exact path matching, explicit orphan list, scale minimums for small sites"
+    },
+    "SEO-14": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-15": {
+      "status": "open",
+      "note": "normalize provider difficulty scales; SERP endpoint; real intent classifier"
+    },
+    "SEO-16": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "minimum-prior-clicks floor done; seasonality/year-over-year and cause split open"
+    },
+    "SEO-17": {
+      "status": "open",
+      "note": "SERP drift threshold wording, persisted baselines, SERP-feature tracking"
+    },
+    "SEO-18": {
+      "status": "open",
+      "note": "share-of-voice: multiple samples, competitors, confidence, scheduling"
+    },
+    "SEO-19": {
+      "status": "done",
+      "branch": "p1"
+    },
+    "SEO-20": {
+      "status": "partial",
+      "branch": "p1",
+      "note": "duplicate-FAQ lint added; FAQ optional-by-intent (and emitted once) still open"
+    },
+    "SEO-21": {
+      "status": "open",
+      "note": "downgrade the secondary-keyword minimum from a hard gate to a warning"
+    },
+    "SEO-22": {
+      "status": "open",
+      "note": "taxonomy: minimum count before creating a term; noindex thin archives"
+    },
+    "SEO-23": {
+      "status": "open",
+      "note": "images: >=1200px minimum, descriptive alt, width/height"
+    },
+    "SEO-24": {
+      "status": "partial",
+      "branch": "p1",
+      "note": "AEO lint done; one-off re-run of legacy posts through the gates still open"
+    },
+    "SEO-25": {
+      "status": "open",
+      "note": "llms.txt descriptions/llms-full.txt (low value per current guidance)"
+    },
+    "SEO-26": {
+      "status": "open",
+      "note": "raise the tutorial word floor; 'what top results cover that we don't'"
+    },
+    "FE-01": {
+      "status": "other-repo",
+      "note": "live site repo: move the Disallow rules under User-agent: * (keep /_next/ crawlable)"
+    },
+    "FE-02": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "sdk/sanity/lib/seo.ts fallbacks fixed; headline/breadcrumb-name fallbacks live in the site's own template"
+    },
+    "FE-03": {
+      "status": "other-repo",
+      "note": "one site-wide JSON-LD @graph; og:type/article:* tags"
+    },
+    "FE-04": {
+      "status": "other-repo",
+      "note": "engine should call the revalidate webhook after publish; site ISR"
+    },
+    "FE-05": {
+      "status": "other-repo",
+      "note": "real 404 for .md URLs; /raw must keep link and image URLs"
+    },
+    "FE-06": {
+      "status": "other-repo",
+      "note": "remove the 'VERIFIED ACCURACY' badge or back it with the gate result"
+    },
+    "FE-07": {
+      "status": "other-repo",
+      "note": "cap the title when a brand suffix is appended"
+    },
+    "CON-01": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-02": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-03": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-04": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-05": {
+      "status": "partial",
+      "branch": "p1",
+      "note": "cadence/enforce and the spend cap are read by the engine; image/content/indexing/notification groups are still saved but never consumed"
+    },
+    "CON-06": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-07": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-08": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-09": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-10": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "article/keyword ids, publish mode, site slug/URL and settings numbers validated; remaining actions not yet"
+    },
+    "CON-11": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "CON-12": {
+      "status": "open",
+      "note": "split articles/[id]/page.tsx, site-cadence-settings.tsx and lib/shell.tsx (needs browser verification)"
+    },
+    "CON-13": {
+      "status": "decision",
+      "note": "decide whether you need separate logins/roles (owner/reviewer/client) before building accounts and an actor on mutations"
+    },
+    "CON-14": {
+      "status": "open",
+      "note": "a11y pass: combobox roles for the custom select, aria-live on toasts, keyboard handling"
+    },
+    "CON-15": {
+      "status": "partial",
+      "branch": "p0",
+      "note": "tests for session, redirect-safety, secrets, instance guard, limiter; server-action tests open"
+    },
+    "CON-16": {
+      "status": "open",
+      "note": "flash messages should be short codes, not arbitrary query text"
+    },
+    "TEN-01": {
+      "status": "done",
+      "branch": "p0"
+    },
+    "TEN-02": {
+      "status": "open",
+      "note": "replace import-time site identity/provider globals with TenantContext lookups"
+    },
+    "TEN-03": {
+      "status": "partial",
+      "branch": "p3",
+      "note": "per-site monthly USD cap done; the Tavily budget is still one global value"
+    },
+    "TEN-04": {
+      "status": "open",
+      "note": "DB job queue + scheduler honouring cadence; retire the single-site Actions cron"
+    },
+    "TEN-05": {
+      "status": "partial",
+      "branch": "p4",
+      "note": "user allow-list done; one bot serving many sites (guild -> site routing) still open"
+    },
+    "TEN-06": {
+      "status": "open",
+      "note": "route WP/Elementor post-id operations by site + article, with per-site credentials"
+    },
+    "TEN-07": {
+      "status": "open",
+      "note": "SeoCache, _keyword_claim and IMAGE_STAGING_DIR need a site dimension"
+    },
+    "TEN-08": {
+      "status": "open",
+      "note": "one-call provisioning API (about 21 manual steps today)"
+    },
+    "TEN-09": {
+      "status": "decision",
+      "note": "decide: pooled paid provider keys with per-tenant caps vs a free-tier account per site"
+    },
+    "OPS-01": {
+      "status": "open",
+      "note": "Alembic, backups/PITR, Sentry, uptime probe, alerting, audit actor"
+    },
+    "OPS-02": {
+      "status": "open",
+      "note": "stage single-flight and idempotency must survive multiple workers (DB-backed)"
+    },
+    "OPS-03": {
+      "status": "partial",
+      "branch": "p4",
+      "note": ".dockerignore added; root Dockerfile still ignores uv.lock, has no HEALTHCHECK, uses uv:latest"
+    },
+    "OPS-04": {
+      "status": "done",
+      "branch": "p0"
+    }
+  }
+}

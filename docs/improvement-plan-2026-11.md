@@ -2,6 +2,8 @@
 
 **Scope:** whole repo at `2a068cf` (engine, agent pipeline, adapters + SDK, SEO subsystems, operator console, multi-instance / multi-tenant ops) plus the live output on owaisabdullah.dev.
 **Method:** 6 code explorers (Sonnet 5.5), 3 `claude-seo` live-page audits (schema, GEO, content), the `seo-pack` tactic library as rubric, a focused `security-audit` pass (2 agents), context7 (Next.js, OpenAI Agents SDK), web research for the 2026 SEO baseline. Plan and verification by Opus 5.5. Tavily MCP failed to connect this session; other search tools were used instead.
+> **Progress lives in [`improvement-status.md`](improvement-status.md)** — one row per finding, generated from `improvement-status.json` (the only file to edit when you mark something done; then run `python scripts/improvement_status.py`). The checklists and ✅/🔎 marks below are a point-in-time record and are **not** kept in sync; the board is authoritative.
+
 **Companion docs:** builds on (doesn't replace) `pipeline_flow_and_state.md` (ranked gaps), `instances-isolation.md`, `incident_ledger.md`, `console-ux-audit.md`, `TASKS.md`.
 
 ---
@@ -634,6 +636,27 @@ Branch `improve/phase3-tenant-isolation` (stacked on `improve/phase2-site-api-ke
 **Tests (`tests/test_tenant_isolation.py`, 15):** unknown slug ⇒ error in all seven functions; typo'd slug creates no global brain entry; shared mode requires a site; single-site mode still works; brain notes never cross tenants in shared mode (other tenant, global row, repo files) while isolated mode keeps the operator's global notes; logs and costs filter to one site and a site key sees only its own over REST; cap blocks generation/images/regenerate, is per-site, ignores last month, tolerates garbage, and surfaces as 402 with the budget block in the spend summary.
 
 **Still open for shared mode:** brand DNA is still applied once at startup to module-level agents (PIPE-06); stage handlers and `run/{stage}` are not site-scoped; WP post readback / Elementor passthroughs and `test-connection` still use process env or caller-supplied URLs (need per-site credentials + `safe_fetch`); there is no per-key rate limit. Until those land, run **one engine per client** for anything the platform-only routes touch, and use site keys for read/write/approve/publish of that client's own articles.
+
+### 2026-11-02 (sixth pass) — remaining hardening + the status board
+
+Branch `improve/phase4-remaining-hardening` (stacked on `improve/phase3-tenant-isolation`). **Per-finding status is in [`improvement-status.md`](improvement-status.md); this entry only narrates the pass.**
+
+| Area | What changed |
+|---|---|
+| SSRF (SEC-05) | `lib/safe_fetch.py` — `safe_get`/`safe_head`: http(s) only; refuses any host that resolves to a non-public address (loopback, RFC1918, link-local/cloud metadata, IPv4-mapped IPv6); follows redirects manually and re-checks each hop; never forwards credentials to a different host; caps size and always sets a timeout. Applied to every image/link/title/WordPress-test fetch whose URL comes from a draft or a caller. `SAFE_FETCH_ALLOW_PRIVATE=1` for local development. |
+| Secrets in logs (SEC-11) | `lib/redact.py`; Sanity no longer prints request bodies or logs auth headers; IndexNow/Bing errors no longer echo `?apikey=`; tool results are logged as one redacted line; credentials inside connection URLs are masked (found by a failing test). |
+| Discord (SEC-07/18) | `discord_bot/access.py`: reactions, slash commands (via a `CommandTree.interaction_check`) and the free-text agent now require an authorized user — `ALLOWED_DISCORD_USER_IDS`, else only the application owner/team. Reactions only count on messages the pipeline posted. |
+| Prompt injection (SEC-17) | The generator, evaluator and brief agents get a restricted sheet tool (same name, so prompts are unchanged): no delete/clear, no edits to `generated_posts`/`published_posts`/`review_feedback_log` (append only), raw input only so formulas can't run. |
+| CI / container (SEC-23, SEC-12) | `permissions: contents: read` on the workflows that declared nothing; `.dockerignore` for the engine and the bot. |
+| Dependencies (SEC-24) | `uv.lock`: starlette 0.47.1→0.50.0 (fixes CVE-2025-62727), pillow 11.3→12.3.0, urllib3 2.5→2.8.0, requests 2.32.4→2.34.2, fastapi→0.124.4 — bounded so there are no major-version jumps. Full suite re-run on the new versions. |
+| Engine correctness | Single-flight publish and generate (no duplicate WordPress posts / double LLM spend from a double-click); MCP tools no longer block the event loop (blocking service calls run in worker threads); re-submitting a keyword no longer wipes its metrics; approving a published article no longer regresses it; `limit` parameters clamped; `create_all` runs once per engine; `/ready` readiness probe. |
+| Clients (ENG-19) | Python and TypeScript SDK clients no longer retry 401/404/409/422, no longer repeat a POST that may have succeeded unless it carries an `Idempotency-Key`, always repeat 429, expose the server's reason (`ContentFTEError`), and time out. |
+| SDK renderer (SEC-06) | The React renderer's HTML fallback now goes through the same `rehype-sanitize` pipeline as markdown (verified by rendering hostile HTML in the smoke test). |
+| Adapters | WordPress: HTML-encoded term names and the `term_exists` race no longer abort a publish; real permalinks for internal links; slug check pages through drafts/pending; safe `Content-Disposition`, sniffed MIME, checked alt-text. Sanity: retries 429/5xx and no longer crashes with `UnboundLocalError`. Non-Latin titles keep their letters instead of becoming `uncategorized`. |
+| Pipeline | `tools/search_tools.py` no longer crashes any stage that imports it when `TAVILY_API_KEY` is unset (client is created on first use). |
+| Tracking | `docs/improvement-status.json` + `scripts/improvement_status.py` + `docs/improvement-status.md`, guarded by `tests/test_improvement_status.py`; pointers added to this plan and to `TASKS.md`. |
+
+**Honest limits:** single-flight is per process (multi-worker needs the DB-level claim, ENG-03/04); the approve event name is still `article.published` for compatibility; `discord_bot/requirements.txt` is still unpinned and the root Dockerfile still ignores `uv.lock`; DNS-rebinding between the SSRF check and the connect is not closed.
 
 **Not verified:** a `next build` / running console in a browser (it would overwrite `.next`, which may belong to a running dev server), so the visual behaviour of the hidden-panel tabs, the secret placeholders, the new error/loading screens and the headers is untested in a browser. Server Actions behind a proxy may need `experimental.serverActions.allowedOrigins` (comment left in `next.config.ts`).
 
