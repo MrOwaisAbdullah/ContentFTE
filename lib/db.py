@@ -334,9 +334,36 @@ def get_engine():
     global _engine
     if _engine is None:
         url = database_url()
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        is_sqlite = url.startswith("sqlite")
+        # `timeout` = how long a writer waits for the lock instead of failing at once with
+        # "database is locked" (the REST API, MCP and the pipeline share one file in dev).
+        connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
         _engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+        if is_sqlite:
+            _tune_sqlite(_engine)
     return _engine
+
+
+def _tune_sqlite(engine) -> None:
+    """A 30s busy timeout always (a writer waits for the lock instead of failing at once with "database is
+    locked" when the API and a pipeline run share the file). WAL + NORMAL sync is OPT-IN with SQLITE_WAL=1:
+    it lets readers and the writer overlap, but it leaves `-wal`/`-shm` files next to the database, and
+    deleting just the `.db` file (a common dev reset) would then replay a stale WAL into the new one.
+    Foreign keys stay as they were - turning them on would change delete semantics the code relies on."""
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _on_connect(dbapi_conn, _record):  # noqa: ANN001
+        path = engine.url.database
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA busy_timeout=30000")
+            wal = (os.environ.get("SQLITE_WAL") or "").strip().lower() in ("1", "true", "yes", "on")
+            if wal and path and path != ":memory:":
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cur.close()
 
 
 def get_session():

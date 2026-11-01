@@ -368,7 +368,8 @@ async def generate_article(params: GenerateArticleInput) -> str:
         generation is idempotent, so retry after fixing the cause).
     """
     submitted = await service.submit_article(params.site_slug, keyword=params.keyword,
-                                       brief={"title": params.keyword})
+                                       brief={"title": params.keyword},
+                                       create_site=_service._may_autocreate_site(params.site_slug))
     if "error" in submitted:
         return _out(submitted)
     return _out(await service.generate_content(submitted["id"],

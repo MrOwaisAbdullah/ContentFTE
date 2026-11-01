@@ -20,6 +20,7 @@ def _isolated_db(monkeypatch):
     except OSError:
         pass
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("SDK_AUTO_CREATE_SITES", "1")   # these tests predate ENG-13 and submit to new slugs
     monkeypatch.setenv("SEO_DATA_PROVIDER", "off")
     import lib.db as db
 

@@ -108,3 +108,19 @@ def test_schema_is_recreated_if_the_sqlite_file_disappears_under_a_live_engine(f
     os.remove(eng.url.database)                       # file vanishes; the cached engine object stays
     fresh_db.init_db()                                # must notice and rebuild, not short-circuit
     assert "api_keys" in inspect(fresh_db.get_engine()).get_table_names()
+
+
+def test_sqlite_waits_for_locks_and_wal_is_opt_in(fresh_db, monkeypatch):
+    from sqlalchemy import text
+    monkeypatch.delenv("SQLITE_WAL", raising=False)
+    fresh_db.init_db()
+    with fresh_db.get_engine().connect() as c:
+        assert c.execute(text("PRAGMA journal_mode")).scalar().lower() != "wal"
+        assert int(c.execute(text("PRAGMA busy_timeout")).scalar()) >= 30000
+    # opt in: a fresh engine picks it up
+    fresh_db.get_engine().dispose()
+    fresh_db._engine = None
+    fresh_db._SessionLocal = None
+    monkeypatch.setenv("SQLITE_WAL", "1")
+    with fresh_db.get_engine().connect() as c:
+        assert c.execute(text("PRAGMA journal_mode")).scalar().lower() == "wal"

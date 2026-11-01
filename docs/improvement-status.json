@@ -23,7 +23,7 @@
     },
     "p5": {
       "name": "improve/phase5-pipeline-adapters",
-      "summary": "/run_workflow repaired, WP inline renderer rewritten (linked images, code spans, nested lists), keyword/overall-score gates made honest, link validator soft-404 + bot-blocked handling, per-site IndexNow keys, bounded idempotency cache, flash-message codes"
+      "summary": "/run_workflow repaired, WP inline renderer rewritten (linked images, code spans, nested lists), keyword/overall-score gates made honest, link validator soft-404 + bot-blocked handling, per-site IndexNow keys, bounded idempotency cache, flash-message codes, keyword/score gates, Sanity revision guard, per-request SSRF guard in the screenshot browser, import without provider keys, no phantom sites from typos"
     }
   },
   "items": {
@@ -108,8 +108,8 @@
       "note": "allow-list defaults to the Discord application owner; set ALLOWED_DISCORD_USER_IDS to add others"
     },
     "SEC-19": {
-      "status": "open",
-      "note": "re-validate every request/redirect in the Playwright screenshot tool (page.route)"
+      "status": "done",
+      "branch": "p5"
     },
     "SEC-20": {
       "status": "open",
@@ -187,8 +187,9 @@
       "note": "unique (site_id, keyword_id), atomic Tavily meter increment, finalize unique constraint"
     },
     "ENG-13": {
-      "status": "open",
-      "note": "stop auto-creating sites on read/submit; validate slugs"
+      "status": "partial",
+      "branch": "p5",
+      "note": "REST/MCP submit refuses unknown sites unless SDK_AUTO_CREATE_SITES=1 or it is the default site; new slugs are validated; read paths in lib/store.py still auto-create"
     },
     "ENG-14": {
       "status": "partial",
@@ -197,8 +198,8 @@
     },
     "ENG-15": {
       "status": "partial",
-      "branch": "p4",
-      "note": "create_all now runs once per engine; Alembic, SQLite WAL/busy_timeout and a UTC TypeDecorator still open"
+      "branch": "p5",
+      "note": "create_all once per engine; SQLite busy timeout (WAL opt-in via SQLITE_WAL=1); Alembic and a UTC TypeDecorator still open"
     },
     "ENG-16": {
       "status": "open",
@@ -206,8 +207,8 @@
     },
     "ENG-17": {
       "status": "partial",
-      "branch": "p4",
-      "note": "limit clamping done; typed patch_meta body, LIKE escaping and bad-settings int() still open"
+      "branch": "p5",
+      "note": "limit clamping and LIKE-wildcard escaping done; typed patch_meta body and bad-settings int() still open"
     },
     "ENG-18": {
       "status": "open",
@@ -287,9 +288,8 @@
       "status": "open"
     },
     "PIPE-17": {
-      "status": "partial",
-      "branch": "p4",
-      "note": "TAVILY key no longer required at import; OPENROUTER_API_KEY is still read at import in blog_agents"
+      "status": "done",
+      "branch": "p5"
     },
     "PIPE-18": {
       "status": "open"
@@ -332,9 +332,8 @@
       "note": "markdown_parser: tables in fences, ==/~~ in code, blockquotes, hr, html_block, relative links"
     },
     "ADP-06": {
-      "status": "partial",
-      "branch": "p4",
-      "note": "429/5xx retry and the UnboundLocalError fixed; ifRevisionID on update_post_content still open"
+      "status": "done",
+      "branch": "p5"
     },
     "ADP-07": {
       "status": "open",
@@ -436,8 +435,9 @@
       "branch": "p1"
     },
     "SEO-15": {
-      "status": "open",
-      "note": "normalize provider difficulty scales; SERP endpoint; real intent classifier"
+      "status": "partial",
+      "branch": "p5",
+      "note": "difficulty normalized to 0-100 across providers; a SERP endpoint and a real intent classifier are still open"
     },
     "SEO-16": {
       "status": "partial",
@@ -467,8 +467,9 @@
       "branch": "p5"
     },
     "SEO-22": {
-      "status": "open",
-      "note": "taxonomy: minimum count before creating a term; noindex thin archives"
+      "status": "partial",
+      "branch": "p5",
+      "note": "derived tags capped (DERIVED_TAGS_MAX, default 3); a minimum article count before a new term is created and noindex on thin archives are still open"
     },
     "SEO-23": {
       "status": "open",
@@ -571,8 +572,9 @@
       "note": "decide whether you need separate logins/roles (owner/reviewer/client) before building accounts and an actor on mutations"
     },
     "CON-14": {
-      "status": "open",
-      "note": "a11y pass: combobox roles for the custom select, aria-live on toasts, keyboard handling"
+      "status": "partial",
+      "branch": "p5",
+      "note": "site-select is now a keyboard-operable listbox (roles, arrow keys, focus return); toasts already announce; the rest of the console has not been audited with a screen reader and this is not browser-verified"
     },
     "CON-15": {
       "status": "partial",

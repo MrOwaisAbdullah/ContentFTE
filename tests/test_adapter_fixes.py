@@ -315,3 +315,107 @@ def test_an_inflated_overall_cannot_outrun_its_sub_scores():
     honest = EvalReport(overall=91, sub_scores=dict.fromkeys(subs, 91))
     assert check_gate(honest)["publish"] is True
     assert effective_overall(EvalReport(overall=95, sub_scores={"accuracy": 99})) == 95   # incomplete: unchanged
+
+
+# ---- SEO-15 / ENG-17 --------------------------------------------------------------------------------
+def test_provider_difficulty_is_on_one_scale():
+    from lib.seo_provider import normalize_difficulty as nd
+    assert nd(0.42, scale=1) == 42.0 and nd(42) == 42.0          # DataForSEO 0-1 vs OpenSEO 0-100
+    assert nd(150) == 100.0 and nd(-3) == 0.0 and nd(None) == 0.0 and nd("x") == 0.0
+
+
+def test_article_search_treats_percent_and_underscore_as_literals(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'like.db'}")
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+    from sdk import service
+    service.init()
+    service.upsert_site("s", "S", "custom", "https://s.test", {})
+    for kw in ("100% organic", "plain title", "a_b snake"):
+        service.submit_article("s", keyword=kw)
+    titles = lambda q: {a["title"] or a.get("keyword") for a in service.list_articles(q=q)["articles"]}
+    assert len(service.list_articles(q="%")["articles"]) == 1          # only "100% organic", not everything
+    assert len(service.list_articles(q="_")["articles"]) == 1
+    db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+
+
+# ---- PIPE-17: importing the agents must not need provider keys ------------------------------------------
+def test_agents_import_without_provider_keys():
+    import subprocess, sys, textwrap
+    code = textwrap.dedent("""
+        import os, dotenv
+        dotenv.load_dotenv = lambda *a, **k: False
+        for k in ('OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'TAVILY_API_KEY'):
+            os.environ.pop(k, None)
+        import blog_agent.blog_agents
+        print('IMPORT-OK')
+    """)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert "IMPORT-OK" in out.stdout, out.stderr[-600:]
+
+
+def _revision_adapter(monkeypatch, *, rev, mutate_status):
+    import lib.sanity_adapter as sa
+    ad = sa.SanityAdapter.__new__(sa.SanityAdapter)
+    ad.dataset = "production"
+    ad._markdown_to_processed_blocks = lambda md: [{"_type": "block"}]
+    ad._build_query_endpoint = lambda q, params=None, perspective="raw": "/data/query/production"
+    sent = []
+
+    class Resp:
+        def __init__(self, status, body=None):
+            self.status_code, self._body = status, body or {}
+
+        def json(self):
+            return self._body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import requests
+                err = requests.exceptions.HTTPError("boom")
+                err.response = self
+                raise err
+
+    def fake(method, url, data=None, **kw):
+        if method == "GET":
+            return Resp(200, {"result": {"_rev": rev} if rev else None})
+        sent.append(data)
+        return Resp(mutate_status, {"error": "conflict"})
+
+    ad._make_request = fake
+    return ad, sent
+
+
+def test_sanity_content_patch_is_guarded_by_the_revision_it_read(monkeypatch):
+    ad, sent = _revision_adapter(monkeypatch, rev="rev-1", mutate_status=200)
+    assert ad.update_post_content("post-x", "# T")["success"] is True
+    assert sent[0]["mutations"][0]["patch"]["ifRevisionID"] == "rev-1"
+
+
+def test_sanity_content_patch_reports_a_concurrent_edit_instead_of_overwriting(monkeypatch):
+    ad, _ = _revision_adapter(monkeypatch, rev="rev-1", mutate_status=409)
+    out = ad.update_post_content("post-x", "# T")
+    assert out["success"] is False and out["conflict"] is True and "nothing was overwritten" in out["error"]
+
+
+def test_an_unreadable_revision_does_not_block_the_edit(monkeypatch):
+    ad, sent = _revision_adapter(monkeypatch, rev=None, mutate_status=200)
+    assert ad.update_post_content("post-x", "# T")["success"] is True
+    assert "ifRevisionID" not in sent[0]["mutations"][0]["patch"]
+
+
+# ---- SEO-22: derived tags are capped so they do not become thin archives -----------------------------------
+def test_derived_tags_are_capped_but_supplied_tags_are_not(monkeypatch):
+    from lib import taxonomy as tax
+    monkeypatch.delenv("DERIVED_TAGS_MAX", raising=False)
+    derived = tax.derive_taxonomy(keyword="best crm software for small agencies", title="")["tags"]
+    assert 1 <= len(derived) <= 3
+    supplied = tax.derive_taxonomy(keyword="x", brief={"tags": ["a", "b", "c", "d", "e"]})["tags"]
+    assert supplied == ["a", "b", "c", "d", "e"]
+    monkeypatch.setenv("DERIVED_TAGS_MAX", "0")
+    assert tax.derive_taxonomy(keyword="best crm software")["tags"] == []

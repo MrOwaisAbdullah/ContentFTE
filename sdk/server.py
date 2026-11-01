@@ -176,8 +176,8 @@ def submit_article(
         replay = _idempotency.get(cache_key)
         if replay is not None:
             return replay
-    result = service.submit_article(site_slug, keyword=body.keyword or "",
-                                    brief=body.brief)
+    result = service.submit_article(site_slug, keyword=body.keyword or "", brief=body.brief,
+                                    create_site=service._may_autocreate_site(site_slug))
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     if body.instant and "id" in result:

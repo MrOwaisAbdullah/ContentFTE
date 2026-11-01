@@ -20,6 +20,7 @@ def _isolated_db(monkeypatch):
     except OSError:
         pass
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("SDK_AUTO_CREATE_SITES", "1")   # these tests predate ENG-13 and submit to new slugs
     monkeypatch.delenv("SDK_MASTER_KEY", raising=False)
     monkeypatch.delenv("WP_BASE_URL", raising=False)
     monkeypatch.delenv("WP_USERNAME", raising=False)

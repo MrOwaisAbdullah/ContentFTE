@@ -313,3 +313,33 @@ def test_a_replay_is_a_copy_so_one_handler_cannot_corrupt_later_replays():
     got = c.get("k")
     got["instant_triggered"] = True
     assert c.get("k") == {"id": 1}
+
+
+# ------------------------------------------------------------------ ENG-13: no phantom tenants from a typo
+def test_submit_refuses_an_unknown_site_when_the_caller_forbids_creation(svc):
+    out = svc.submit_article("blgo", keyword="x", create_site=False)           # what REST/MCP pass by default
+    assert "error" in out and "not found" in out["error"]
+    from lib.db import Site, get_session
+    s = get_session()
+    try:
+        assert s.query(Site).filter_by(slug="blgo").count() == 0
+    finally:
+        s.close()
+    assert "id" in svc.submit_article("s", keyword="ok", create_site=False)    # a real site still works
+
+
+def test_site_slugs_are_validated_on_creation(svc):
+    for bad in ("Has Space", "a/b", "../x", "UPPER", "-lead", "x" * 64, ""):
+        assert not svc.valid_site_slug(bad), bad
+        assert "error" in svc.submit_article(bad, keyword="x") or bad == ""
+        assert "error" in svc.upsert_site(bad, "n", "custom", "https://x.test", {}) or bad == ""
+    assert svc.valid_site_slug("good-site-2")
+
+
+def test_the_entry_points_opt_in_only_for_the_default_site_or_by_env(svc, monkeypatch):
+    from lib.store import DEFAULT_SITE_SLUG
+    monkeypatch.delenv("SDK_AUTO_CREATE_SITES", raising=False)
+    assert svc._may_autocreate_site(DEFAULT_SITE_SLUG) is True
+    assert svc._may_autocreate_site("anything-else") is False
+    monkeypatch.setenv("SDK_AUTO_CREATE_SITES", "1")
+    assert svc._may_autocreate_site("anything-else") is True

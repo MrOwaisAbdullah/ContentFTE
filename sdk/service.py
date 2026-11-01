@@ -265,6 +265,9 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
         created = False
         updated = False
         if site is None:
+            if not valid_site_slug(slug):
+                return _err(f"invalid site slug {slug!r}",
+                            "use lower-case letters, digits and hyphens (max 63 chars)")
             site = Site(slug=slug, name=name or slug.title(),
                         site_type=site_type or "custom", base_url=base_url,
                         settings=settings or {})
@@ -437,9 +440,11 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
         if (status or "").strip():
             stmt = stmt.where(Article.status == status.strip())
         if (q or "").strip():
-            needle = f"%{(q or '').strip()}%"
+            # `%` / `_` / `\` in the search text are literals, not wildcards (ENG-17)
+            esc = (q or "").strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            needle = f"%{esc}%"
             stmt = stmt.where(
-                (Article.title.ilike(needle)) | (Article.slug.ilike(needle))
+                (Article.title.ilike(needle, escape="\\")) | (Article.slug.ilike(needle, escape="\\"))
             )
         if has_images:
             cand_rows = s.execute(
@@ -1057,17 +1062,47 @@ async def run_instant_pipeline(article_id: int) -> dict:
         return {"id": article_id, "error": str(e)}
 
 
-def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None) -> dict:
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62})$")
+
+
+def valid_site_slug(slug: str) -> bool:
+    """Lower-case letters, digits and hyphens, 1-63 chars, not starting with a hyphen. The slug is used in
+    URLs, file names and cache keys, so anything else (spaces, slashes, unicode tricks) is refused (ENG-13)."""
+    return bool(_SLUG_RE.match(slug or ""))
+
+
+def _may_autocreate_site(slug: str) -> bool:
+    """Submitting an article may create its site only for the instance's own default site, or when the
+    operator opted in with SDK_AUTO_CREATE_SITES=1. Otherwise a typo ('blgo' for 'blog') silently created a
+    phantom tenant and the article vanished from the real one."""
+    from lib.store import DEFAULT_SITE_SLUG
+    if (os.environ.get("SDK_AUTO_CREATE_SITES") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return slug == DEFAULT_SITE_SLUG
+
+
+def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None,
+                   create_site: bool = True) -> dict:
     """Create an article in 'briefed' state. Idempotent per (site, keyword).
 
     §5.16 lineage: when a keyword is given, the article is bound to its ledger
     row (resolved or created), so "zero articles without a keyword row" holds
-    for anything submitted through the SDK/MCP."""
+    for anything submitted through the SDK/MCP.
+
+    `create_site=False` (what the REST and MCP entry points pass unless `_may_autocreate_site`) makes an
+    unknown slug an error instead of inventing a tenant. Internal callers keep the old behaviour."""
     init_db()
     s = get_session()
     try:
         site = _site_by_slug(s, site_slug)
         if site is None:
+            if not valid_site_slug(site_slug):
+                return _err(f"invalid site slug {site_slug!r}",
+                            "use lower-case letters, digits and hyphens (max 63 chars)")
+            if not create_site:
+                return _err(f"site '{site_slug}' not found",
+                            "create it first (upsert_site / console Sites), or check the spelling; "
+                            "set SDK_AUTO_CREATE_SITES=1 to restore create-on-submit")
             site = Site(slug=site_slug, name=site_slug.title())
             s.add(site)
             s.commit()
