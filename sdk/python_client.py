@@ -6,6 +6,10 @@ import time
 import requests
 
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+# Methods that are safe to repeat. A POST is only repeated after an *ambiguous* failure (timeout, 5xx)
+# when it carries an Idempotency-Key, because otherwise "the request may have succeeded" means a retry
+# can publish or generate twice.
+IDEMPOTENT_METHODS = {"GET", "HEAD", "PUT", "DELETE", "OPTIONS"}
 
 
 class ContentFTEClient:
@@ -37,22 +41,37 @@ class ContentFTEClient:
         delay = self.backoff
         last_exc: Exception | None = None
         eff_timeout = self.timeout if timeout is None else timeout
+        repeatable = method.upper() in IDEMPOTENT_METHODS or "Idempotency-Key" in hdrs
         for attempt in range(1, self.max_retries + 1):
             try:
                 resp = requests.request(method, url, json=json, headers=hdrs,
                                         timeout=eff_timeout)
-                if resp.status_code in RETRY_STATUSES and attempt < self.max_retries:
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-                resp.raise_for_status()
-                return resp.json()
-            except requests.RequestException as exc:
+            except requests.RequestException as exc:     # no response: timeout / connection error
                 last_exc = exc
-                if attempt >= self.max_retries:
+                if not repeatable or attempt >= self.max_retries:
                     break
                 time.sleep(delay)
                 delay *= 2
+                continue
+            # 429 means "not processed, slow down", so it is always safe to repeat; other transient
+            # statuses only when repeating cannot duplicate work.
+            retryable = resp.status_code == 429 or (resp.status_code in RETRY_STATUSES and repeatable)
+            if retryable and attempt < self.max_retries:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            if resp.status_code >= 400:
+                # A client error (401 bad key, 404, 409 gate/in-progress, 422 ...) will not change on
+                # retry, and used to be retried three times with backoff. Surface the server's reason.
+                detail = ""
+                try:
+                    detail = str((resp.json() or {}).get("detail", ""))
+                except ValueError:
+                    detail = (resp.text or "")[:200]
+                raise requests.HTTPError(
+                    f"{method} {path} -> {resp.status_code}" + (f": {detail}" if detail else ""),
+                    response=resp)
+            return resp.json()
         raise last_exc  # type: ignore[misc]
 
     def submit_article(self, site_slug: str, keyword: str = "", brief: dict | None = None,

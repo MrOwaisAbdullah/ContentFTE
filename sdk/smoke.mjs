@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRequire } from "node:module";
 import { ContentFTEArticle } from "./dist/renderer.js";
-import { ContentFTEClient } from "./dist/contentfte.js";
+import { ContentFTEClient, ContentFTEError } from "./dist/contentfte.js";
 
 const failures = [];
 function check(ok, label) {
@@ -84,10 +84,80 @@ const fallback = renderToStaticMarkup(
 );
 check(fallback.includes("<strong>TL;DR</strong> fallback html body"), "empty markdown falls back to payload.html");
 
+// the html fallback is sanitized exactly like markdown (plan SEC-06): hostile engine HTML must not reach the page
+const hostile = renderToStaticMarkup(
+  createElement(ContentFTEArticle, {
+    content: {
+      ...payload,
+      markdown: "",
+      html: [
+        '<p>ok <a href="javascript:alert(1)">bad link</a> <a href="https://example.com/x">good link</a></p>',
+        '<img src="x" onerror="alert(2)">',
+        '<script>alert(3)</script>',
+        '<p onclick="alert(4)">click</p>',
+        '<iframe src="https://evil.example"></iframe>',
+      ].join(""),
+    },
+  }),
+);
+check(!/javascript:/i.test(hostile), "html fallback: javascript: href removed");
+check(!/onerror|onclick/i.test(hostile), "html fallback: inline event handlers removed");
+check(!hostile.includes("alert(3)") && !/<script>alert/.test(hostile), "html fallback: <script> dropped");
+check(!/<iframe/i.test(hostile), "html fallback: <iframe> dropped");
+check(hostile.includes("https://example.com/x") && hostile.includes("good link"), "html fallback: safe links and text survive");
+
 // client entry (ESM)
 const client = new ContentFTEClient("https://engine.example.com", "site-key");
 check(typeof client.submitArticle === "function" && typeof client.getContent === "function", "ContentFTEClient methods present");
 check(typeof client.getContent === "function" && typeof client.listSites === "function", "client listSites/getContent present");
+
+// ---- retry rules (plan ENG-19): never retry what cannot succeed, never repeat what may have worked ----
+const realFetch = globalThis.fetch;
+const jsonRes = (status, body) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+async function withFetch(script, fn) {
+  const calls = [];
+  let i = 0;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method, headers: init?.headers, hasSignal: Boolean(init?.signal) });
+    const out = script[Math.min(i++, script.length - 1)];
+    if (out instanceof Error) throw out;
+    return out;
+  };
+  try {
+    return { calls, result: await fn() };
+  } catch (error) {
+    return { calls, error };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+const quick = () => new ContentFTEClient("https://engine.test", "k", 3, 1);
+
+for (const status of [401, 404, 409, 422]) {
+  const r = await withFetch([jsonRes(status, { detail: "quality gate failed: 2 claims" })], () => quick().getArticle(1));
+  check(r.calls.length === 1, `${status} is not retried (was 3 attempts)`);
+  check(r.error instanceof ContentFTEError && r.error.status === status, `${status} -> ContentFTEError with status`);
+  check(String(r.error?.message).includes("quality gate failed"), `${status} keeps the server's reason`);
+}
+
+let r = await withFetch([jsonRes(503, {}), jsonRes(502, {}), jsonRes(200, { id: 1 })], () => quick().getArticle(1));
+check(r.calls.length === 3 && r.result?.id === 1, "GET retries transient 5xx then succeeds");
+
+r = await withFetch([jsonRes(503, {}), jsonRes(200, { status: "published" })], () => quick().publishArticle(7));
+check(r.calls.length === 1 && r.error instanceof ContentFTEError, "POST without an idempotency key is NOT repeated after a 5xx");
+
+r = await withFetch([new Error("network down"), jsonRes(200, {})], () => quick().generateContent(7));
+check(r.calls.length === 1 && String(r.error?.message) === "network down", "POST is NOT repeated after a network error/timeout");
+
+r = await withFetch([new Error("timeout"), jsonRes(503, {}), jsonRes(200, { id: 5 })], () => quick().submitArticle("s", "k", {}, "idem-1"));
+check(r.calls.length === 3 && r.result?.id === 5, "POST with an Idempotency-Key is safe to repeat");
+
+r = await withFetch([jsonRes(429, {}), jsonRes(200, { status: "published" })], () => quick().publishArticle(7));
+check(r.calls.length === 2 && r.result?.status === "published", "429 is always repeated (request was not processed)");
+
+r = await withFetch([jsonRes(200, { id: 1 })], () => quick().getArticle(1));
+check(r.calls[0].hasSignal, "every request carries a timeout signal");
 
 // CJS entry still loads
 const require = createRequire(import.meta.url);

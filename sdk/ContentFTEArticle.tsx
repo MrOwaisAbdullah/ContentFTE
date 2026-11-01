@@ -27,7 +27,7 @@
  *
  * Works in React Server Components (no hooks, no "use client" directive).
  * If `markdown` is empty but `html` is present, falls back to the
- * server-rendered html field.
+ * server-rendered html field — through the SAME rehype-sanitize pipeline (never raw).
  */
 import React from "react";
 import ReactMarkdown from "react-markdown";
@@ -164,9 +164,14 @@ export function ContentFTEFaq({ schema }: { schema?: ContentFTESchema }) {
 }
 
 export function ContentFTEArticle({ content, siteOrigin, className }: ContentFTEArticleProps) {
-  const body = content.markdown ? (
+  // One sanitizing pipeline for BOTH sources. The html fallback used to go straight into
+  // dangerouslySetInnerHTML, so a `javascript:` link or an inline handler in engine HTML reached the page
+  // unfiltered even though the markdown path was sanitized (plan SEC-06). HTML is valid markdown input:
+  // rehype-raw parses it and rehype-sanitize applies the same allow-list.
+  const source = content.markdown || content.html || "";
+  const body = source ? (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkHighlight]}
+      remarkPlugins={content.markdown ? [remarkGfm, remarkHighlight] : [remarkGfm]}
       rehypePlugins={[
         rehypeRaw,
         [rehypeSanitize, sanitizeSchema],
@@ -174,11 +179,8 @@ export function ContentFTEArticle({ content, siteOrigin, className }: ContentFTE
       ]}
       components={buildComponents(siteOrigin)}
     >
-      {content.markdown}
+      {source}
     </ReactMarkdown>
-  ) : content.html ? (
-    // engine-rendered HTML fallback (markdown_to_wp_html, blocks=False)
-    <div dangerouslySetInnerHTML={{ __html: content.html }} />
   ) : null;
 
   return (

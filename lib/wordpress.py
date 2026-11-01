@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import html
+from urllib.parse import quote
+import logging
 import os
 from dataclasses import dataclass, field
 
@@ -32,6 +35,8 @@ import requests
 
 from lib import wp_render
 from lib.geo import article_schema, faq_schema as build_faq_schema, next_available_slug
+
+logger = logging.getLogger(__name__)
 from lib.link_validator import validate_links
 
 
@@ -205,13 +210,30 @@ class WordPressConnector:
             slug = p.get("slug", "")
             links.append({
                 "title": (p.get("title") or {}).get("rendered", ""),
-                "url": f"{self.cfg.base_url}/{slug}",
+                # `link` is the post's real permalink; base/slug is only right for %postname% structures.
+                "url": p.get("link") or f"{self.cfg.base_url}/{slug}",
                 "slug": slug,
             })
         return links
 
-    def existing_slugs(self, per_page: int = 100) -> set[str]:
-        return {p.get("slug", "") for p in self.list_posts(per_page=per_page)}
+    def existing_slugs(self, per_page: int = 100, max_pages: int = 5) -> set[str]:
+        """Slugs already taken. Pages through up to `per_page * max_pages` posts and includes drafts,
+        pending, scheduled and private ones -- WP reserves those slugs too, and reading only the first 100
+        PUBLISHED posts let a collision through on any site with more (plan ADP-10)."""
+        slugs: set[str] = set()
+        for page in range(1, max_pages + 1):
+            resp = self.session.get(
+                self._url("/posts"),
+                params={"per_page": per_page, "page": page, "status": "publish,draft,pending,future,private"},
+                timeout=self.cfg.timeout)
+            if resp.status_code == 400 and page > 1:       # past the last page
+                break
+            resp.raise_for_status()
+            batch = resp.json()
+            slugs |= {p.get("slug", "") for p in batch}
+            if len(batch) < per_page:
+                break
+        return slugs
 
     # --- taxonomy ---
 
@@ -219,10 +241,23 @@ class WordPressConnector:
         """kind: categories|tags. Created on demand from brief mapping."""
         resp = self.session.get(self._url(f"/{kind}"), params={"search": name}, timeout=self.cfg.timeout)
         resp.raise_for_status()
+        # WordPress returns term names HTML-encoded ("Tips &amp; Tricks"), so compare unescaped --
+        # otherwise an existing "Q&A" is never matched, the create below 400s, and the whole publish
+        # aborted after the media had already been uploaded (plan ADP-03).
+        want = html.unescape(name or "").strip().lower()
         for term in resp.json():
-            if (term.get("name", "") or "").lower() == name.lower():
+            if html.unescape(term.get("name", "") or "").strip().lower() == want:
                 return term["id"]
         created = self.session.post(self._url(f"/{kind}"), json={"name": name}, timeout=self.cfg.timeout)
+        if created.status_code == 400:
+            # Lost a race with another publish (or a near-match): WP says the term exists and which one.
+            try:
+                body = created.json() or {}
+            except ValueError:
+                body = {}
+            existing = (body.get("data") or {}).get("term_id")
+            if body.get("code") == "term_exists" and existing:
+                return int(existing)
         created.raise_for_status()
         return created.json()["id"]
 
@@ -272,22 +307,30 @@ class WordPressConnector:
     # --- media ---
 
     def upload_media(self, path: str, alt: str = "") -> dict:
-        mime, _ = mimetypes.guess_type(path)
+        from lib import image_format
+
         with open(path, "rb") as fh:
             data = fh.read()
+        # Trust the bytes, not the extension: image generators have produced JPEGs saved as .png.
+        mime = image_format.sniff_mime(data, fallback=mimetypes.guess_type(path)[0] or "image/jpeg")
         filename = os.path.basename(path)
+        # RFC 6266: a quoted ASCII fallback plus a percent-encoded UTF-8 name. The old unquoted
+        # `filename=<name>` broke on spaces, quotes and non-ASCII characters (plan ADP-12).
+        ascii_name = filename.encode("ascii", "ignore").decode().replace('"', "").strip() or "image"
+        disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
         resp = self.session.post(
             self._url("/media"),
-            headers={"Content-Disposition": f"attachment; filename={filename}",
-                      "Content-Type": mime or "image/jpeg"},
+            headers={"Content-Disposition": disposition, "Content-Type": mime},
             data=data,
             timeout=self.cfg.timeout,
         )
         resp.raise_for_status()
         media = resp.json()
         if alt:
-            self.session.post(self._url(f"/media/{media['id']}"),
-                              json={"alt_text": alt}, timeout=self.cfg.timeout)
+            alt_resp = self.session.post(self._url(f"/media/{media['id']}"),
+                                         json={"alt_text": alt}, timeout=self.cfg.timeout)
+            if not alt_resp.ok:   # was unchecked: images silently shipped with no alt text
+                logger.warning("WP media %s: alt text not saved (HTTP %s)", media["id"], alt_resp.status_code)
         return {"id": media["id"], "url": media.get("source_url", "")}
 
     # --- guards ---

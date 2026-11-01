@@ -93,7 +93,8 @@ def _check_site_key(x_site_key: str | None) -> str:
 
 # Service error dicts may carry a machine-readable `code`; map it to the right HTTP status instead of
 # the generic 404 (the article exists -- it's the request that can't be honoured).
-_CODE_STATUS = {"budget_exceeded": 402, "gate_failed": 409}
+_CODE_STATUS = {"budget_exceeded": 402, "gate_failed": 409,
+                "publish_in_progress": 409, "generation_in_progress": 409}
 
 
 def _resolve(data: dict) -> dict:
@@ -233,8 +234,8 @@ async def generate_article(article_id: int, body: ArticleGenerate | None = None,
     result = await service.generate_content(
         article_id, regenerate=bool(body and body.regenerate))
     if "error" in result:
-        if result.get("code") == "budget_exceeded":
-            raise HTTPException(status_code=402, detail=result["error"])
+        if result.get("code") in _CODE_STATUS:
+            raise HTTPException(status_code=_CODE_STATUS[result["code"]], detail=result["error"])
         if "not found" in result["error"]:
             raise HTTPException(status_code=404, detail=result["error"])
         if result["error"].startswith(("generation failed", "agent returned",
@@ -279,7 +280,7 @@ def publish_article(article_id: int, body: ArticlePublish | None = None,
         err_msg = str(result["error"])
         if "cadence limit reached" in err_msg.lower():
             raise HTTPException(status_code=429, detail=result["error"])
-        if "requires 'approved'" in err_msg:
+        if "requires 'approved'" in err_msg or result.get("code") == "publish_in_progress":
             raise HTTPException(status_code=409, detail=result["error"])
         raise HTTPException(status_code=404, detail=result["error"])
     return result

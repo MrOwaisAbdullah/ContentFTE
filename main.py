@@ -206,7 +206,18 @@ async def root():
 
 @app.get("/health")
 async def health():
+    """Liveness: the process is up. Use /ready to know whether it can serve requests."""
     return {"status": "OK", "message": "The server is healthy"}
+
+
+@app.get("/ready")
+def ready():
+    """Readiness (plan ENG-21): 200 only when the database answers and requests can be authenticated;
+    503 otherwise, with the reason. Unauthenticated on purpose (orchestrators call it) and secret-free."""
+    from fastapi.responses import JSONResponse
+    from sdk.health import readiness
+    result = readiness()
+    return JSONResponse(result, status_code=200 if result["ready"] else 503)
 
 # --- Constants for fallback runner ---
 MAX_RETRIES = 10 # Adjust as needed based on agent complexity

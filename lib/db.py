@@ -346,8 +346,30 @@ def get_session():
     return _SessionLocal()
 
 
+def _schema_ready(eng) -> bool:
+    """True when `init_db` already created the tables for THIS engine and they can still be there.
+
+    A SQLite file that has been deleted underneath a running process (a dev wiping the database, or a
+    test fixture removing its file and leaving the cached engine behind) invalidates the flag: SQLite
+    quietly makes a new EMPTY file on the next connect, and "tables already created" would then be a lie
+    that surfaces as `no such table`. The old every-call `create_all` self-healed this by accident."""
+    if not getattr(eng, "_cfte_schema_ready", False):
+        return False
+    if eng.dialect.name == "sqlite":
+        path = eng.url.database
+        if path and path != ":memory:" and not os.path.exists(path):
+            return False
+    return True
+
+
 def init_db() -> None:
+    """Create missing tables (additive). Runs once per engine: it used to run `create_all` -- a dozen
+    catalogue queries -- on EVERY service call, which on a remote Postgres (Neon) added a round-trip
+    storm to each request (plan ENG-15). A new engine (restart, or a test that resets `_engine`)
+    re-checks; there is still no Alembic, so column changes need the migration scripts."""
     eng = get_engine()
+    if _schema_ready(eng):
+        return
     Base.metadata.create_all(eng)
     if eng.dialect.name == "sqlite":
         with eng.connect() as conn:
@@ -358,6 +380,7 @@ def init_db() -> None:
                     conn.commit()
             except Exception:
                 pass
+    eng._cfte_schema_ready = True
 
 
 def explain_missing_site(session, site_slug: str = "") -> str:

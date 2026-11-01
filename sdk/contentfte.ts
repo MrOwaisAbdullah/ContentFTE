@@ -15,6 +15,20 @@
  */
 
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+/** Methods that are safe to repeat; a POST only is when it carries an Idempotency-Key. */
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE", "OPTIONS"]);
+
+/** A non-2xx answer from the engine. `status` and the server's `detail` are kept so callers can react. */
+export class ContentFTEError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly detail: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ContentFTEError";
+  }
+}
 
 /** One row from `listArticles`. */
 export interface ArticleSummary {
@@ -110,6 +124,7 @@ export class ContentFTEClient {
     private siteKey: string,
     private maxRetries = 3,
     private backoffMs = 500,
+    private timeoutMs = 30_000,
   ) {}
 
   private headers(extra: Record<string, string> = {}) {
@@ -120,29 +135,56 @@ export class ContentFTEClient {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async request(method: string, path: string, body?: unknown, extra: Record<string, string> = {}) {
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    extra: Record<string, string> = {},
+    timeoutMs = this.timeoutMs,
+  ) {
     let delay = this.backoffMs;
     let lastErr: unknown;
+    const repeatable = IDEMPOTENT_METHODS.has(method.toUpperCase()) || "Idempotency-Key" in extra;
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      let res: Response;
       try {
-        const res = await fetch(`${this.baseUrl}${path}`, {
+        res = await fetch(`${this.baseUrl}${path}`, {
           method,
           headers: this.headers(extra),
           body: body === undefined ? undefined : JSON.stringify(body),
+          // A hung engine must not hang the caller (and with it a server-rendered page) forever.
+          signal: AbortSignal.timeout(timeoutMs),
         });
-        if (RETRY_STATUSES.has(res.status) && attempt < this.maxRetries) {
-          await this.sleep(delay);
-          delay *= 2;
-          continue;
-        }
-        if (!res.ok) throw new Error(`${method} ${path} failed: ${res.status}`);
-        return res.json();
       } catch (err) {
+        // No response at all (timeout / network): repeat only when repeating cannot duplicate work.
         lastErr = err;
-        if (attempt >= this.maxRetries) break;
+        if (!repeatable || attempt >= this.maxRetries) break;
         await this.sleep(delay);
         delay *= 2;
+        continue;
       }
+      // 429 = "not processed, slow down" (always safe to repeat); other transient statuses only when repeatable.
+      const retryable = res.status === 429 || (RETRY_STATUSES.has(res.status) && repeatable);
+      if (retryable && attempt < this.maxRetries) {
+        await this.sleep(delay);
+        delay *= 2;
+        continue;
+      }
+      if (!res.ok) {
+        // 4xx will not change on retry (this used to retry 401/404/409/422 three times). Keep the reason.
+        let detail = "";
+        try {
+          detail = String(((await res.json()) as { detail?: unknown })?.detail ?? "");
+        } catch {
+          /* non-JSON error body */
+        }
+        throw new ContentFTEError(
+          res.status,
+          detail,
+          `${method} ${path} failed: ${res.status}${detail ? ` - ${detail}` : ""}`,
+        );
+      }
+      return res.json();
     }
     throw lastErr;
   }
@@ -161,7 +203,8 @@ export class ContentFTEClient {
   }
 
   async generateContent(id: number, regenerate = false) {
-    return this.request("POST", `/sdk/v1/articles/${id}/generate`, { regenerate });
+    // LLM generation routinely takes 30-120 s, so it gets a much longer timeout than reads.
+    return this.request("POST", `/sdk/v1/articles/${id}/generate`, { regenerate }, {}, 180_000);
   }
 
   async approveArticle(id: number, approved = true, note = "") {

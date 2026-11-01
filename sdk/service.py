@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -40,6 +41,7 @@ from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib import quality_gate
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 from lib.secrets_redact import merge_settings, redact_settings
+from lib.safe_fetch import safe_get
 from lib.store import article_scores
 from lib.taxonomy import derive_taxonomy
 
@@ -688,6 +690,7 @@ def list_queue(site_slug: str, status: str = "", limit: int = 100) -> dict:
     call covers both the queue screen and the dashboard counters. Read-only:
     claiming stays an explicit action (get_brief / submit_article)."""
     init_db()
+    limit = _clamp_limit(limit, 100)
     s = get_session()
     try:
         site = _site_by_slug(s, site_slug)
@@ -747,6 +750,7 @@ def list_research(site_slug: str, status: str = "", limit: int = 100) -> dict:
     subject, intent, volume, difficulty, content summary, primary/secondary
     keywords, and Generated (= a brief exists in the snapshot)."""
     init_db()
+    limit = _clamp_limit(limit, 100)
     s = get_session()
     try:
         site = _site_by_slug(s, site_slug)
@@ -781,6 +785,7 @@ def list_briefs(site_slug: str, limit: int = 100) -> dict:
     worksheet shape: brief content, FAQs, sources, summary, secondary
     keywords). Newest first; limit applies after the filter."""
     init_db()
+    limit = _clamp_limit(limit, 100)
     s = get_session()
     try:
         site = _site_by_slug(s, site_slug)
@@ -892,6 +897,7 @@ def list_logs(kind: str = "", limit: int = 200, offset: int = 0, site_slug: str 
     `offset` pages whichever list is surfaced — audit when `kind` selects
     one, the cost ledger when `kind` is "cost" or empty."""
     init_db()
+    limit = _clamp_limit(limit, 200)
     s = get_session()
     try:
         site, bad = _scope_site(s, site_slug)
@@ -1133,6 +1139,16 @@ def _content_sections(md: str) -> list[dict]:
     return out
 
 
+def _clamp_limit(limit: Any, default: int = 100, hi: int = 500) -> int:
+    """A usable page size. An unclamped `limit` was a footgun: a negative value means "no limit" on
+    SQLite and a 500 on Postgres, and a huge one loads the whole table (plan ENG-17)."""
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        n = default
+    return max(1, min(n, hi))
+
+
 def _stale_year_re(now: datetime | None = None) -> "re.Pattern[str]":
     """Matches 'in <past year>' (2010 .. last year). The pattern used to be hard-coded to
     20(1\\d|2[0-5]), so from 2026 on it never flagged a stale 'in 2025'/'in 2026' again."""
@@ -1284,7 +1300,7 @@ def test_wp_connection(site_slug: str, wp_config: dict | None = None) -> dict:
 
         url = f"{cfg.base_url}/wp-json/wp/v2/users/me"
         try:
-            r = requests.get(url, headers=cfg.auth_header(), timeout=8)
+            r = safe_get(url, headers=cfg.auth_header(), timeout=8, max_bytes=1024 * 1024)
             if r.status_code == 200:
                 data = r.json() or {}
                 return {
@@ -1704,6 +1720,20 @@ async def _default_generate(brief: dict) -> str:
 
 async def generate_content(article_id: int, *, generate_fn=None,
                            regenerate: bool = False) -> dict:
+    """One generation per article at a time (a concurrent call returns `code: generation_in_progress`
+    instead of paying for a second LLM run that would overwrite the first). See `_generate_content_locked`."""
+    if not _claim("generate", article_id):
+        return {"error": f"article {article_id} is already being generated",
+                "next": "wait for the current generation to finish, then check the article",
+                "code": "generation_in_progress"}
+    try:
+        return await _generate_content_locked(article_id, generate_fn=generate_fn, regenerate=regenerate)
+    finally:
+        _release("generate", article_id)
+
+
+async def _generate_content_locked(article_id: int, *, generate_fn=None,
+                                   regenerate: bool = False) -> dict:
     """§5.5/§5.13 — real generation behind generate_article: briefed → drafted.
 
     Composes the brief in-memory (submitted brief + ledger research + intent
@@ -2050,6 +2080,12 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         if art is None:
             return _err(f"article {article_id} not found", "run generate_article first")
 
+        if approved and art.status == "published":
+            # Approving a live article used to knock it back to 'approved' (and the next publish would
+            # then take the dedupe path). It is already past this gate: report, change nothing.
+            return {"id": art.id, "status": art.status, "event": "article.published",
+                    "note": "already published; status unchanged"}
+
         gate: dict | None = None
         overridden: list[str] = []
         if approved:
@@ -2339,6 +2375,7 @@ def mine_feedback(site_slug="", min_rows=5):
 
 def list_review_feedback(site_slug="", limit=100):
     init_db()
+    limit = _clamp_limit(limit, 100)
     s = get_session()
     try:
         site, bad = _scope_site(s, site_slug, require_in_shared=True)
@@ -2492,7 +2529,7 @@ def _download_image(url: str) -> str | None:
 
         from lib import image_format
 
-        resp = requests.get(url, timeout=30)
+        resp = safe_get(url, timeout=30)
         resp.raise_for_status()
         suffix = image_format.sniff_ext(resp.content, fallback=".jpg")
         with NamedTemporaryFile(delete=False, suffix=suffix) as fh:
@@ -2664,8 +2701,46 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
     return out
 
 
+_inflight_lock = threading.Lock()
+_inflight: set[tuple[str, int]] = set()
+
+
+def _claim(kind: str, article_id: int) -> bool:
+    """Take the single-flight slot for (operation, article). False if one is already running in this
+    process. A double-clicked Publish, or a console retry while the first call is still in flight,
+    used to run twice and create two WordPress posts (the id was only saved AFTER the remote create);
+    two concurrent generations both ran the LLM and both wrote (plan ENG-03 / ENG-04). Per-process:
+    a multi-worker deployment still needs the DB-level claim from the plan's later phases."""
+    with _inflight_lock:
+        key = (kind, int(article_id))
+        if key in _inflight:
+            return False
+        _inflight.add(key)
+        return True
+
+
+def _release(kind: str, article_id: int) -> None:
+    with _inflight_lock:
+        _inflight.discard((kind, int(article_id)))
+
+
 def publish_article(article_id: int, mode: str = "draft", via: str = "api",
                     force: bool = False, enforce_cadence: bool = False) -> dict:
+    """Publish decision (§5.11 draft default). Requires approved status. One publish per article at a
+    time: a concurrent call returns `code: publish_in_progress` instead of racing the first."""
+    if not _claim("publish", article_id):
+        return {"error": f"article {article_id} is already being published",
+                "next": "wait for the current publish to finish, then re-check the article's status",
+                "code": "publish_in_progress"}
+    try:
+        return _publish_article_locked(article_id, mode=mode, via=via, force=force,
+                                       enforce_cadence=enforce_cadence)
+    finally:
+        _release("publish", article_id)
+
+
+def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "api",
+                            force: bool = False, enforce_cadence: bool = False) -> dict:
     """Publish decision (§5.11 draft default). Requires approved status.
 
     WordPress sites (site_type="wordpress") additionally push the article to

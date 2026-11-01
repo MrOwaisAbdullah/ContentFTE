@@ -35,7 +35,27 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, Field
 
-from sdk import service
+from sdk import service as _service
+
+
+class _ThreadedService:
+    """The MCP tools are `async def`, but nearly every service call is blocking (database, WordPress,
+    image and IndexNow requests that take seconds). Calling them directly from the event loop froze the
+    whole process -- REST and every other MCP call -- for the duration. This proxy runs each *synchronous*
+    service function in a worker thread; coroutine functions (generate_content) are passed through
+    untouched (plan ENG-06). Attributes are resolved on each call, so test monkeypatching still works."""
+
+    def __getattr__(self, name):
+        fn = getattr(_service, name)
+        if not callable(fn) or asyncio.iscoroutinefunction(fn):
+            return fn
+
+        async def _call(*args, **kwargs):
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        return _call
+
+
+service = _ThreadedService()
 
 # contentfte_run_stage: one concurrent run per stage (mirrors the REST
 # /run/{stage} single-flight); task refs are kept so asyncio cannot GC them.
@@ -275,7 +295,7 @@ async def list_sites() -> str:
     Examples:
         - Use first: to discover the site_slug for all other tools.
     """
-    return _out(service.list_sites())
+    return _out(await service.list_sites())
 
 
 @mcp.tool(
@@ -298,7 +318,7 @@ async def list_articles(params: ListArticlesInput) -> str:
         "status", "created_at", "published_at", "cost_usd"}], "count", "total",
         "limit", "offset"} or {"error", "next"} for an unknown site.
     """
-    return _out(service.list_articles(site_slug=params.site_slug, status=params.status,
+    return _out(await service.list_articles(site_slug=params.site_slug, status=params.status,
                                       limit=params.limit, offset=params.offset))
 
 
@@ -320,7 +340,7 @@ async def get_brief(params: SiteSlugInput) -> str:
         {"status": "empty", "hint": ...} when nothing is briefable, or
         {"error", "next"} when the site is unknown.
     """
-    return _out(service.get_brief(params.site_slug))
+    return _out(await service.get_brief(params.site_slug))
 
 
 @mcp.tool(
@@ -347,7 +367,7 @@ async def generate_article(params: GenerateArticleInput) -> str:
         or {"error", "next"} (unknown site/article, runner failure —
         generation is idempotent, so retry after fixing the cause).
     """
-    submitted = service.submit_article(params.site_slug, keyword=params.keyword,
+    submitted = await service.submit_article(params.site_slug, keyword=params.keyword,
                                        brief={"title": params.keyword})
     if "error" in submitted:
         return _out(submitted)
@@ -372,7 +392,7 @@ async def get_article_status(params: ArticleIdInput) -> str:
         briefed -> drafted -> evaluated -> needs_review|approved -> published.
         Errors: {"error", "next"}.
     """
-    return _out(service.get_article(params.article_id))
+    return _out(await service.get_article(params.article_id))
 
 
 @mcp.tool(
@@ -392,7 +412,7 @@ async def get_image(params: ArticleIdInput) -> str:
         "model", "cost_usd", "prompt", "provenance"}], "count": int}.
         Empty until images are generated. Errors: {"error", "next"}.
     """
-    return _out(service.get_images(params.article_id))
+    return _out(await service.get_images(params.article_id))
 
 
 @mcp.tool(
@@ -421,7 +441,7 @@ async def publish_article(params: PublishArticleInput) -> str:
         "event": "article.published", "wp"?} or {"error", "next"}
         explaining why the gate refused (e.g. status is not yet 'approved').
     """
-    return _out(service.publish_article(params.article_id, mode=params.mode, via="mcp"))
+    return _out(await service.publish_article(params.article_id, mode=params.mode, via="mcp"))
 
 
 @mcp.tool(
@@ -445,7 +465,7 @@ async def refresh_article(params: ArticleIdInput) -> str:
         "status"} for WP, or {"ok", "render_target": "custom", "next"} for a
         custom site, or {"error", "next"}.
     """
-    return _out(service.refresh_article(params.article_id, via="mcp"))
+    return _out(await service.refresh_article(params.article_id, via="mcp"))
 
 
 @mcp.tool(
@@ -470,7 +490,7 @@ async def stage_images(params: ArticleIdInput) -> str:
         str: JSON {"id", "event": "article.images", "images", "featured",
         "inpost", "errors"?} or {"skipped", "reason"} or {"error", "next"}.
     """
-    return _out(service.stage_images(params.article_id))
+    return _out(await service.stage_images(params.article_id))
 
 
 @mcp.tool(
@@ -497,7 +517,7 @@ async def regenerate_image(params: RegenerateImageInput) -> str:
         "inpost", "errors"?, "detail"} or {"skipped", "reason"} or
         {"error", "next"}.
     """
-    return _out(service.regenerate_article_image(params.article_id,
+    return _out(await service.regenerate_article_image(params.article_id,
                                                  params.image_name))
 
 
@@ -522,7 +542,7 @@ async def wp_post(params: WpPostInput) -> str:
         "url", "modified", "featured_media", "categories", "tags", "meta"}
         or {"error", "next"}.
     """
-    return _out(service.wp_post(params.post_id))
+    return _out(await service.wp_post(params.post_id))
 
 
 @mcp.tool(
@@ -541,7 +561,7 @@ async def site_health(params: SiteSlugInput) -> str:
         "wp_configured": bool, "checks": [str, ...]} — `checks` entries are
         actionable ("EMPTY queue — approve keywords"). Errors: {"error", "next"}.
     """
-    return _out(service.site_health(params.site_slug))
+    return _out(await service.site_health(params.site_slug))
 
 
 @mcp.tool(
@@ -562,7 +582,7 @@ async def llms_txt(params: SiteSlugInput) -> str:
     Returns:
         str: JSON {"site", "count", "llms_txt"} or {"error", "next"}.
     """
-    return _out(service.llms_txt(params.site_slug))
+    return _out(await service.llms_txt(params.site_slug))
 
 
 @mcp.tool(
@@ -581,7 +601,7 @@ async def sitemap_xml(params: SiteSlugInput) -> str:
     Returns:
         str: JSON {"site", "count", "sitemap_xml"} or {"error", "next"}.
     """
-    return _out(service.sitemap_xml(params.site_slug))
+    return _out(await service.sitemap_xml(params.site_slug))
 
 
 @mcp.tool(
@@ -598,7 +618,7 @@ async def elementor_available() -> str:
         — hint explains why availability is false (e.g. Elementor too old).
         Config problems come back as {"error", "next"}.
     """
-    return _out(service.elementor_available())
+    return _out(await service.elementor_available())
 
 
 @mcp.tool(
@@ -622,7 +642,7 @@ async def elementor_document(params: ElementorPostInput) -> str:
         "parse_error" when _elementor_data could not be decoded.
         Errors: {"error", "next"}.
     """
-    return _out(service.elementor_document(params.post_id, post_type=params.post_type))
+    return _out(await service.elementor_document(params.post_id, post_type=params.post_type))
 
 
 @mcp.tool(
@@ -668,7 +688,7 @@ async def elementor_save(params: ElementorSaveInput) -> str:
         if not isinstance(page_settings, dict):
             return _out({"error": "page_settings_json must decode to a JSON object",
                          "next": 'e.g. {"hide_title":"yes"}'})
-    return _out(service.elementor_save(params.post_id, elements,
+    return _out(await service.elementor_save(params.post_id, elements,
                                        post_type=params.post_type,
                                        page_settings=page_settings))
 
@@ -696,7 +716,7 @@ async def elementor_build(params: ElementorBuildInput) -> str:
         "render_target": "elementor", "elementor": {...}} or
         {"error", "next"} (article missing, no content, WP not configured).
     """
-    return _out(service.elementor_build(params.article_id, post_id=params.post_id,
+    return _out(await service.elementor_build(params.article_id, post_id=params.post_id,
                                         mode=params.mode))
 
 
@@ -720,7 +740,7 @@ async def queue(params: QueueInput) -> str:
         status, intent, volume, difficulty, priority_score, added_at, ...}],
         "count"} — newest first. Errors: {"error", "next"}.
     """
-    return _out(service.list_queue(params.site_slug, status=params.status,
+    return _out(await service.list_queue(params.site_slug, status=params.status,
                                    limit=params.limit))
 
 
@@ -740,7 +760,7 @@ async def research(params: QueueInput) -> str:
         difficulty, status, summary, primary_keyword, secondary_keywords,
         generated, ...}], "count"}. Errors: {"error", "next"}.
     """
-    return _out(service.list_research(params.site_slug, status=params.status,
+    return _out(await service.list_research(params.site_slug, status=params.status,
                                       limit=params.limit))
 
 
@@ -759,7 +779,7 @@ async def briefs(params: BriefsInput) -> str:
         str: JSON {"site", "briefs": [{keyword, status, intent, brief,
         faqs, sources, summary, ...}], "count"}. Errors: {"error", "next"}.
     """
-    return _out(service.list_briefs(params.site_slug, limit=params.limit))
+    return _out(await service.list_briefs(params.site_slug, limit=params.limit))
 
 
 @mcp.tool(
@@ -778,7 +798,7 @@ async def logs(params: LogsInput) -> str:
         str: JSON {"audit": [{action, article_id, created_at, payload}],
         "costs": [{kind, model, usd, created_at, ...}], "counts", "kind"}.
     """
-    return _out(service.list_logs(kind=params.kind, limit=params.limit))
+    return _out(await service.list_logs(kind=params.kind, limit=params.limit))
 
 
 @mcp.tool(
@@ -799,7 +819,7 @@ async def approve_article(params: ApproveArticleInput) -> str:
         str: JSON {"id", "status": "approved"|"needs_review", "event",
         "scores"} or {"error", "next"} (missing article, not evaluable yet).
     """
-    return _out(service.approve_article(params.article_id, approved=params.approved,
+    return _out(await service.approve_article(params.article_id, approved=params.approved,
                                         note=params.note or "mcp", via="mcp", force=params.force))
 
 
@@ -818,8 +838,7 @@ async def check_gate(params: GateCheckInput) -> str:
     Returns:
         str: JSON {"pass", "blocking": [...], "warnings": [...], "checks": {...}} or {"error","next"}.
     """
-    return _out(await asyncio.to_thread(service.check_article_gate, params.article_id,
-                                        params.check_links))
+    return _out(await service.check_article_gate(params.article_id, params.check_links))
 
 
 @mcp.tool(
@@ -840,7 +859,7 @@ async def brain_notes(params: BrainNoteInput) -> str:
     Returns:
         str: JSON {"topic", "matches", "notes": [{title, tags, content, kind}], "text"}.
     """
-    return _out(service.get_brain_notes(topic=params.topic, site_slug=params.site_slug))
+    return _out(await service.get_brain_notes(topic=params.topic, site_slug=params.site_slug))
 
 
 @mcp.tool(
@@ -857,7 +876,7 @@ async def brain_add(params: CreateBrainEntryInput) -> str:
     Returns:
         str: JSON of the created entry or {"error", "next"}.
     """
-    return _out(service.create_brain_entry(site_slug=params.site_slug, kind=params.kind,
+    return _out(await service.create_brain_entry(site_slug=params.site_slug, kind=params.kind,
                                            title=params.title, tags=params.tags,
                                            content=params.content))
 
@@ -876,7 +895,7 @@ async def review_feedback(params: ReviewFeedbackInput) -> str:
     Returns:
         str: JSON {"items": [{id, title, status, score, notes, decided_by, decided_at}], "count"}.
     """
-    return _out(service.list_review_feedback(site_slug=params.site_slug, limit=params.limit))
+    return _out(await service.list_review_feedback(site_slug=params.site_slug, limit=params.limit))
 
 
 @mcp.tool(
@@ -894,7 +913,7 @@ async def mine_feedback_tool(params: ReviewFeedbackInput) -> str:
     Returns:
         str: JSON {"status", "rows_scanned", "approved", "rejected", "proposals"}.
     """
-    return _out(service.mine_feedback(site_slug=params.site_slug))
+    return _out(await service.mine_feedback(site_slug=params.site_slug))
 
 
 @mcp.tool(
@@ -912,7 +931,7 @@ async def log_coverage_tool(params: ApproveArticleInput) -> str:
     Returns:
         str: JSON of the created brain entry or {"error", "next"}.
     """
-    return _out(service.log_coverage(params.article_id))
+    return _out(await service.log_coverage(params.article_id))
 
 
 @mcp.tool(
@@ -936,7 +955,7 @@ async def patch_meta_tool(params: dict) -> str:
         str: JSON {"id", "status", "title", "slug", "meta", "event":
         "article.meta_edit"} or {"error", "next"}.
     """
-    return _out(service.patch_article_meta(params.get("article_id", 0),
+    return _out(await service.patch_article_meta(params.get("article_id", 0),
                                            {k: v for k, v in params.items()
                                             if k != "article_id"}))
 
@@ -960,7 +979,7 @@ async def update_content(params: UpdateContentInput) -> str:
         str: JSON {"id", "status", "event": "article.edited",
         "edit_log_count"} or {"error", "next"}.
     """
-    return _out(service.update_content(params.article_id, content_md=params.content_md,
+    return _out(await service.update_content(params.article_id, content_md=params.content_md,
                                        note=params.note or "mcp", via="mcp"))
 
 
@@ -1036,8 +1055,7 @@ async def search_console_status() -> str:
         "credentials", "properties_visible", "visible"}. connected is
         tri-state: true/false/null (null = the check itself couldn't run).
     """
-    from sdk import service
-    return _out(service.get_search_console_status())
+    return _out(await service.get_search_console_status())
 
 
 def main() -> None:
