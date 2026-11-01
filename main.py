@@ -422,119 +422,56 @@ async def post_content(api_key: str = Security(verify_api_key)):
         print(f"Error in /post_content: {e}")
         raise HTTPException(status_code=500, detail=f"Agent execution failed: {str(e)}")
 
-# --- New Comprehensive Workflow Endpoint ---
+# --- Comprehensive workflow endpoint -----------------------------------------------------------
+# It used to import a function that does not exist before its `try`, so every
+# call returned 500 (PIPE-08). It is now a thin sequencer over the four stage endpoints above, so there
+# is exactly one implementation of each stage.
 from typing import Literal
+
+_WORKFLOW_STAGES = {
+    "research": ("research", lambda: research_topic(api_key="")),
+    "brief": ("brief", lambda: generate_brief(api_key="")),
+    "content": ("content", lambda: generate_content(api_key="")),
+    "posting": ("posting", lambda: post_content(api_key="")),
+}
+_WORKFLOW_ORDER = ("research", "brief", "content", "posting")
+
+
+def _stage_had_issues(message: str) -> bool:
+    low = (message or "").lower()
+    return any(m in low for m in ("with issues", "no new", "no approved posts", "error during posting"))
+
 
 @app.post("/run_workflow")
 async def run_comprehensive_workflow(
-    workflow_type: Literal["research", "brief", "content", "posting", "full"] = Body(..., description="Type of workflow to run"),
-    max_retries: int = Body(3, description="Maximum number of retries for each agent"),
+    workflow_type: Literal["research", "brief", "content", "posting", "full"] = Body(..., embed=True, description="Type of workflow to run"),
     api_key: str = Security(verify_api_key)
 ):
-    """
-    Executes a comprehensive workflow based on the specified type with retry mechanisms.
-    
-    Workflow types:
-    - "research": Runs the research agent to gather data on keywords
-    - "brief": Creates content briefs from research data
-    - "content": Generates content from briefs
-    - "posting": Posts approved content to the CMS
-    - "full": Runs the full workflow from research to posting
-    """
-    from blog_agent.blog_agents import run_content_generation_workflow
-    from blog_agent.posting_agent import run_posting_workflow
-    from blog_agent.research_agent import combined_research_workflow
-    
+    """Run one stage, or `full` = research -> brief -> content -> posting.
+
+    `full` stops at the first stage that reports an issue or produced nothing, so a stage with nothing to
+    do does not feed an empty result into the next one. Each stage's own fallback/retry logic applies."""
+    stages = _WORKFLOW_ORDER if workflow_type == "full" else (workflow_type,)
+    completed: list = []
+    details: Dict[str, Any] = {}
     try:
-        result = {"status": "success", "workflows_completed": [], "details": {}}
-        
-        if workflow_type == "research":
-            # Run research workflow
-            research_result = await combined_research_workflow(
-                LLM_MODELS=custom_runner.LLM_MODELS, 
-                is_model_available=custom_runner.is_model_available, 
-                get_model_by_name=custom_runner.get_model_by_name, 
-                increment_usage=custom_runner.increment_usage, 
-                MAX_TURNS=15,
-                max_retries=max_retries
-            )
-            
-            result["workflows_completed"].append("research")
-            result["details"]["research"] = research_result
-            
-        elif workflow_type == "brief":
-            # Run brief generation workflow
-            brief_result = await custom_runner.run_with_fallback(
-                brief_agent,
-                "Generate content brief based on the first available research findings that is not generated yet from the research_data worksheet.",
-                max_retries=max_retries,
-                max_turns=MAX_TURNS
-            )
-            
-            result["workflows_completed"].append("brief")
-            result["details"]["brief"] = brief_result
-            
-        elif workflow_type == "content":
-            # Run content generation workflow
-            content_result = await run_content_generation_workflow(max_retries=max_retries)
-            
-            result["workflows_completed"].append("content")
-            result["details"]["content"] = content_result
-            
-        elif workflow_type == "posting":
-            # Run posting workflow
-            posting_result = await run_posting_workflow(max_retries=max_retries)
-            
-            result["workflows_completed"].append("posting")
-            result["details"]["posting"] = posting_result
-            
-        elif workflow_type == "full":
-            # Run full workflow
-            # 1. Research
-            research_result = await combined_research_workflow(
-                LLM_MODELS=custom_runner.LLM_MODELS, 
-                is_model_available=custom_runner.is_model_available, 
-                get_model_by_name=custom_runner.get_model_by_name, 
-                increment_usage=custom_runner.increment_usage, 
-                MAX_TURNS=15,
-                max_retries=max_retries
-            )
-            
-            result["workflows_completed"].append("research")
-            result["details"]["research"] = research_result
-            
-            # 2. Brief Generation (only if research was successful)
-            if "error" not in str(research_result).lower():
-                brief_result = await custom_runner.run_with_fallback(
-                    brief_agent,
-                    "Generate content brief based on the first available research findings that is not generated yet from the research_data worksheet.",
-                    max_retries=max_retries,
-                    max_turns=MAX_TURNS
-                )
-                
-                result["workflows_completed"].append("brief")
-                result["details"]["brief"] = brief_result
-            
-            # 3. Content Generation (only if brief generation was successful)
-            if "brief" in result["details"] and "error" not in str(brief_result).lower():
-                content_result = await run_content_generation_workflow(max_retries=max_retries)
-                
-                result["workflows_completed"].append("content")
-                result["details"]["content"] = content_result
-            
-            # 4. Posting (only if content generation was successful)
-            if "content" in result["details"] and content_result.get("status") != "error":
-                posting_result = await run_posting_workflow(max_retries=max_retries)
-                
-                result["workflows_completed"].append("posting")
-                result["details"]["posting"] = posting_result
-            
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid workflow type: {workflow_type}")
-        
-        result["message"] = f"Workflow '{workflow_type}' completed with steps: {', '.join(result['workflows_completed'])}"
-        return result
-        
+        for name in stages:
+            _, call = _WORKFLOW_STAGES[name]
+            out = await call()
+            message = out.get("message", "") if isinstance(out, dict) else str(out)
+            completed.append(name)
+            details[name] = message
+            if workflow_type == "full" and _stage_had_issues(message):
+                break
+        return {
+            "status": "success",
+            "workflows_completed": completed,
+            "details": details,
+            "stopped_early": workflow_type == "full" and len(completed) < len(stages),
+            "message": f"Workflow '{workflow_type}' completed with steps: {', '.join(completed)}",
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in /run_workflow: {e}")
         raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
