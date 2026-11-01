@@ -62,7 +62,16 @@ def extract_tldr(markdown: str) -> str:
 
 
 def slugify_taxonomy(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
+    """URL slug for a category/tag/article. ASCII input slugs exactly as before. Input with non-Latin
+    letters (Urdu, Arabic, Chinese, accented text) keeps them: the ASCII-only regex stripped every such
+    character, so all of them collapsed to 'uncategorized', 'uncategorized-2', ... (plan ADP-11)."""
+    v = value or ""
+    if any(ch.isalnum() and ord(ch) > 127 for ch in v):
+        from slugify import slugify as _slugify
+        slug = _slugify(v, allow_unicode=True, lowercase=True)
+        if slug:
+            return slug
+    slug = re.sub(r"[^a-z0-9]+", "-", v.lower()).strip("-")
     return slug or "uncategorized"
 
 

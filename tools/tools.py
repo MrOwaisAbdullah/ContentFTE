@@ -4,6 +4,7 @@ import re
 import base64
 import hashlib
 import requests
+from lib.safe_fetch import safe_get
 import json
 from slugify import slugify
 import textstat
@@ -1588,7 +1589,7 @@ def _download_image_to_temp(url: str) -> Optional[str]:
     """Download a remote image (e.g. Pexels) to a temp file so the VLM can
     inspect the actual pixels. Returns None on any failure."""
     try:
-        response = requests.get(url, timeout=30)
+        response = safe_get(url, timeout=30)
         response.raise_for_status()
         ext = os.path.splitext(url.split("?", 1)[0])[-1] or ".jpg"
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -1870,7 +1871,7 @@ def post_to_sanity_tool(
                 clean_image_url = normalized_image_path.split('?', 1)[0]
                 temp_file = None
                 try:
-                    response = requests.get(clean_image_url)
+                    response = safe_get(clean_image_url, timeout=30)
                     response.raise_for_status()
                     ext = os.path.splitext(clean_image_url)[-1] or '.jpg'
                     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:

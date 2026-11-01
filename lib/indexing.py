@@ -30,6 +30,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 import requests
+from lib.redact import redact_text
 
 INDEXNOW_ENDPOINTS = ("https://api.indexnow.org/indexnow",
                       "https://www.bing.com/indexnow")
@@ -109,10 +110,11 @@ def submit_bing_wmt(urls: Iterable[str], *, site_url: str,
                                "status": resp.status_code,
                                "urls": len(url_list)}
         if resp.status_code not in _ACCEPT:
-            out["body"] = (resp.text or "")[:300]
+            out["body"] = redact_text((resp.text or "")[:300])
         return out
     except Exception as exc:
-        return {"ok": False, "error": str(exc)[:300]}
+        # requests' exception text quotes the full URL, including ?apikey=... (plan SEC-11).
+        return {"ok": False, "error": redact_text(str(exc))[:300]}
 
 
 def submit_published(url: str, *, site_url: str = "") -> Dict[str, Any]:

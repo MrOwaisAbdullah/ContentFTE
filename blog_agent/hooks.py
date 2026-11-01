@@ -1,5 +1,6 @@
 import sys
 
+from lib.redact import summarize
 from agents import Agent, AgentHooks, RunContextWrapper, Tool
 
 # Tool results contain emoji (brand context: 🚀🤖...) — on Windows, a piped
@@ -43,5 +44,7 @@ class MyAgentHooks(AgentHooks):
     async def on_tool_end(self, context: RunContextWrapper, agent: Agent, tool: Tool, result):
         print("--------------------------------")
         print(f"[Hook] Tool end: {tool.name} in agent '{agent.name}'")
-        print(f"[Hook] Tool result: {result}")
+        # One short, redacted line -- never the full result: drafts, API responses and credentials
+        # in tool output would otherwise land verbatim in public CI logs (plan SEC-11).
+        print(f"[Hook] Tool result: {summarize(result)}")
         print("--------------------------------")

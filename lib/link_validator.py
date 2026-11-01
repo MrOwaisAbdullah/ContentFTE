@@ -3,6 +3,7 @@ import time
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import requests
+from lib.safe_fetch import UnsafeURL, safe_get, safe_head
 
 from lib.site_env import SITE_HOST, SITE_PREFIX
 
@@ -55,12 +56,17 @@ def _sanity_slug_exists(slug: str) -> bool:
         return True
 
 def _head_ok(url: str, timeout: float = 8.0) -> Tuple[bool, Optional[int]]:
+    # Link targets come from LLM drafts: an internal/metadata/loopback URL (or a public one that
+    # redirects to one) must be reported as an invalid link, never requested (plan SEC-05).
+    hdrs = {"User-Agent": "Mozilla/5.0 ContentFTE-link-validator"}
     try:
-        r = requests.head(url, allow_redirects=True, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 ContentFTE-link-validator"})
+        r = safe_head(url, timeout=timeout, headers=hdrs)
         if r.status_code in (405, 501):
-            r = requests.get(url, allow_redirects=True, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 ContentFTE-link-validator"}, stream=True)
-            r.close()
+            r = safe_get(url, timeout=timeout, headers=hdrs, max_bytes=256 * 1024)
         return 200 <= r.status_code < 400, r.status_code
+    except UnsafeURL as e:
+        logger.warning(f"Refusing to fetch link {url}: {e}")
+        return False, None
     except Exception as e:
         logger.info(f"HEAD failed for {url}: {e}")
         return False, None

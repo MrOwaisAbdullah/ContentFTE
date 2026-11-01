@@ -1,6 +1,8 @@
 # sanity_adapter.py
 import os
 import requests
+from lib.redact import redact_headers
+from lib.safe_fetch import safe_get
 import time
 from datetime import datetime
 import logging
@@ -194,9 +196,11 @@ class SanityAdapter:
         attempt = 0
         while attempt < max_retries:
             try:
+                # Log the shape of the call, never the body: it is the whole article, and this
+                # output lands in public CI logs (plan SEC-11).
                 print(f"Making {method} request to {url} (Attempt {attempt + 1})")
                 if data:
-                    print(f"Request  {json.dumps(data, indent=2, default=str)}")
+                    print(f"Request body: {len(json.dumps(data, default=str))} bytes")
                 response = requests.request(method, url, headers=self.headers, json=data, timeout=30)
                 print(f"Response Status: {response.status_code}")
                 # Surface Sanity's API-version deprecation notices: deprecated
@@ -209,6 +213,18 @@ class SanityAdapter:
                         "Sanity API version notice for %s: deprecated=%s warning=%s",
                         self.api_version, deprecated, warning,
                     )
+                # 429 and transient 5xx used to be handed straight back as a failure: only connection
+                # exceptions were retried, so a rate-limited publish just failed (plan ADP-06).
+                if response.status_code in (429, 500, 502, 503, 504) and attempt + 1 < max_retries:
+                    attempt += 1
+                    try:
+                        delay = min(float(response.headers.get("Retry-After", "")), 30.0)
+                    except ValueError:
+                        delay = float(2 ** attempt)
+                    logger.warning("Sanity returned %s; retrying in %.0fs (attempt %d/%d)",
+                                   response.status_code, delay, attempt + 1, max_retries)
+                    time.sleep(delay)
+                    continue
                 return response
             except requests.exceptions.RequestException as e:
                 attempt += 1
@@ -405,7 +421,7 @@ class SanityAdapter:
                     image_data = f.read() # Read raw bytes
 
                 logger.debug(f"[SanityAdapter.upload_image] Attempt {attempt + 1} - Upload URL: {upload_url}")
-                logger.debug(f"[SanityAdapter.upload_image] Attempt {attempt + 1} - Headers: {headers}")
+                logger.debug(f"[SanityAdapter.upload_image] Attempt {attempt + 1} - Headers: {redact_headers(headers)}")
                 logger.debug(f"[SanityAdapter.upload_image] Attempt {attempt + 1} - Data size: {len(image_data)} bytes")
                 # Log first few bytes to verify
                 logger.debug(f"[SanityAdapter.upload_image] Attempt {attempt + 1} - First 20 bytes (hex): {image_data[:20].hex()}")
@@ -513,10 +529,10 @@ class SanityAdapter:
                 logger.debug(f"[SanityAdapter.create_document] Constructed full URL: {full_url}")
                 logger.info(f"[SanityAdapter.create_document] Attempt {attempt + 1}: Making POST request for _id={document_id}")
                 logger.debug(f"[SanityAdapter.create_document] URL: {full_url}")
-                logger.debug(f"[SanityAdapter.create_document] Headers: {self.headers}")
-                logger.debug(f"[SanityAdapter.create_document] Payload: {json.dumps(payload, indent=2)}")
+                logger.debug(f"[SanityAdapter.create_document] Headers: {redact_headers(self.headers)}")
+                logger.debug(f"[SanityAdapter.create_document] Payload: {len(json.dumps(payload, default=str))} bytes")
 
-                response = self._make_request("POST", endpoint, data=payload, max_retries=1)
+                response = self._make_request("POST", endpoint, data=payload, max_retries=3)
                 response.raise_for_status()
 
                 result_data = response.json()
@@ -646,7 +662,7 @@ class SanityAdapter:
                             clean_image_url = image_url.split('?')[0]
                             import tempfile
                             import requests
-                            response = requests.get(clean_image_url)
+                            response = safe_get(clean_image_url, timeout=30)
                             response.raise_for_status()
 
                             # Get file extension from cleaned URL or content type
@@ -1040,6 +1056,10 @@ class SanityAdapter:
         print(f"DEBUG: Converting content of length {len(content)}")
         print(f"DEBUG: First 100 chars: {content[:100]}")
         
+        # Assigned inside the try; the except handler reads it. An exception earlier in the try
+        # (author lookup, category resolution) raised UnboundLocalError and hid the real error (plan ADP-06).
+        full_url = f"{SITE_PREFIX}{slug}"
+
         try:
             # 1. Use existing author from your project (configured via environment variables)
             # `or` rather than the two-arg .get() form: an unset GitHub Actions
@@ -1073,7 +1093,7 @@ class SanityAdapter:
                         import requests
                         from urllib.parse import urlparse
                         
-                        response = requests.get(local_image_path)
+                        response = safe_get(local_image_path, timeout=30)
                         response.raise_for_status()
                         
                         # Clean the image URL by removing query parameters to avoid file system issues
@@ -1123,7 +1143,7 @@ class SanityAdapter:
                     try:
                         import tempfile
                         import requests
-                        response = requests.get(local_image_path)
+                        response = safe_get(local_image_path, timeout=30)
                         response.raise_for_status()
                         
                         # Get file extension from URL or default to .jpg

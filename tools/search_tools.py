@@ -5,15 +5,36 @@ from tavily import AsyncTavilyClient
 from agents import function_tool
 from typing import List, Optional, Dict, Any, Union
 import requests
+from lib.safe_fetch import safe_get
 from bs4 import BeautifulSoup
 
-# Initialize Tavily Client
+# Tavily client. It used to be built at import time and RAISED when TAVILY_API_KEY was unset, so any
+# stage that merely imported this module (e.g. `post`, which never searches) crashed without the key
+# (plan PIPE-17). It is now created on first use; each tool already catches errors and returns an
+# {"error": ...} dict, so a missing key degrades that one call instead of killing the run.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-if not TAVILY_API_KEY:
-    raise ValueError("TAVILY_API_KEY environment variable not set.")
-# Async client so Tavily calls don't block the event loop of the async
-# FastAPI/Agents SDK app they run inside.
-tavily_client = AsyncTavilyClient(TAVILY_API_KEY)
+
+
+class _LazyTavily:
+    """Looks like AsyncTavilyClient (`.search/.extract/.crawl`) but connects on first attribute use.
+    Async client so Tavily calls don't block the event loop of the async FastAPI/Agents SDK app."""
+
+    def __init__(self) -> None:
+        self._client = None
+
+    def _get(self):
+        if self._client is None:
+            key = os.getenv("TAVILY_API_KEY")
+            if not key:
+                raise ValueError("TAVILY_API_KEY environment variable not set.")
+            self._client = AsyncTavilyClient(key)
+        return self._client
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+tavily_client = _LazyTavily()
 
 # --- Tool Functions ---
 @function_tool
@@ -156,7 +177,8 @@ def fetch_url_title(url: str) -> str:
         str: The title of the webpage, or the URL itself if the title cannot be fetched.
     """
     try:
-        response = requests.get(url, timeout=5)
+        # `url` is chosen by the model (and may come from untrusted pages): fetch it safely, capped at 2 MB.
+        response = safe_get(url, timeout=5, max_bytes=2 * 1024 * 1024)
         response.raise_for_status() # Raise an exception for bad status codes
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.title.string.strip() if soup.title and soup.title.string else url

@@ -74,36 +74,49 @@ def upsert_keyword(
     session: Session,
     site_id: int,
     keyword: str,
-    intent: str = "informational",
-    volume: int = 0,
-    difficulty: float = 0.0,
+    intent: str | None = None,
+    volume: int | None = None,
+    difficulty: float | None = None,
     winnability: float = 0.5,
     research_snapshot: dict | None = None,
 ) -> KeywordLedger:
+    """Create the ledger row, or update ONLY the fields the caller passed.
+
+    The metrics default to None, not 0/'informational': re-submitting a keyword (e.g. via
+    submit_article with just the keyword) used to overwrite its intent, volume, difficulty and
+    priority score with those defaults, erasing its research and queue position (plan ENG-07)."""
     keyword = keyword.strip()
-    score = priority_score(volume, intent, difficulty, winnability)
     row = session.execute(
         select(KeywordLedger).where(
             KeywordLedger.site_id == site_id, KeywordLedger.keyword == keyword
         )
     ).scalar_one_or_none()
     if row is None:
+        intent_v = intent or "informational"
+        volume_v = volume or 0
+        difficulty_v = difficulty or 0.0
         row = KeywordLedger(
             site_id=site_id,
             keyword=keyword,
-            intent=intent,
-            volume=volume,
-            difficulty=difficulty,
-            priority_score=score,
+            intent=intent_v,
+            volume=volume_v,
+            difficulty=difficulty_v,
+            priority_score=priority_score(volume_v, intent_v, difficulty_v, winnability),
             status="researched",
             research_snapshot=research_snapshot or {},
         )
         session.add(row)
     else:
-        row.intent = intent
-        row.volume = volume
-        row.difficulty = difficulty
-        row.priority_score = score
+        if intent is not None:
+            row.intent = intent
+        if volume is not None:
+            row.volume = volume
+        if difficulty is not None:
+            row.difficulty = difficulty
+        if intent is not None or volume is not None or difficulty is not None:
+            # a metric changed: re-rank from the stored values (an untouched row keeps its score)
+            row.priority_score = priority_score(row.volume or 0, row.intent or "informational",
+                                                row.difficulty or 0.0, winnability)
         if research_snapshot:
             row.research_snapshot = research_snapshot
     session.commit()
