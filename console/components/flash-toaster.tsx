@@ -6,17 +6,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "@/lib/toast";
-
-const TONES = {
-  ok: "success",
-  created: "success",
-  deleted: "success",
-  saved: "success",
-  removed: "success",
-  started: "info",
-  updated: "success",
-  err: "error",
-} as const;
+import { FLASH_PARAMS, resolveFlash } from "@/lib/flash";
 
 export function FlashToaster() {
   const params = useSearchParams();
@@ -26,14 +16,18 @@ export function FlashToaster() {
   useEffect(() => {
     let changed = false;
     const url = new URLSearchParams(params.toString());
-    for (const [key, tone] of Object.entries(TONES)) {
+    for (const key of FLASH_PARAMS) {
       const val = params.get(key);
       if (!val) continue;
-      if (last.current === `${key}:${val}`) continue;
-      last.current = `${key}:${val}`;
-      toast(val, tone as "success" | "error" | "info" | "warn");
+      // The param is a short CODE looked up in lib/flash.ts. Free text in a URL is never shown (CON-16).
+      // A bare ?created=1 / ?saved=true style value falls back to the key's own code.
+      const code = resolveFlash(val) ? val : key;
+      const flash = resolveFlash(code);
       url.delete(key);
       changed = true;
+      if (!flash || last.current === `${key}:${val}`) continue;
+      last.current = `${key}:${val}`;
+      toast(flash.text, flash.tone);
     }
     if (changed) {
       const qs = url.toString();

@@ -13,5 +13,5 @@ export async function requireOperator(formData: FormData, returnTo = "/"): Promi
   await requireSession();
   const current = await currentInstance();
   const problem = instanceMismatchMessage(String(formData.get(INSTANCE_FIELD) ?? ""), current.name);
-  if (problem) redirect(`${returnTo}?err=${encodeURIComponent(problem)}`);
+  if (problem) redirect(`${returnTo}?err=instance_changed`);   // a code, not text (CON-16)
 }
