@@ -498,7 +498,7 @@ Checklist in §2.
 | D6 | Sheets retirement | Finish the Postgres cutover before Phase 3; two state stores double every fix. |
 | D7 | "VERIFIED ACCURACY" badge | Remove until it reflects a real gate result. |
 | D8 | Cannibalized clusters | Approve the merge/301 list in Appendix B. |
-| D10 | Refresh policy | Decide whether a decaying page should default to an in-place update (recommended) and only republish under a new URL + 301 on an intent shift — today ≥ 50 % decay or > 365 days old triggers the destructive path (SEO-04). |
+| D10 | Refresh policy | Decide whether a decaying page should default to an in-place update (recommended) and only republish under a new URL + 301 on an intent shift — today ≥ 50 % decay or > 365 days old triggers the destructive path (SEO-04). **Now a switch, no code change needed:** `REFRESH_POLICY=escalate` (default, today's behaviour) or `in_place` (recommended) — documented in `.env.example`; in CI set it as a repo *Variable*. |
 | D9 | Where workers run | Dokploy VPS worker (already hosts the bot) over GitHub Actions cron once Phase 3 lands. |
 
 ---

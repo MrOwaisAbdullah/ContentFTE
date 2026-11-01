@@ -27,6 +27,19 @@ DECAY_WINDOW_DAYS = int(os.environ.get("DECAY_WINDOW_DAYS") or "90")
 MAJOR_REFRESH_THRESHOLD = float(os.environ.get("MAJOR_REFRESH_THRESHOLD") or "0.50")
 STALE_DAYS = int(os.environ.get("REFRESH_STALE_DAYS") or "365")
 
+# How a decaying page is refreshed (plan SEO-04 / decision D10):
+#   escalate (default, the original behaviour) -- deep decay (>= MAJOR_REFRESH_THRESHOLD) or a page
+#            older than REFRESH_STALE_DAYS gets a MAJOR refresh: republish under a NEW URL + 301.
+#   in_place -- a decaying page is always refreshed in place (same URL, rewrite, bump dateModified).
+#            MAJOR is reserved for an intent shift or a big quality gap, which are structural.
+# Read at call time (not import) so it can be changed without restarting a long-lived process.
+REFRESH_POLICIES = ("escalate", "in_place")
+
+
+def refresh_policy() -> str:
+    v = (os.environ.get("REFRESH_POLICY") or "escalate").strip().lower().replace("-", "_")
+    return v if v in REFRESH_POLICIES else "escalate"
+
 MAJOR = "major"
 MINOR = "minor"
 NONE = "none"
@@ -103,11 +116,16 @@ def classify_refresh(
 
     Force major on an intent shift or a big quality gap (playbook §7: those are
     always structural). Otherwise a decaying page is minor, escalating to major
-    when the decay is deep or the page is stale."""
+    when the decay is deep or the page is stale -- unless REFRESH_POLICY=in_place,
+    which keeps every non-structural refresh on the existing URL (a new URL + 301
+    throws away the page's accumulated history, and a click drop can come from AI
+    Overviews taking the click rather than from lost rank)."""
     if intent_shift or big_quality_gap:
         return MAJOR
     if decay_pct is None or decay_pct <= DECAY_THRESHOLD:
         return NONE
+    if refresh_policy() == "in_place":
+        return MINOR
     if decay_pct >= major_threshold or (age_days is not None and age_days >= stale_days):
         return MAJOR
     return MINOR

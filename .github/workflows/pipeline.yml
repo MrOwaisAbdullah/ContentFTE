@@ -245,6 +245,10 @@ jobs:
           # Unset/empty = "off" (manual mode) — same default as locally, so
           # this only changes behavior when the operator opts in via secrets.
           SEO_DATA_PROVIDER: ${{ secrets.SEO_DATA_PROVIDER }}
+          # Decay-refresh tuning (repo Variables, not secrets -- none of these are sensitive).
+          # Unset/empty = the engine's defaults; see .env.example for what each does.
+          REFRESH_POLICY: ${{ vars.REFRESH_POLICY }}
+          DECAY_MIN_PRIOR_CLICKS: ${{ vars.DECAY_MIN_PRIOR_CLICKS }}
           OPENSEO_API_KEY: ${{ secrets.OPENSEO_API_KEY }}
           # Only meaningful for stage=edit_post; empty on every other trigger
           # (scheduled runs and workflow_dispatch runs for other stages).

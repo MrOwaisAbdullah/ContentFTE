@@ -352,3 +352,46 @@ def test_missing_site_message_says_why(temp_db):
         assert "'typo' not found" in explain_missing_site(s, "typo")
     finally:
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# Decision D10: REFRESH_POLICY (escalate | in_place)
+# ---------------------------------------------------------------------------
+def test_default_policy_is_the_original_escalating_behaviour(monkeypatch):
+    monkeypatch.delenv("REFRESH_POLICY", raising=False)
+    assert decay.refresh_policy() == "escalate"
+    assert decay.classify_refresh(0.60) == decay.MAJOR                    # deep decay => new URL + 301
+    assert decay.classify_refresh(0.35, age_days=400) == decay.MAJOR      # stale => new URL + 301
+    assert decay.classify_refresh(0.35, age_days=100) == decay.MINOR
+
+
+def test_in_place_policy_keeps_every_nonstructural_refresh_on_the_same_url(monkeypatch):
+    monkeypatch.setenv("REFRESH_POLICY", "in_place")
+    assert decay.refresh_policy() == "in_place"
+    assert decay.classify_refresh(0.95) == decay.MINOR                    # even a collapse
+    assert decay.classify_refresh(0.35, age_days=2000) == decay.MINOR     # even a very old page
+    assert decay.classify_refresh(0.10) == decay.NONE                     # below threshold: still nothing
+    assert decay.classify_refresh(None) == decay.NONE
+
+
+def test_structural_problems_are_major_under_either_policy(monkeypatch):
+    for policy in ("escalate", "in_place"):
+        monkeypatch.setenv("REFRESH_POLICY", policy)
+        assert decay.classify_refresh(0.35, intent_shift=True) == decay.MAJOR
+        assert decay.classify_refresh(0.35, big_quality_gap=True) == decay.MAJOR
+        assert decay.classify_refresh(0.05, intent_shift=True) == decay.MAJOR
+
+
+def test_policy_value_is_forgiving_but_never_unsafe(monkeypatch):
+    for raw, want in (("IN_PLACE", "in_place"), ("in-place", "in_place"), (" in_place ", "in_place"),
+                      ("", "escalate"), ("nonsense", "escalate")):
+        monkeypatch.setenv("REFRESH_POLICY", raw)
+        assert decay.refresh_policy() == want, raw
+
+
+def test_in_place_policy_changes_the_brief_the_operator_sees(monkeypatch):
+    monkeypatch.setenv("REFRESH_POLICY", "in_place")
+    pages = [{"url": "/blog/a", "title": "A", "keyword": "a", "current_clicks": 5, "prior_clicks": 100}]
+    briefs = decay.plan_refresh_briefs(pages)
+    assert len(briefs) == 1 and briefs[0]["mode"] == decay.MINOR          # 95% decay, but in place
+    assert "Re-publish under a NEW URL" not in " ".join(briefs[0]["actions"])
