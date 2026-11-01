@@ -43,10 +43,24 @@ INTENT_VALUE = {
 TERMINAL = {"won", "lost", "retired"}
 
 
+def _stem(tok: str) -> str:
+    """Tiny suffix stemmer so 'agents'/'agent', 'servers'/'server', 'building'/'build' compare equal.
+    Deliberately crude and dependency-free; it only needs to be consistent on both sides."""
+    if len(tok) > 4 and tok.endswith("ies"):
+        return tok[:-3] + "y"
+    if len(tok) > 5 and tok.endswith("ing"):
+        return tok[:-3]
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is")):
+        return tok[:-1]
+    return tok
+
+
+_STOP = {"the", "a", "an", "and", "or", "for", "vs", "versus", "best", "top",
+         "to", "of", "in", "on", "with", "how", "what", "is", "your", "guide"}
+
+
 def _norm(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", (text or "").lower())) - {
-        "the", "a", "an", "and", "or", "for", "vs", "versus", "best", "top",
-    }
+    return {_stem(t) for t in re.findall(r"[a-z0-9]+", (text or "").lower())} - _STOP
 
 
 def priority_score(volume: int, intent: str, difficulty: float, winnability: float = 0.5) -> float:
@@ -131,34 +145,60 @@ def briefable_rows(session: Session, site_id: int, limit: int = 20) -> list[Keyw
     )
 
 
-def check_cannibalization(session: Session, site_id: int, candidate: str) -> dict:
+def overlap_ratio(candidate: set[str], existing: set[str]) -> float:
+    """How strongly two keyword token sets compete (0 = unrelated, 1 = same topic).
+
+    The old measure was |A∩B|/|A| only, which has two failure modes this fixes:
+      * a one-word candidate matched ANY row containing that word (ratio 1.0);
+      * a long-tail candidate that fully contains an existing head term looked unrelated
+        (ratio < 0.6) even though the two pages would compete.
+    Rules: at least two shared tokens (or identical sets); score = max(|A∩B|/|A|, Jaccard);
+    and when the candidate fully covers the existing row, count that too, capped at 0.7 so it
+    reads as 'differentiate' rather than 'merge'."""
+    if not candidate or not existing:
+        return 0.0
+    inter = candidate & existing
+    if not inter or (len(inter) < 2 and candidate != existing):
+        return 0.0
+    contain = len(inter) / len(candidate)
+    jaccard = len(inter) / len(candidate | existing)
+    reverse = min(len(inter) / len(existing), 0.7)
+    return max(contain if contain >= 0.6 else 0.0,
+               jaccard if jaccard >= 0.5 else 0.0,
+               reverse if reverse >= 0.6 else 0.0)
+
+
+def check_cannibalization(session: Session, site_id: int, candidate: str,
+                          titles: "list[str] | None" = None) -> dict:
     """Intent-overlap guard before a keyword enters `approved`.
 
-    Returns {overlap: bool, with_keyword: str|None, overlap_ratio: float}.
-    overlap_ratio = |intersection| / |candidate tokens| over non-retired rows.
+    Returns {overlap: bool, with_keyword: str|None, overlap_ratio: float, source: str}.
+    Compared against every ledger row that is still competing for search traffic — including
+    `won` (already ranking: the pages most worth protecting) — and against `titles`, the titles
+    of articles that already exist on the site (many are not in the ledger at all).
     Threshold 0.6 → merge/differentiate, never two competing rows.
     """
     cand = _norm(candidate)
     if not cand:
-        return {"overlap": False, "with_keyword": None, "overlap_ratio": 0.0}
+        return {"overlap": False, "with_keyword": None, "overlap_ratio": 0.0, "source": ""}
     rows = session.execute(
         select(KeywordLedger).where(
-            KeywordLedger.site_id == site_id, ~KeywordLedger.status.in_(list(TERMINAL))
+            KeywordLedger.site_id == site_id, ~KeywordLedger.status.in_(["lost", "retired"])
         )
     ).scalars()
-    best: KeywordLedger | None = None
+    best_text: str | None = None
+    best_source = ""
     best_ratio = 0.0
-    for row in rows:
-        tokens = _norm(row.keyword)
-        if not tokens:
-            continue
-        ratio = len(cand & tokens) / len(cand)
+    pool = [(row.keyword, "ledger") for row in rows] + [(t, "article") for t in (titles or []) if t]
+    for text, source in pool:
+        ratio = overlap_ratio(cand, _norm(text))
         if ratio > best_ratio:
-            best_ratio = ratio
-            best = row
-    if best is not None and best_ratio >= 0.6:
-        return {"overlap": True, "with_keyword": best.keyword, "overlap_ratio": round(best_ratio, 3)}
-    return {"overlap": False, "with_keyword": None, "overlap_ratio": round(best_ratio, 3)}
+            best_ratio, best_text, best_source = ratio, text, source
+    if best_text is not None and best_ratio >= 0.6:
+        return {"overlap": True, "with_keyword": best_text,
+                "overlap_ratio": round(best_ratio, 3), "source": best_source}
+    return {"overlap": False, "with_keyword": None,
+            "overlap_ratio": round(best_ratio, 3), "source": ""}
 
 
 def queue_health(session: Session, site_id: int) -> dict:

@@ -249,7 +249,11 @@ def check_cannibalization(keyword: str, site_slug: str = "") -> Dict[str, Any]:
         site_id, err = _resolve_site_id(s, site_slug)
         if site_id is None:
             return {"status": "error", "message": err}
-        res = _check_cannibalization(s, site_id, keyword)
+        # Existing posts that never went through the ledger still compete for the query.
+        from lib.db import Article
+        titles = [t for (t,) in s.execute(
+            select(Article.title).where(Article.site_id == site_id, Article.title != "")).all()]
+        res = _check_cannibalization(s, site_id, keyword, titles=titles)
         if not res["overlap"]:
             decision = "write"
         else:

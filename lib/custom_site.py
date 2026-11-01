@@ -34,6 +34,7 @@ def build_delivery_payload(
     date_modified: Optional[str] = None,
     focus_keyword: str = "",
     tldr: str = "",
+    schema_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Rendered, site-agnostic payload for a custom site (Astro/Next/React)."""
     from lib.geo import extract_tldr
@@ -51,7 +52,8 @@ def build_delivery_payload(
         # WordPress + Elementor output — FAQs are always an accordion.
         "faq_html": wp_render.render_faq_block(faqs, blocks=False) if faqs else "",
         "schema": {
-            "article": article_schema(title, url or slug, date_published, date_modified),
+            "article": article_schema(title, url or slug, date_published, date_modified,
+                                      **(schema_extra or {})),
             "faq": build_faq_schema(faqs) if faqs else None,
         },
         # SEO + AEO fields as first-class values. Before this, a custom site

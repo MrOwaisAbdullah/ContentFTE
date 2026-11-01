@@ -111,6 +111,7 @@ def build_prepared_post(
     date_modified: str | None = None,
     status: str = "draft",
     render_target: str | None = None,
+    schema_extra: dict | None = None,
 ) -> PreparedPost:
     """Compose a PreparedPost: markdown → WP HTML (+ CTA + FAQ) + meta + schema.
 
@@ -157,7 +158,8 @@ def build_prepared_post(
         featured_alt=featured_alt,
         inpost_images=list(inpost_images or []),
         faq_schema=build_faq_schema(faqs) if faqs else None,
-        article_schema=article_schema(title, url or canonical, date_published, date_modified, entities),
+        article_schema=article_schema(title, url or canonical, date_published, date_modified, entities,
+                                      **(schema_extra or {})),
         status=status,
         render_target=_resolve_render_target(render_target),
         faqs=[dict(f) for f in (faqs or [])],

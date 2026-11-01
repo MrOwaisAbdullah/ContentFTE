@@ -894,7 +894,7 @@ brief_agent = Agent(
 
      5b. **Jev brief completeness gate (C1, 70-500ms):** Call `jev_score_brief_quality` with `brief_content` and `faqs_json` BEFORE saving. Returns `{score, ready, usage}` where `ready = score>=1.5` means H1 + 4-6 H2 + 5-7 FAQs + links + summary all present. If `ready==false`, improve the brief (add missing H2, fix FAQ count, ensure 50-160 char summary with keyword) then re-check; on `fallback==true` proceed as before. Never block saving on JevError — log and continue.
      
-      6. Save to `content_briefs` worksheet using `manage_sheet_tool` with action="append_row" to save the following in order (column order must match exactly):
+      6. Save to `content_briefs` worksheet using `manage_sheet_data_tool` with action="append_row" to save the following in order (column order must match exactly):
         - Keyword/Topic (from the research_data row)
         - Brief Content (Markdown with H1, introduction, H2 headings, link suggestions)
         - FAQs (JSON string)
