@@ -33,7 +33,7 @@ from sqlalchemy import delete, func, select
 
 from lib import custom_site
 from lib import generation
-from lib.db import (Article, Article as ArticleModel, AuditLog, BrainEntry,
+from lib.db import (ApiKey, Article, Article as ArticleModel, AuditLog, BrainEntry,
                     BrandProfile, CostLedger, KeywordLedger, ReviewFeedback,
                     ShareOfVoice, Site, TavilyUsage, get_session, init_db)
 from lib.cost_ledger import finalize, record_cost, usage_cost
@@ -164,7 +164,15 @@ def list_sites() -> dict:
     init_db()
     s = get_session()
     try:
-        sites = [_site_row(r) for r in s.execute(select(Site)).scalars()]
+        active = dict(s.execute(
+            select(ApiKey.site_id, func.count()).where(ApiKey.revoked_at.is_(None))
+            .group_by(ApiKey.site_id)).all())
+        sites = []
+        for r in s.execute(select(Site)).scalars():
+            row = _site_row(r)
+            row["active_keys"] = int(active.get(r.id, 0))
+            row["has_key"] = bool(row["has_key"]) or row["active_keys"] > 0
+            sites.append(row)
         return {"sites": sites, "count": len(sites)}
     finally:
         s.close()
@@ -315,6 +323,8 @@ def delete_site(slug: str) -> dict:
         s.execute(delete(BrandProfile).where(BrandProfile.site_id == site_id))
         s.execute(delete(ShareOfVoice).where(ShareOfVoice.site_id == site_id))
         s.execute(delete(TavilyUsage).where(TavilyUsage.site_id == site_id))
+        # A deleted site's API keys must stop working immediately (and FK-block the delete on Postgres).
+        s.execute(delete(ApiKey).where(ApiKey.site_id == site_id))
         s.delete(site)
         # The site's own audit rows are gone, so leave one site-less record of the
         # deletion itself.

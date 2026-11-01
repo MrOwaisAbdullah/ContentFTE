@@ -57,24 +57,38 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import sdk.keys as site_keys
 import sdk.service as service
-from sdk.auth import check_key
+from sdk.auth import AuthContext, authenticate, current
+from sdk.authz import authorize
 
-router = APIRouter(prefix="/sdk/v1", tags=["sdk"])
+# `authorize` runs before every handler: it authenticates the key and, for site-scoped keys, enforces
+# the route table in sdk/authz.py (unlisted routes are refused to site keys).
+router = APIRouter(prefix="/sdk/v1", tags=["sdk"], dependencies=[Depends(authorize)])
 
 logger = logging.getLogger("sdk.server")
 
 _idempotency: dict[str, dict] = {}
 
 
+def _ctx() -> AuthContext:
+    """Who is calling, as resolved by the router-level `authorize` dependency."""
+    ctx = current()
+    if ctx is None:  # defensive: handler reached without the router dependency
+        raise HTTPException(status_code=500, detail="auth context missing")
+    return ctx
+
+
 def _check_site_key(x_site_key: str | None) -> str:
-    """Shared with /mcp and the legacy routes; fails closed when no key is
-    configured (see sdk/auth.py)."""
-    return check_key(x_site_key)
+    """Kept so every handler still reads as "authenticated first". The real work happens once, in
+    the router dependency (`sdk.authz.authorize`); this returns that result's label. Falls back to
+    authenticating directly if the dependency somehow did not run."""
+    ctx = current() or authenticate(x_site_key)
+    return ctx.label
 
 
 def _resolve(data: dict) -> dict:
@@ -144,13 +158,17 @@ def submit_article(
     idempotency_key: str | None = Header(default=None),
 ) -> dict:
     site_key = _check_site_key(x_site_key)
+    # A site key may only submit to its own site (naming another is a 403; omitting means "mine").
+    site_slug = _ctx().scoped_site(body.site_slug)
     body_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
     cache_key = None
     if idempotency_key:
-        cache_key = hashlib.sha256(f"{site_key}:{idempotency_key}:{body_hash}".encode()).hexdigest()
+        # Includes the site: two clients can pick the same label and Idempotency-Key.
+        cache_key = hashlib.sha256(
+            f"{site_key}:{site_slug}:{idempotency_key}:{body_hash}".encode()).hexdigest()
         if cache_key in _idempotency:
             return _idempotency[cache_key]
-    result = service.submit_article(body.site_slug, keyword=body.keyword or "",
+    result = service.submit_article(site_slug, keyword=body.keyword or "",
                                     brief=body.brief)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -171,6 +189,7 @@ def article_stats(site_slug: str = "", since_days: int = 30,
     spend totals, and a per-day created series for the velocity chart.
     """
     _check_site_key(x_site_key)
+    site_slug = _ctx().scoped_site(site_slug)
     return _resolve(service.article_stats(site_slug=site_slug,
                                           since_days=since_days))
 
@@ -186,6 +205,7 @@ def list_articles(site_slug: str = "", status: str = "", limit: int = 100,
     articles, then GET /articles/{id}/content for each.
     """
     _check_site_key(x_site_key)
+    site_slug = _ctx().scoped_site(site_slug)
     return _resolve(service.list_articles(site_slug=site_slug, status=status,
                                           limit=limit, offset=offset, q=q,
                                           sort=sort, order=order,
@@ -347,7 +367,12 @@ def prioritize_keyword(keyword_id: int, x_site_key: str | None = Header(default=
 @router.get("/sites")
 def list_sites(x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
-    return service.list_sites()
+    result = service.list_sites()
+    ctx = _ctx()
+    if not ctx.is_platform:  # a site key sees its own site and nothing else
+        result["sites"] = [x for x in result["sites"] if x["slug"] == ctx.site_slug]
+        result["count"] = len(result["sites"])
+    return result
 
 
 @router.post("/sites")
@@ -362,6 +387,39 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
 def delete_site(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
     return _resolve(service.delete_site(site_slug))
+
+
+class KeyCreate(BaseModel):
+    label: str = ""
+    # any of: read, write, approve, publish, admin. Empty = ["read"] (least privilege).
+    scopes: list[str] | None = None
+
+
+@router.get("/sites/{site_slug}/keys")
+def list_site_keys(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+    """List a site's API keys (prefix, label, scopes, last used, revoked). Never the secret."""
+    _check_site_key(x_site_key)
+    return _resolve(site_keys.list_site_keys(site_slug))
+
+
+@router.post("/sites/{site_slug}/keys")
+def create_site_key(site_slug: str, body: KeyCreate | None = None,
+                    x_site_key: str | None = Header(default=None)) -> dict:
+    """Mint a per-site API key. The plaintext `key` in the response is shown ONCE."""
+    _check_site_key(x_site_key)
+    body = body or KeyCreate()
+    result = site_keys.create_site_key(site_slug, label=body.label, scopes=body.scopes, via="sdk")
+    if "error" in result and "unknown scope" in result["error"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return _resolve(result)
+
+
+@router.delete("/sites/{site_slug}/keys/{key_id}")
+def revoke_site_key(site_slug: str, key_id: int,
+                    x_site_key: str | None = Header(default=None)) -> dict:
+    """Revoke a key immediately (the row is kept for the audit trail)."""
+    _check_site_key(x_site_key)
+    return _resolve(site_keys.revoke_site_key(site_slug, key_id, via="sdk"))
 
 
 @router.get("/search-console")
@@ -479,7 +537,7 @@ def get_spend_summary(site_slug: str = "",
                       x_site_key: str | None = Header(default=None)) -> dict:
     """Aggregated SQL spend summary (WTD, MTD, Total) for mission control dashboard."""
     _check_site_key(x_site_key)
-    return service.get_spend_summary(site_slug=site_slug)
+    return service.get_spend_summary(site_slug=_ctx().scoped_site(site_slug))
 
 
 @router.patch("/articles/{article_id}/content")

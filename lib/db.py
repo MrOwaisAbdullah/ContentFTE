@@ -249,6 +249,29 @@ class TavilyUsage(Base):
     site: Mapped[Site] = relationship()
 
 
+class ApiKey(Base):
+    """A per-site API key (plan SEC-03). The plaintext is shown ONCE at creation and never stored:
+    only its SHA-256 (`key_hash`, unique + indexed — keys are 256-bit random, so a plain hash is
+    sufficient and lets the lookup be a single indexed equality) and a short `prefix` for
+    identification in listings. `scopes` is a JSON list drawn from
+    read | write | approve | publish | admin. Revoked keys stay as rows for the audit trail."""
+
+    __tablename__ = "api_keys"
+    __table_args__ = (Index("ix_api_keys_site", "site_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    prefix: Mapped[str] = mapped_column(String(24), default="")
+    label: Mapped[str] = mapped_column(String(120), default="")
+    scopes: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    site: Mapped[Site] = relationship()
+
+
 class BrainEntry(Base):
     """§5.x what the writer actually knows — real voice entries + auto-logged
     coverage history. Mirrors brain/*.md so the store is the source of truth

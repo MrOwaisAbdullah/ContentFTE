@@ -1,4 +1,5 @@
 import { SiteCadenceSettings } from "./site-cadence-settings";
+import { SiteKeys } from "./site-keys";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -8,6 +9,7 @@ import {
   type BriefPeek,
   type QueueView,
   type SiteHealth,
+  type SiteKeysView,
   type SiteList,
 } from "@/lib/engine";
 import { currentInstance } from "@/lib/instances";
@@ -152,12 +154,13 @@ export default async function SiteDetailPage({
   // rows. This page used to download up to 500 full articles (markdown included)
   // just to count statuses client-side (plan CON-09). `articles.total` is the full
   // count regardless of `limit`.
-  const [health, queue, brief, articles, stats] = await Promise.all([
+  const [health, queue, brief, articles, stats, keysView] = await Promise.all([
     engine<SiteHealth>(`/sites/${encodeURIComponent(slug)}/health`).catch(() => null),
     engine<QueueView>(`/sites/${encodeURIComponent(slug)}/queue?limit=1`).catch(() => null),
     engine<BriefPeek>(`/sites/${encodeURIComponent(slug)}/brief`).catch(() => null),
     engine<ArticleList>(`/articles?site_slug=${encodeURIComponent(slug)}&limit=6`).catch(() => null),
     engine<ArticleStats>(`/articles/stats?site_slug=${encodeURIComponent(slug)}`).catch(() => null),
+    engine<SiteKeysView>(`/sites/${encodeURIComponent(slug)}/keys`).catch(() => null),
   ]);
 
   const statusCounts: Record<string, number> = stats?.by_status ?? {};
@@ -350,6 +353,9 @@ export default async function SiteDetailPage({
 
       {/* Interactive Cadence & Site Settings */}
       <SiteCadenceSettings site={site} cadence={health?.cadence} />
+
+      {/* Per-site API keys — null when the engine predates them or the call failed. */}
+      {keysView ? <SiteKeys slug={slug} keys={keysView.keys} /> : null}
 
       {/* Articles Table Card */}
       <Card className="overflow-hidden">

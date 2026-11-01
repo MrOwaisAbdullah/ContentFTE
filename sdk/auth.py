@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import hmac
 import os
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import HTTPException
@@ -66,6 +68,75 @@ def check_key(provided: Optional[str]) -> str:
     if not keys_equal(provided, expected):
         raise HTTPException(status_code=401, detail="invalid X-Site-Key")
     return provided or ""
+
+
+ALL_SCOPES = frozenset({"read", "write", "approve", "publish", "admin"})
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    """Who is calling. `platform` = the master key (every site, platform-wide routes);
+    `site` = a per-site key bound to exactly one site and a set of scopes (see sdk/keys.py)."""
+
+    kind: str                               # "platform" | "site"
+    label: str = ""
+    site_id: Optional[int] = None
+    site_slug: str = ""
+    scopes: frozenset = field(default_factory=frozenset)
+    key_id: Optional[int] = None
+
+    @property
+    def is_platform(self) -> bool:
+        return self.kind == "platform"
+
+    def allows(self, scope: str) -> bool:
+        """`admin` implies every scope, and any scope implies `read`."""
+        if self.is_platform or "admin" in self.scopes:
+            return True
+        if scope == "read":
+            return bool(self.scopes)
+        return scope in self.scopes
+
+    def scoped_site(self, requested: str = "") -> str:
+        """The site a query/body parameter must resolve to. A site key is pinned to its own site:
+        omitting the parameter means "mine", naming another site is refused."""
+        if self.is_platform:
+            return requested or ""
+        if requested and requested != self.site_slug:
+            raise HTTPException(status_code=403, detail=f"this key is not valid for site '{requested}'")
+        return self.site_slug
+
+
+_current: ContextVar[Optional[AuthContext]] = ContextVar("sdk_auth_context", default=None)
+
+
+def set_current(ctx: Optional[AuthContext]):
+    return _current.set(ctx)
+
+
+def current() -> Optional[AuthContext]:
+    """The AuthContext of the request being served (None outside an authenticated request)."""
+    return _current.get()
+
+
+def authenticate(provided: Optional[str]) -> AuthContext:
+    """Resolve a presented key to an AuthContext, or raise 401/503.
+
+    Order matters: the master key is compared first (so a master key that merely *looks* like a site
+    key still works), then per-site keys, then the closed-by-default platform check."""
+    expected = master_key()
+    if expected and keys_equal(provided, expected):
+        return AuthContext(kind="platform", label="platform", scopes=ALL_SCOPES)
+    from sdk import keys  # local import: keys -> lib.db, keep auth importable without a database
+    if keys.looks_like_site_key(provided):
+        found = keys.lookup(provided)
+        if found is None:
+            raise HTTPException(status_code=401, detail="invalid X-Site-Key")
+        return AuthContext(kind="site", label=found["label"], site_id=found["site_id"],
+                           site_slug=found["site_slug"], scopes=frozenset(found["scopes"]),
+                           key_id=found["key_id"])
+    label = check_key(provided)          # raises 401 (wrong key) / 503 (no key configured)
+    return AuthContext(kind="platform", label=label, scopes=ALL_SCOPES)
 
 
 class KeyAuthMiddleware:

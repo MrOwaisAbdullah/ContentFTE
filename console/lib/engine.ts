@@ -96,6 +96,27 @@ export interface SiteList {
   count: number;
 }
 
+import type { KeyScope } from "./key-scopes";
+
+/** One per-site API key as listed by the engine — never the secret, never the hash. */
+export interface SiteKey {
+  id: number;
+  prefix: string;
+  label: string;
+  scopes: KeyScope[];
+  created_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  active: boolean;
+}
+
+/** GET /sites/{slug}/keys */
+export interface SiteKeysView {
+  site: string;
+  keys: SiteKey[];
+  active: number;
+}
+
 /** GET /articles/{id}/gate — the engine's deterministic quality gate (plan SEO-01). */
 export interface ArticleGate {
   id: number;

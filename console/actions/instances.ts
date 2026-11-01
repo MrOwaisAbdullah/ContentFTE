@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { engine, engineUnredacted, EngineError, type SiteList } from "@/lib/engine";
+import { KEY_SCOPES } from "@/lib/key-scopes";
 import { requireOperator } from "@/lib/guard";
 import { requireSession, verifySession } from "@/lib/session";
 import { removeInstance, saveInstance, setCurrentInstance } from "@/lib/instances";
@@ -324,6 +325,54 @@ export async function deleteSiteAction(formData: FormData) {
 function isRedirect(e: unknown): boolean {
   const digest = (e as { digest?: unknown } | null)?.digest;
   return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
+export interface KeyCreateResult {
+  /** The plaintext key. Present exactly once, in the response to the create action. */
+  key?: string;
+  prefix?: string;
+  label?: string;
+  scopes?: string[];
+  err?: string;
+}
+
+/**
+ * Mint a per-site API key. Returns the plaintext to the calling client component (useActionState) —
+ * deliberately NOT via a redirect/query string, which would put the secret in URLs, history and logs.
+ */
+export async function createSiteKeyAction(_prev: KeyCreateResult, formData: FormData): Promise<KeyCreateResult> {
+  await requireOperator(formData);
+  const slug = String(formData.get("slug") || "").trim();
+  if (!SLUG_RE.test(slug)) return { err: "invalid site" };
+  const scopes = formData.getAll("scopes").map(String).filter((s) => (KEY_SCOPES as readonly string[]).includes(s));
+  if (scopes.length === 0) return { err: "choose at least one scope" };
+  try {
+    const res = await engine<{ key: string; prefix: string; label: string; scopes: string[] }>(
+      `/sites/${encodeURIComponent(slug)}/keys`,
+      { method: "POST", json: { label: String(formData.get("label") || "").trim().slice(0, 120), scopes } },
+    );
+    revalidatePath(`/sites/${encodeURIComponent(slug)}`);
+    return { key: res.key, prefix: res.prefix, label: res.label, scopes: res.scopes };
+  } catch (e) {
+    return { err: errorOf(e) };
+  }
+}
+
+export async function revokeSiteKeyAction(formData: FormData) {
+  await requireOperator(formData);
+  const slug = String(formData.get("slug") || "").trim();
+  const keyId = Number(formData.get("key_id"));
+  const back = (kind: "ok" | "err", msg: string) =>
+    `/sites/${encodeURIComponent(slug)}?${kind}=${encodeURIComponent(msg)}`;
+  if (!SLUG_RE.test(slug) || !Number.isInteger(keyId) || keyId <= 0) redirect("/sites?err=invalid%20key");
+  let target = back("ok", "API key revoked. It stopped working immediately.");
+  try {
+    await engine(`/sites/${encodeURIComponent(slug)}/keys/${keyId}`, { method: "DELETE" });
+    revalidatePath(`/sites/${encodeURIComponent(slug)}`);
+  } catch (e) {
+    target = back("err", errorOf(e));
+  }
+  redirect(target);
 }
 
 export interface EnvResult {
