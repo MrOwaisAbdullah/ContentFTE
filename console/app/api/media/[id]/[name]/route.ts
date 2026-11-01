@@ -16,7 +16,10 @@ export async function GET(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const { id, name } = await ctx.params;
-  if (!/^\d+$/.test(id) || !name || /[/\\]/.test(name)) {
+  // Allow-list rather than deny-list: a plain image filename only. `..` used to
+  // slip through (encodeURIComponent("..") === "..") and resolve to the article's
+  // directory upstream.
+  if (!/^\d+$/.test(id) || !/^\w[\w.-]{0,127}\.(png|jpe?g|webp|gif|avif)$/i.test(name) || name.includes("..")) {
     return NextResponse.json({ error: "bad image path" }, { status: 400 });
   }
   const inst = await currentInstance();
@@ -26,6 +29,7 @@ export async function GET(
       {
         cache: "no-store",
         headers: inst.apiKey ? { "X-Site-Key": inst.apiKey } : {},
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!res.ok || !res.body) {
@@ -34,10 +38,18 @@ export async function GET(
         { status: 404 },
       );
     }
+    // Never relay an arbitrary upstream content-type (an HTML/SVG response would
+    // be served from the console's origin); only raster image types pass through.
+    const upstreamType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const contentType = /^image\/(png|jpeg|webp|gif|avif)$/.test(upstreamType)
+      ? upstreamType
+      : "application/octet-stream";
     return new NextResponse(res.body, {
       status: 200,
       headers: {
-        "Content-Type": res.headers.get("content-type") || "application/octet-stream",
+        "Content-Type": contentType,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": "inline",
         "Cache-Control": "private, max-age=60",
       },
     });

@@ -44,7 +44,7 @@ export function InteractiveKpiCards({
   const formatImp = (val: number) => {
     if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(2)}M`;
     if (val >= 1_000) return `${(val / 1_000).toFixed(1)}k`;
-    return val.toLocaleString();
+    return val.toLocaleString("en-US");
   };
 
   const kpis = [
@@ -77,7 +77,7 @@ export function InteractiveKpiCards({
       actionLabel: "Telemetry",
       actionHref: "/insights",
       hoverDetail: gscImpressions > 0
-        ? `GSC Telemetry: ${gscImpressions.toLocaleString()} impressions across ${gscConnectedSites} verified property(ies)`
+        ? `GSC Telemetry: ${gscImpressions.toLocaleString("en-US")} impressions across ${gscConnectedSites} verified property(ies)`
         : `GSC Verification: ${gscConnectedSites} site(s) configured • Ingestion active`,
     },
     {

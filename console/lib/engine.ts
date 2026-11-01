@@ -1,5 +1,7 @@
 import "server-only";
 import { currentInstance } from "./instances";
+import { redactSiteList } from "./site-secrets";
+import { verifySession } from "./session";
 
 export class EngineError extends Error {
   status: number;
@@ -9,23 +11,54 @@ export class EngineError extends Error {
   }
 }
 
-/** Engine call against the currently selected instance (cookie-switched). */
-export async function engine<T = unknown>(
-  path: string,
-  init?: RequestInit & { json?: unknown },
-): Promise<T> {
-  const { json, headers, ...rest } = init ?? {};
+/** Reads should fail fast so one hung engine can't freeze every page (CON-06). */
+const READ_TIMEOUT_MS = 15_000;
+/** Mutations (generate / publish / run stage) legitimately take much longer. */
+const WRITE_TIMEOUT_MS = 180_000;
+
+type EngineInit = RequestInit & { json?: unknown; timeoutMs?: number };
+
+/**
+ * Engine call against the currently selected instance (cookie-switched).
+ *
+ * Site responses are returned with secrets stripped (see lib/site-secrets.ts):
+ * the engine's GET /sites includes the raw settings JSON, and these results are
+ * routinely passed to client components. Use `engineUnredacted` only inside a
+ * server action that must merge with the stored values.
+ */
+export async function engine<T = unknown>(path: string, init?: EngineInit): Promise<T> {
+  return redactSiteList(await engineUnredacted<T>(path, init));
+}
+
+/** Like `engine()` but WITHOUT secret redaction. Server actions only — never pass the result to the client. */
+export async function engineUnredacted<T = unknown>(path: string, init?: EngineInit): Promise<T> {
+  const { json, headers, timeoutMs, ...rest } = init ?? {};
+  // Data-access-layer check: layouts don't re-run on client navigation and
+  // server actions are public POST endpoints, so never rely on the page/middleware
+  // alone before talking to an engine with the operator's key.
+  if (!(await verifySession())) throw new EngineError(401, "401 not signed in");
   const inst = await currentInstance();
-  const res = await fetch(`${inst.baseUrl}/sdk/v1${path}`, {
-    ...rest,
-    cache: "no-store",
-    headers: {
-      ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(inst.apiKey ? { "X-Site-Key": inst.apiKey } : {}),
-      ...(headers as Record<string, string> | undefined),
-    },
-    body: json !== undefined ? JSON.stringify(json) : (rest.body as BodyInit | undefined),
-  });
+  const method = (rest.method || "GET").toUpperCase();
+  const limit = timeoutMs ?? (method === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${inst.baseUrl}/sdk/v1${path}`, {
+      ...rest,
+      cache: "no-store",
+      signal: rest.signal ?? AbortSignal.timeout(limit),
+      headers: {
+        ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(inst.apiKey ? { "X-Site-Key": inst.apiKey } : {}),
+        ...(headers as Record<string, string> | undefined),
+      },
+      body: json !== undefined ? JSON.stringify(json) : (rest.body as BodyInit | undefined),
+    });
+  } catch (e) {
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      throw new EngineError(504, `504 engine '${inst.name}' did not answer within ${Math.round(limit / 1000)}s`);
+    }
+    throw new EngineError(503, `503 engine '${inst.name}' unreachable at ${inst.baseUrl}`);
+  }
   const text = await res.text();
   let data: unknown = null;
   try {
@@ -50,7 +83,10 @@ export interface SiteInfo {
   site_type: string;
   base_url: string;
   publish_mode?: string;
+  /** Secrets are stripped by `engine()`; see `secrets_set` for which exist. */
   settings?: Record<string, unknown>;
+  /** Which known secrets are stored (e.g. `wp_app_password`) — values never leave the server. */
+  secrets_set?: Record<string, boolean>;
   has_key?: boolean;
   created_at?: string | null;
 }

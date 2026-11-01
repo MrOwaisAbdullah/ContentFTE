@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { engine, EngineError } from "@/lib/engine";
-import { requireSession } from "@/lib/session";
+import { requireOperator } from "@/lib/guard";
 
 function back(articlesId?: number, err?: string): string {
   const base = articlesId ? `/articles/${articlesId}` : "/articles";
@@ -14,12 +14,27 @@ function errorOf(e: unknown): string {
   return e instanceof EngineError ? e.message : `unexpected error: ${String(e)}`;
 }
 
+/** Positive integer id from the form, else bounce back — never `/articles/NaN/...` (plan CON-10). */
+function idOf(formData: FormData, fallback = "/articles"): number {
+  const n = Number(formData.get("id"));
+  if (!Number.isInteger(n) || n <= 0) {
+    redirect(`${fallback}?err=${encodeURIComponent("invalid id")}`);
+  }
+  return n;
+}
+
+const PUBLISH_MODES = new Set(["draft", "publish", "auto"]);
+
+/* Publishing from the Publish queue returns to the queue; anything else
+   lands back on the article detail. Allowlist — never an open redirect. */
+const PUBLISH_RETURN = new Set(["/", "/approvals", "/publish"]);
+
 // "Add keyword" on the Keywords (ledger) tab — mirrors adding a row in the
 // sheet: POST /articles binds/creates the ledger row (§5.16 lineage) and the
 // article lands `briefed`, then we open its detail to continue Generate →
 // Approve → Publish.
 export async function createArticleAction(formData: FormData) {
-  await requireSession();
+  await requireOperator(formData);
   const kwBase = "/articles/keywords";
   const keyword = String(formData.get("keyword") || "").trim();
   const title = String(formData.get("title") || "").trim();
@@ -33,8 +48,11 @@ export async function createArticleAction(formData: FormData) {
       `${kwBase}?err=${encodeURIComponent("no site — create one on the Sites screen first")}`,
     );
   }
+  // redirect() throws NEXT_REDIRECT, so it must not run inside the try (CON-01):
+  // pick the destination in try/catch, redirect once after.
+  let target: string;
   try {
-    const briefPayload: Record<string, any> = {};
+    const briefPayload: Record<string, unknown> = {};
     if (title) briefPayload.title = title;
     if (transcript) {
       briefPayload.source_transcript = transcript;
@@ -53,18 +71,19 @@ export async function createArticleAction(formData: FormData) {
     revalidatePath("/");
     revalidatePath("/articles");
     revalidatePath(kwBase);
-    const msg = instant 
+    const msg = instant
       ? "Topic queued with Instant Generation! Drafting and image staging started in background."
       : "Topic added to the ledger.";
-    redirect(`/articles/${res.id}?ok=${encodeURIComponent(msg)}`);
+    target = `/articles/${res.id}?ok=${encodeURIComponent(msg)}`;
   } catch (e) {
-    redirect(`${kwBase}?err=${encodeURIComponent(errorOf(e))}`);
+    target = `${kwBase}?err=${encodeURIComponent(errorOf(e))}`;
   }
+  redirect(target);
 }
 
 export async function approveArticleAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   const approved = formData.get("approved") === "1";
   const from = String(formData.get("from") || "");
   const note = String(formData.get("note") || "");
@@ -89,14 +108,11 @@ export async function approveArticleAction(formData: FormData) {
   }
 }
 
-/* Publishing from the Publish queue returns to the queue; anything else
-   lands back on the article detail. Allowlist — never an open redirect. */
-const PUBLISH_RETURN = new Set(["/", "/approvals", "/publish"]);
-
 export async function publishArticleAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
-  const mode = String(formData.get("mode") || "draft");
+  await requireOperator(formData);
+  const id = idOf(formData);
+  const rawMode = String(formData.get("mode") || "draft");
+  const mode = PUBLISH_MODES.has(rawMode) ? rawMode : "draft";
   const from = String(formData.get("from") || "");
   const queued = PUBLISH_RETURN.has(from);
   try {
@@ -107,7 +123,7 @@ export async function publishArticleAction(formData: FormData) {
   revalidatePath("/");
   revalidatePath("/articles");
   revalidatePath("/publish");
-  const msg = `Article #${id} published.`;
+  const msg = mode === "draft" ? `Article #${id} pushed as a draft.` : `Article #${id} published.`;
   if (queued) {
     redirect(`${from}?ok=${encodeURIComponent(msg)}`);
   }
@@ -115,8 +131,8 @@ export async function publishArticleAction(formData: FormData) {
 }
 
 export async function generateArticleAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   try {
     await engine(`/articles/${id}/generate`, { method: "POST", json: {} });
   } catch (e) {
@@ -127,8 +143,8 @@ export async function generateArticleAction(formData: FormData) {
 }
 
 export async function refreshArticleAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   try {
     await engine(`/articles/${id}/refresh`, { method: "POST" });
   } catch (e) {
@@ -138,8 +154,8 @@ export async function refreshArticleAction(formData: FormData) {
 }
 
 export async function stageImagesAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   try {
     await engine(`/articles/${id}/stage-images`, { method: "POST" });
   } catch (e) {
@@ -152,8 +168,8 @@ export async function stageImagesAction(formData: FormData) {
    generation path as stage-images and redirects back with the cost detail in
    ?ok. Spends image credits — the button that calls this is confirm-gated. */
 export async function regenerateImageAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   const name = String(formData.get("name") || "").trim();
   if (!name) redirect(back(id, "image name missing"));
   let detail = "";
@@ -174,8 +190,8 @@ export async function regenerateImageAction(formData: FormData) {
 }
 
 export async function patchMetaAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   const title = String(formData.get("title") || "");
   const slug = String(formData.get("slug") || "");
   const focus_keyword = String(formData.get("focus_keyword") || "");
@@ -201,8 +217,8 @@ export async function patchMetaAction(formData: FormData) {
 }
 
 export async function patchContentAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   const content_md = String(formData.get("content_md") || "");
   const note = String(formData.get("note") || "");
   try {
@@ -219,8 +235,8 @@ export async function patchContentAction(formData: FormData) {
 }
 
 export async function deleteArticleAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData);
   try {
     await engine(`/articles/${id}`, { method: "DELETE" });
   } catch (e) {
@@ -232,8 +248,8 @@ export async function deleteArticleAction(formData: FormData) {
 }
 
 export async function deleteKeywordAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData, "/articles/keywords");
   const site = String(formData.get("site") || "");
   try {
     await engine(`/keywords/${id}`, { method: "DELETE" });
@@ -246,8 +262,8 @@ export async function deleteKeywordAction(formData: FormData) {
 }
 
 export async function prioritizeKeywordAction(formData: FormData) {
-  await requireSession();
-  const id = Number(formData.get("id"));
+  await requireOperator(formData);
+  const id = idOf(formData, "/articles/keywords");
   const site = String(formData.get("site") || "");
   try {
     await engine(`/keywords/${id}/prioritize`, { method: "POST" });

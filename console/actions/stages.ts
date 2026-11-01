@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { engine, EngineError } from "@/lib/engine";
-import { requireSession } from "@/lib/session";
+import { requireOperator } from "@/lib/guard";
 
 export async function runStageAction(formData: FormData) {
-  await requireSession();
+  await requireOperator(formData);
   const stage = String(formData.get("stage") || "");
   const site = String(formData.get("site") || formData.get("site_slug") || "").trim();
   try {

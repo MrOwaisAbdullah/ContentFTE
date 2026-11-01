@@ -246,7 +246,7 @@ export function SitesFleetClient({
                                 </span>
                                 <span className="text-secondary block text-[10px]">
                                   {gscSite.metrics_28d
-                                    ? `${gscSite.metrics_28d.impressions.toLocaleString()} impr · ${gscSite.metrics_28d.clicks.toLocaleString()} clicks`
+                                    ? `${gscSite.metrics_28d.impressions.toLocaleString("en-US")} impr · ${gscSite.metrics_28d.clicks.toLocaleString("en-US")} clicks`
                                     : "28d window"}
                                 </span>
                               </div>

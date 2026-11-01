@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { fmtDateTimeUtc } from "@/lib/format";
 
 const CADENCE_OPTIONS = [
   { value: "daily", label: "Daily", sub: "1 post every 24 hours" },
@@ -55,6 +56,17 @@ const IMAGE_PREF_OPTIONS = [
   { value: "stock_only", label: "Stock Photos Only", sub: "Never use AI image generation; stock photos and diagrams only" },
 ];
 
+/** Opt-in removal of a stored secret. Blank inputs keep the value, so deleting needs an explicit tick. */
+function ClearSecret({ flag, label, saved }: { flag: string; label: string; saved: boolean }) {
+  if (!saved) return null;
+  return (
+    <label className="flex items-center gap-1.5 text-[11px] text-ink-faint cursor-pointer">
+      <input type="checkbox" name="clear_secret" value={flag} className="h-3 w-3 accent-accent rounded" />
+      <span>Remove the saved {label} when I save</span>
+    </label>
+  );
+}
+
 interface Props {
   site: SiteInfo;
   cadence?: SiteCadenceStatus | null;
@@ -67,6 +79,11 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   const contentSettings = (settings.content || {}) as Record<string, any>;
   const indexingSettings = (settings.indexing || {}) as Record<string, any>;
   const notifSettings = (settings.notifications || {}) as Record<string, any>;
+  // Secret VALUES never reach the browser (stripped by lib/engine.ts); only
+  // these booleans do. A blank secret input means "keep the stored one".
+  const secretsSet = (site.secrets_set || {}) as Record<string, boolean>;
+  const secretHint = (flag: string, empty: string) =>
+    secretsSet[flag] ? "•••••••• saved — leave blank to keep" : empty;
 
   // Tab State
   const [activeTab, setActiveTab] = useState<"cadence" | "wordpress" | "images" | "content" | "seo">("cadence");
@@ -81,7 +98,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   // WordPress Auth States
   const [wpBaseUrl, setWpBaseUrl] = useState(String(wpSettings.base_url || site.base_url || ""));
   const [wpUsername, setWpUsername] = useState(String(wpSettings.username || ""));
-  const [wpPassword, setWpPassword] = useState(String(wpSettings.app_password || ""));
+  const [wpPassword, setWpPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [testResult, setTestResult] = useState<WpTestResult | null>(null);
   const [isTestingWp, startTestingWp] = useTransition();
@@ -98,12 +115,12 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   const [generateFaqs, setGenerateFaqs] = useState(Boolean(contentSettings.generate_faqs ?? true));
 
   const [autoIndex, setAutoIndex] = useState(Boolean(indexingSettings.auto_index_on_publish ?? true));
-  const [indexnowKey, setIndexnowKey] = useState(String(indexingSettings.indexnow_key || ""));
-  const [bingKey, setBingKey] = useState(String(indexingSettings.bing_wmt_key || ""));
+  const [indexnowKey, setIndexnowKey] = useState("");
+  const [bingKey, setBingKey] = useState("");
   const [gscProperty, setGscProperty] = useState(String(indexingSettings.search_console_property || settings.search_console_site_url || ""));
 
   // Webhooks
-  const [discordWebhook, setDiscordWebhook] = useState(String(notifSettings.discord_webhook_url || ""));
+  const [discordWebhook, setDiscordWebhook] = useState("");
   const [notifyOnDraft, setNotifyOnDraft] = useState(Boolean(notifSettings.notify_on_draft ?? false));
   const [notifyOnApproval, setNotifyOnApproval] = useState(Boolean(notifSettings.notify_on_approval_needed ?? true));
   const [notifyOnPublish, setNotifyOnPublish] = useState(Boolean(notifSettings.notify_on_publish ?? true));
@@ -111,8 +128,8 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   // Cadence window calculations
   const canPublishNow = cadence?.can_publish_now ?? true;
   const hoursRemaining = cadence?.seconds_remaining ? Math.round((cadence.seconds_remaining / 3600) * 10) / 10 : 0;
-  const nextAllowed = cadence?.next_allowed_at ? new Date(cadence.next_allowed_at).toLocaleString() : null;
-  const lastPublished = cadence?.last_published_at ? new Date(cadence.last_published_at).toLocaleString() : null;
+  const nextAllowed = cadence?.next_allowed_at ? fmtDateTimeUtc(cadence.next_allowed_at) : null;
+  const lastPublished = cadence?.last_published_at ? fmtDateTimeUtc(cadence.last_published_at) : null;
 
   const handleTestWp = () => {
     setTestResult(null);
@@ -280,11 +297,13 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
         </CardHeader>
 
         <CardContent className="pt-5">
-          <form action={updateSiteSettingsAction} className="space-y-6">
+          <form action={updateSiteSettingsAction} className="space-y-6" noValidate>
             <input type="hidden" name="slug" value={site.slug} />
+            {/* Every tab stays mounted (hidden), so one save submits all groups; the action only touches the groups listed here. */}
+            <input type="hidden" name="_groups" value="cadence wp image content indexing notifications" />
 
             {/* TAB 1: CADENCE & APPROVAL */}
-            {activeTab === "cadence" && (
+            <section hidden={activeTab !== "cadence"} aria-hidden={activeTab !== "cadence"}>{(
               <div className="space-y-6 animate-fadeIn">
                 <div className="space-y-2">
                   <label className="block text-xs font-semibold uppercase tracking-wider text-ink">
@@ -446,10 +465,10 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   </div>
                 </div>
               </div>
-            )}
+            )}</section>
 
             {/* TAB 2: WORDPRESS & CMS AUTH */}
-            {activeTab === "wordpress" && (
+            <section hidden={activeTab !== "wordpress"} aria-hidden={activeTab !== "wordpress"}>{(
               <div className="space-y-6 animate-fadeIn">
                 <div className="rounded-xl border border-line bg-surface/20 p-4 space-y-4">
                   <div className="flex items-center justify-between pb-2 border-b border-line/60">
@@ -516,12 +535,14 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                         name="wp_app_password"
                         value={wpPassword}
                         onChange={(e) => setWpPassword(e.target.value)}
-                        placeholder="xxxx xxxx xxxx xxxx"
+                        placeholder={secretHint("wp_app_password", "xxxx xxxx xxxx xxxx")}
+                        autoComplete="new-password"
                         className="w-full px-3 py-2 rounded-lg border border-line bg-card font-mono text-xs text-ink focus:outline-none focus:border-accent"
                       />
                       <p className="text-[11px] text-ink-faint">
                         Generate in WordPress Admin → Users → Profile → Application Passwords.
                       </p>
+                      <ClearSecret flag="wp_app_password" label="application password" saved={Boolean(secretsSet.wp_app_password)} />
                     </div>
                   </div>
 
@@ -542,7 +563,10 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                         {testResult.ok ? (
                           <div className="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-mono">
                             <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                            <span className="truncate">{testResult.message || "Connection verified successfully!"}</span>
+                            <span className="truncate">
+                              {testResult.message || "Connection verified successfully!"}
+                              {testResult.tested === "saved" ? " (saved credentials)" : ""}
+                            </span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-mono">
@@ -555,10 +579,10 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   </div>
                 </div>
               </div>
-            )}
+            )}</section>
 
             {/* TAB 3: AI IMAGES & VLM */}
-            {activeTab === "images" && (
+            <section hidden={activeTab !== "images"} aria-hidden={activeTab !== "images"}>{(
               <div className="space-y-6 animate-fadeIn">
                 <div className="space-y-2">
                   <label className="block text-xs font-semibold uppercase tracking-wider text-ink">
@@ -664,10 +688,10 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   </p>
                 </div>
               </div>
-            )}
+            )}</section>
 
             {/* TAB 4: CONTENT & BRAND VOICE */}
-            {activeTab === "content" && (
+            <section hidden={activeTab !== "content"} aria-hidden={activeTab !== "content"}>{(
               <div className="space-y-6 animate-fadeIn">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5 rounded-xl border border-line p-3.5 bg-surface/20">
@@ -735,10 +759,10 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   </p>
                 </div>
               </div>
-            )}
+            )}</section>
 
             {/* TAB 5: SEO INDEXING & ALERTS */}
-            {activeTab === "seo" && (
+            <section hidden={activeTab !== "seo"} aria-hidden={activeTab !== "seo"}>{(
               <div className="space-y-6 animate-fadeIn">
                 <div className="rounded-xl border border-line bg-surface/20 p-4 space-y-4">
                   <div className="flex items-center justify-between pb-2 border-b border-line/60">
@@ -771,12 +795,14 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                         name="indexnow_key"
                         value={indexnowKey}
                         onChange={(e) => setIndexnowKey(e.target.value)}
-                        placeholder="e.g. 32-char hex key"
+                        placeholder={secretHint("indexnow_key", "e.g. 32-char hex key")}
+                        autoComplete="off"
                         className="w-full px-3 py-2 rounded-lg border border-line bg-card font-mono text-xs text-ink focus:outline-none focus:border-accent"
                       />
                       <p className="text-[10px] text-ink-faint">
                         Instant notification to Bing, Yandex, and participating search engines.
                       </p>
+                      <ClearSecret flag="indexnow_key" label="IndexNow key" saved={Boolean(secretsSet.indexnow_key)} />
                     </div>
 
                     <div className="space-y-1.5">
@@ -788,9 +814,11 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                         name="bing_wmt_key"
                         value={bingKey}
                         onChange={(e) => setBingKey(e.target.value)}
-                        placeholder="Bing WMT API Key"
+                        placeholder={secretHint("bing_wmt_key", "Bing WMT API Key")}
+                        autoComplete="off"
                         className="w-full px-3 py-2 rounded-lg border border-line bg-card font-mono text-xs text-ink focus:outline-none focus:border-accent"
                       />
+                      <ClearSecret flag="bing_wmt_key" label="Bing key" saved={Boolean(secretsSet.bing_wmt_key)} />
                     </div>
 
                     <div className="space-y-1.5 md:col-span-2">
@@ -826,9 +854,11 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                       name="discord_webhook_url"
                       value={discordWebhook}
                       onChange={(e) => setDiscordWebhook(e.target.value)}
-                      placeholder="https://discord.com/api/webhooks/..."
+                      placeholder={secretHint("discord_webhook_url", "https://discord.com/api/webhooks/...")}
+                      autoComplete="off"
                       className="w-full px-3 py-2 rounded-lg border border-line bg-card font-mono text-xs text-ink focus:outline-none focus:border-accent"
                     />
+                    <ClearSecret flag="discord_webhook_url" label="webhook URL" saved={Boolean(secretsSet.discord_webhook_url)} />
                   </div>
 
                   <div className="space-y-2 pt-1">
@@ -875,7 +905,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   </div>
                 </div>
               </div>
-            )}
+            )}</section>
 
             {/* Bottom Actions Row */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-line/60">

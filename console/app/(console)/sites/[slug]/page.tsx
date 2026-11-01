@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import {
   engine,
   type ArticleList,
+  type ArticleStats,
   type BriefPeek,
   type QueueView,
   type SiteHealth,
@@ -147,17 +148,19 @@ export default async function SiteDetailPage({
   const site = sites?.sites.find((s) => s.slug === slug);
   if (!site) notFound();
 
-  const [health, queue, brief, articles] = await Promise.all([
+  // Status counts come from the stats endpoint and the list is only the 6 newest
+  // rows. This page used to download up to 500 full articles (markdown included)
+  // just to count statuses client-side (plan CON-09). `articles.total` is the full
+  // count regardless of `limit`.
+  const [health, queue, brief, articles, stats] = await Promise.all([
     engine<SiteHealth>(`/sites/${encodeURIComponent(slug)}/health`).catch(() => null),
     engine<QueueView>(`/sites/${encodeURIComponent(slug)}/queue?limit=1`).catch(() => null),
     engine<BriefPeek>(`/sites/${encodeURIComponent(slug)}/brief`).catch(() => null),
-    engine<ArticleList>(`/articles?site_slug=${encodeURIComponent(slug)}&limit=500`).catch(() => null),
+    engine<ArticleList>(`/articles?site_slug=${encodeURIComponent(slug)}&limit=6`).catch(() => null),
+    engine<ArticleStats>(`/articles/stats?site_slug=${encodeURIComponent(slug)}`).catch(() => null),
   ]);
 
-  const statusCounts: Record<string, number> = {};
-  for (const a of articles?.articles ?? []) {
-    statusCounts[a.status] = (statusCounts[a.status] ?? 0) + 1;
-  }
+  const statusCounts: Record<string, number> = stats?.by_status ?? {};
   const readyToPublish = statusCounts["approved"] ?? 0;
   const latest = (articles?.articles ?? []).slice(0, 6);
 

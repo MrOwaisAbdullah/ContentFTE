@@ -32,6 +32,19 @@ export function fmtDate(v: string | null | undefined): string {
   return v ? String(v).slice(0, 10) : "—";
 }
 
+/**
+ * Deterministic date+time in UTC with a fixed locale. Rendering `Date#toLocaleString()`
+ * with no arguments in a client component produces different text on the server
+ * (its locale/timezone) and in the browser, which React reports as a hydration
+ * mismatch (plan CON-11).
+ */
+export function fmtDateTimeUtc(v: string | null | undefined): string {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.toLocaleString("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" })} UTC`;
+}
+
 export function fmtAgo(v: string | null | undefined): string {
   if (!v) return "—";
   const raw = String(v).replace(" ", "T");

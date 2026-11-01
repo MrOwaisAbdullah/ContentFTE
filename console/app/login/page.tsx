@@ -3,6 +3,7 @@
 import { Suspense, useActionState, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { loginAction } from "@/actions/auth";
+import { safeNextPath } from "@/lib/safe-next";
 import { Bot, Lock } from "lucide-react";
 
 function LoginPageInner() {
@@ -12,13 +13,13 @@ function LoginPageInner() {
 
   useEffect(() => {
     const n = sp.get("next");
-    if (n && n.startsWith("/") && !n.startsWith("//")) {
+    if (n && safeNextPath(n) === n) {
       setNext(n);
     } else {
       // preserve the last visited path if it was saved client-side
       try {
         const last = window.sessionStorage.getItem("console:lastPath");
-        if (last && last.startsWith("/") && last !== "/login") setNext(last);
+        if (last && last !== "/login" && safeNextPath(last) === last) setNext(last);
       } catch {}
     }
   }, [sp]);
@@ -56,9 +57,6 @@ function LoginPageInner() {
         >
           {pending ? "Signing in…" : "Sign in"}
         </button>
-        <p className="text-[11px] text-ink-faint">
-          The password is set in <code className="font-mono">console/.env.local</code> as <code className="font-mono">OPERATOR_PASSWORD</code>.
-        </p>
       </form>
     </main>
   );
