@@ -173,7 +173,8 @@ def test_run_stage_gates_before_persisting():
         "persisted_row = _ensure_content_persisted(parsed, source_brief)")
 
 
-def test_sdk_gate_gates_secondaries_not_the_topic():
+def test_sdk_gate_gates_secondaries_not_the_topic(monkeypatch):
+    monkeypatch.setenv("KEYWORD_GATE_ENFORCE", "on")
     """The primary keyword is the ledger topic, already enforced by the
     prompts (H1/TL;DR/intro) -- gating it rejects a draft that legitimately
     uses it once. Only the operator's secondary targets are hard-gated."""
@@ -212,7 +213,8 @@ def test_run_stage_gate_helper_fails_open_without_targets():
         parsed, {"data": {"Keyword/Topic": "coffee maker"}})
 
 
-def test_run_stage_gate_helper_raises_with_report():
+def test_run_stage_gate_helper_raises_with_report(monkeypatch):
+    monkeypatch.setenv("KEYWORD_GATE_ENFORCE", "on")
     import pytest
     import scripts.run_stage as rs
 

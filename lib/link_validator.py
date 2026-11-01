@@ -2,6 +2,7 @@ import re
 import time
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 import requests
 from lib.safe_fetch import UnsafeURL, safe_get, safe_head
 
@@ -55,6 +56,34 @@ def _sanity_slug_exists(slug: str) -> bool:
         logger.warning(f"Sanity slug check failed for '{slug}': {e}")
         return True
 
+# Statuses that mean "this server will not tell a bot" rather than "the page is gone": a login wall (401),
+# a bot block (403 / 999) or a rate limit (429). Treating them as broken made the WordPress publish strip
+# perfectly good links to sites that simply dislike HEAD requests from a data centre.
+UNVERIFIABLE_STATUSES = frozenset({401, 403, 405, 429, 999})
+_NOT_FOUND_SEGMENT = re.compile(r"(^|/)(404|not-?found|page-?not-?found|error)(/|\.|$)", re.I)
+
+
+def _strip_www(host: str) -> str:
+    host = (host or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _is_soft_404(requested: str, final: str) -> bool:
+    """A 'successful' response that is really a missing page: a hallucinated deep link that the site
+    redirects to its homepage (or to a /404 page). Compares the path that was asked for with the one that
+    was finally served."""
+    if not final or final == requested:
+        return False
+    a, b = urlsplit(requested), urlsplit(final)
+    asked = (a.path or "/").rstrip("/") or "/"
+    served = (b.path or "/").rstrip("/") or "/"
+    if asked == served:
+        return False
+    if _NOT_FOUND_SEGMENT.search(served) and not _NOT_FOUND_SEGMENT.search(asked):
+        return True
+    return asked != "/" and served == "/" and _strip_www(a.hostname or "") == _strip_www(b.hostname or "")
+
+
 def _head_ok(url: str, timeout: float = 8.0) -> Tuple[bool, Optional[int]]:
     # Link targets come from LLM drafts: an internal/metadata/loopback URL (or a public one that
     # redirects to one) must be reported as an invalid link, never requested (plan SEC-05).
@@ -63,6 +92,9 @@ def _head_ok(url: str, timeout: float = 8.0) -> Tuple[bool, Optional[int]]:
         r = safe_head(url, timeout=timeout, headers=hdrs)
         if r.status_code in (405, 501):
             r = safe_get(url, timeout=timeout, headers=hdrs, max_bytes=256 * 1024)
+        if 200 <= r.status_code < 400 and _is_soft_404(url, str(getattr(r, "url", "") or "")):
+            logger.info(f"Soft 404: {url} was served as {r.url}")
+            return False, r.status_code
         return 200 <= r.status_code < 400, r.status_code
     except UnsafeURL as e:
         logger.warning(f"Refusing to fetch link {url}: {e}")
@@ -91,7 +123,10 @@ def validate_links(markdown: str, known_internal_slugs: Optional[List[str]] = No
             status: Optional[int] = None
             if check_external_head:
                 ok, status = _head_ok(url, timeout=external_head_timeout)
-            entry = {**l, "valid": ok, "status": status, "kind": "external"}
+            unverifiable = (not ok) and status in UNVERIFIABLE_STATUSES
+            # unverifiable != broken: keep the link (a warning, not a strip)
+            entry = {**l, "valid": ok or unverifiable, "status": status, "kind": "external",
+                     "unverifiable": unverifiable}
             external.append(entry)
     invalid_internal = [x for x in internal if not x["valid"]]
     invalid_external = [x for x in external if not x["valid"]]

@@ -123,3 +123,13 @@ def test_generator_wires_link_hardening():
     names = {getattr(t, "name", None) for t in content_generator_agent.tools}
     assert "fetch_rescue_links_tool" in names
     assert "check_link_hygiene_tool" in names
+
+
+def test_inbound_counts_match_the_whole_path_not_a_substring():
+    """SEO-13: /blog/ai must not be credited by a link to /blog/ai-agents (it hid real orphans)."""
+    counts = inbound_counts(
+        {"/blog/other": ["https://s.test/blog/ai-agents", "/blog/ai-agents/?utm=x"],
+         "/blog/third": ["https://s.test/blog/ai/#faq"]},
+        ["ai", "ai-agents", "agents"],
+    )
+    assert counts == {"ai": 1, "ai-agents": 1, "agents": 0}

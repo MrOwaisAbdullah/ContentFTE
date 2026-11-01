@@ -91,7 +91,8 @@ def test_gate_passes_when_keywords_are_present():
     assert out["missing"] == []
 
 
-def test_gate_fails_with_actionable_report():
+def test_gate_fails_with_actionable_report(monkeypatch):
+    monkeypatch.setenv("KEYWORD_GATE_ENFORCE", "on")
     # primary lands in the title + one heading (passes), both secondaries are
     # absent -> only those two are reported missing.
     draft = ("# Best Coffee Maker for Small Kitchens\n\n"
@@ -145,7 +146,8 @@ def test_density_does_not_flag_compact_drafts():
     assert out["guidance"] == []
 
 
-def test_partial_use_fails_on_secondary_only():
+def test_partial_use_fails_on_secondary_only(monkeypatch):
+    monkeypatch.setenv("KEYWORD_GATE_ENFORCE", "on")
     draft = ("# Best Coffee Maker\n\n"
              "## Why the compact coffee maker wins\n\n"
              "A compact coffee maker is the space saver. Everything else is filler "
@@ -154,3 +156,13 @@ def test_partial_use_fails_on_secondary_only():
                          secondary=["compact coffee maker", "thermal carafe"])
     assert out["missing"] == ["thermal carafe"]
     assert out["pass"] is False
+
+
+def test_a_missing_secondary_is_a_warning_by_default_and_blocking_when_enforced(monkeypatch):
+    """SEO-21: Google says there is no need to rewrite a page for every phrasing, so a miss no longer
+    blocks unless KEYWORD_GATE_ENFORCE=on - but it is still reported."""
+    draft = "# Best Coffee Maker\n\n## Why it wins\n\nA compact coffee maker is the space saver.\n"
+    monkeypatch.delenv("KEYWORD_GATE_ENFORCE", raising=False)
+    warn = check_keywords(draft, primary="coffee maker", secondary=["thermal carafe"])
+    assert warn["pass"] is True and warn["missing"] == ["thermal carafe"] and warn["guidance"]
+    assert check_keywords(draft, primary="coffee maker", secondary=["thermal carafe"], enforce=True)["pass"] is False

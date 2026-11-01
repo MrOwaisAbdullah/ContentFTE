@@ -33,7 +33,7 @@ from lib.eval_gate import PUBLISH_THRESHOLD, SUB_SCORES, EvalReport, check_gate
 from lib.factcheck import extract_claims, verify_claims
 
 # Statuses where "can't tell if it's broken" is more likely than "it is broken".
-_UNVERIFIABLE_STATUSES = {401, 403, 405, 429, 999}
+from lib.link_validator import UNVERIFIABLE_STATUSES as _UNVERIFIABLE_STATUSES
 
 
 def links_check_enabled() -> bool:

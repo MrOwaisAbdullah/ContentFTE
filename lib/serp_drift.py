@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-# Below this share of baseline URLs still present, results are treated
-# as drifted (pack refresh guidance: ~40%+ churn means re-research).
+# Drift is flagged when LESS than this share of the baseline URLs is still present, i.e. when MORE than
+# 60% of the top results changed (churn > 0.6). The old comment said "~40% churn", which is the opposite
+# reading and led operators to expect alerts at a much lower level of change (SEO-17). Tune it per site
+# with min_overlap; `churn` in the result is the number to quote.
 DEFAULT_MIN_OVERLAP = 0.4
 _TRACKING_KEYS = ("utm_", "gclid", "fbclid", "msclkid")
 

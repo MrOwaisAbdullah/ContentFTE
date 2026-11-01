@@ -13,8 +13,9 @@ SDK path (``sdk/service._content_checks``) and the sheet path
 """
 from __future__ import annotations
 
+import os
 import re
-from typing import Iterable
+from typing import Iterable, Optional
 
 # Hard cap: 1 primary + N secondaries. Extra secondaries in a sheet row are
 # dropped (and reported) rather than gated on -- operator data that exceeds the
@@ -168,12 +169,22 @@ def _stuffing_cap(markdown: str) -> float:
     return max(_STUFFING_SHARE, _STUFFING_MIN_USES / body_words)
 
 
+def _enforce_default() -> bool:
+    """KEYWORD_GATE_ENFORCE=on makes a missing secondary keyword block the draft (the old behaviour).
+
+    Default is OFF: Google's guidance is that there is no need to rewrite a page to hit every phrasing
+    of a query, and a hard "each secondary appears twice" rule pushes drafts toward stuffing (SEO-21).
+    Misses are still reported - in ``missing`` and ``guidance`` - they just do not fail ``pass``."""
+    return os.getenv("KEYWORD_GATE_ENFORCE", "off").strip().lower() in ("1", "on", "true", "yes")
+
+
 def check_keywords(markdown: str, *, primary: str = "",
-                   secondary: Iterable[str] = ()) -> dict:
+                   secondary: Iterable[str] = (), enforce: Optional[bool] = None) -> dict:
     """The gate.
 
-    ``pass`` is False when any SUPPLIED keyword falls below its minimum use
-    count. When no keywords were supplied (a legacy sheet row) the check
+    ``pass`` is False when a SUPPLIED keyword falls below its minimum use
+    count AND enforcement is on (``enforce=True`` or ``KEYWORD_GATE_ENFORCE=on``); otherwise the miss
+    is a warning only. When no keywords were supplied (a legacy sheet row) the check
     passes with ``checked: False`` -- an absent column must not become a
     second blocker, which is exactly how the 2026-10-08 featured-image
     incident deadlocked a post.
@@ -189,6 +200,7 @@ def check_keywords(markdown: str, *, primary: str = "",
     guidance: list[str] = []
     passed = True
     cap = _stuffing_cap(markdown)
+    enforce = _enforce_default() if enforce is None else bool(enforce)
 
     targets = [("primary", primary)] + [("secondary", s) for s in secondary_list]
     for role, keyword in targets:
@@ -204,7 +216,7 @@ def check_keywords(markdown: str, *, primary: str = "",
         if not placement["gated"]:
             continue
         if placement["total"] < placement["min_uses"]:
-            passed = False
+            passed = passed and not enforce
             where = (f"{placement['in_headings']} in headings, "
                      f"{placement['in_body']} in body")
             guidance.append(

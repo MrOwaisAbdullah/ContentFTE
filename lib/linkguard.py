@@ -198,23 +198,26 @@ def inbound_counts(
 
     ``source_hrefs`` maps a source post's slug path (e.g. ``"/blog/x"``)
     to every outbound href found in its ``content[].markDefs[].href``.
-    A target counts a hit when a *different* post's href contains the
-    target's slug path (``/blog/<slug>``), regardless of host — authors
-    link with full URLs. ``self_slug`` links are ignored (a post never
-    counts as its own inbound).
+    A target counts a hit when a *different* post's href points at exactly
+    the target's path (``/blog/<slug>``), regardless of host - authors link
+    with full URLs - and ignoring query, fragment and a trailing slash.
+    The comparison is on the whole path, not a substring: ``/blog/ai`` is
+    NOT credited by a link to ``/blog/ai-agents`` (SEO-13), which used to
+    hide real orphans. ``self_slug`` links are ignored (a post never counts
+    as its own inbound).
     """
     counts: Dict[str, int] = {}
     for slug in target_slugs:
         if not slug:
             continue
         bare = slug.split("/blog/")[-1].strip("/")
-        needle = f"/blog/{bare}"
+        needle = path_key(f"/blog/{bare}")
         total = 0
         for source, hrefs in source_hrefs.items():
             if self_slug and source.rstrip("/") == self_slug.rstrip("/"):
                 continue
             for href in hrefs or []:
-                if needle and needle in href:
+                if needle and path_key(href) == needle:
                     total += 1
                     break
         counts[slug] = total
