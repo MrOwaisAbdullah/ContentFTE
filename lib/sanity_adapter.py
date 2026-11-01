@@ -1015,6 +1015,19 @@ class SanityAdapter:
             logger.warning(f"[SanityAdapter.get_post_content_markdown] Failed for {doc_id}: {e}")
             return None
 
+    def _current_revision(self, doc_id: str) -> Optional[str]:
+        """The document's current `_rev` (drafts included), or None if it cannot be read - in which case
+        the patch is sent without a revision guard rather than blocking the edit."""
+        try:
+            url = self._build_query_endpoint("*[_id == $id][0]{_rev}", {"id": doc_id})
+            resp = self._make_request("GET", url, data=None, max_retries=2)
+            resp.raise_for_status()
+            result = resp.json().get("result") or {}
+            return result.get("_rev") or None
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"[SanityAdapter._current_revision] could not read revision of {doc_id}: {e}")
+            return None
+
     def update_post_content(self, doc_id: str, content_markdown: str) -> Dict[str, Any]:
         """Patches an already-published post's body `content` field in
         place, identified by its actual Sanity _id (resolve via
@@ -1025,12 +1038,24 @@ class SanityAdapter:
         title, so a small wording/fact fix doesn't require regenerating and
         republishing the entire post."""
         content_blocks = self._markdown_to_processed_blocks(content_markdown)
-        payload = {"mutations": [{"patch": {"id": doc_id, "set": {"content": content_blocks}}}]}
+        patch: Dict[str, Any] = {"id": doc_id, "set": {"content": content_blocks}}
+        # Optimistic concurrency (ADP-06): patch against the revision we just read. If an editor changed
+        # the document in Studio between our read and this write, Sanity answers 409 and we report it
+        # instead of silently overwriting their edit with our (older) rendering.
+        revision = self._current_revision(doc_id)
+        if revision:
+            patch["ifRevisionID"] = revision
+        payload = {"mutations": [{"patch": patch}]}
         try:
             response = self._make_request("POST", f"/data/mutate/{self.dataset}", data=payload, max_retries=3)
             response.raise_for_status()
             return {"success": True, "document_id": doc_id}
         except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                msg = ("The document changed in Sanity while this edit was being prepared (revision "
+                       "mismatch); nothing was overwritten. Re-read the post and apply the edit again.")
+                logger.warning(f"[SanityAdapter.update_post_content] {msg}")
+                return {"success": False, "error": msg, "conflict": True}
             try:
                 error_details = e.response.json()
                 error_msg = f"Patch failed (HTTP {e.response.status_code}): {error_details.get('error', error_details)}"

@@ -85,6 +85,18 @@ def _openrouter_free_shared_quota() -> Dict[str, Dict[str, Any]]:
 
 
 # Custom runner that extends AgentRunner and adds fallback logic
+def _provider_key(name: str) -> str:
+    """The provider key, read when a client is BUILT. A missing key used to raise KeyError while the
+    module-level agents were constructed, so merely importing blog_agents (a test, the console, a tool
+    that never calls an LLM) died with an unhelpful KeyError (PIPE-17). Now import succeeds and the
+    first real call fails with the key's name in the provider's 401."""
+    val = (os.environ.get(name) or "").strip()
+    if not val:
+        logging.getLogger(__name__).warning("%s is not set - calls to this provider will fail with 401", name)
+        return f"missing-{name}"
+    return val
+
+
 class FallbackAgentRunner(AgentRunner):
     def __init__(self):
         super().__init__()
@@ -270,14 +282,14 @@ class FallbackAgentRunner(AgentRunner):
             )
         return AsyncOpenAI(
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key=os.environ['GEMINI_API_KEY']
+            api_key=_provider_key('GEMINI_API_KEY')
         )
 
     def get_openrouter_client(self):
         from agents import AsyncOpenAI
         return AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ['OPENROUTER_API_KEY']
+            api_key=_provider_key('OPENROUTER_API_KEY')
         )
 
     def get_model_by_name(self, model_name):
