@@ -30,8 +30,9 @@ import re
 from typing import Any, Dict, List, Optional
 
 # --- inline ---
-_IMG_RE = re.compile(r'!\[(?P<alt>[^\]]*)\]\((?P<src>\S+?)(?:\s+"(?P<title>[^"]*)")?\)')
-_LINK_RE = re.compile(r'(?<!\!)\[(?P<text>[^\]]+)\]\((?P<href>\S+?)(?:\s+"(?P<title>[^"]*)")?\)')
+_URL_PART = r'(?:[^\s()]|\([^\s()]*\))+'   # one level of balanced parentheses: /wiki/Foo_(bar)
+_IMG_RE = re.compile(r'!\[(?P<alt>[^\]]*)\]\((?P<src>' + _URL_PART + r')(?:\s+"(?P<title>[^"]*)")?\)')
+_LINK_RE = re.compile(r'(?<!\!)\[(?P<text>[^\]]+)\]\((?P<href>' + _URL_PART + r')(?:\s+"(?P<title>[^"]*)")?\)')
 _CODE_RE = re.compile(r'`([^`]+)`')
 _BOLD_ITALIC_RE = re.compile(r'\*\*\*(\S.*?\S|\S)\*\*\*')
 _BOLD_RE = re.compile(r'\*\*(\S.*?\S|\S)\*\*')
@@ -69,11 +70,9 @@ def _escape_brackets(text: str) -> str:
     return text.replace("[", "&#91;").replace("]", "&#93;")
 
 
-def inline(text: str) -> str:
-    """Render one line/paragraph of inline Markdown to HTML (sanitized)."""
-    if text is None:
-        return ""
-    protected: List[str] = []
+def _inline(text: str, protected: List[str]) -> str:
+    """Inline rendering against a shared placeholder list (nested calls must share it, or their
+    indices collide and a placeholder is left behind as a raw NUL in the output)."""
 
     def _protect(match_html: str) -> str:
         protected.append(match_html)
@@ -90,31 +89,41 @@ def inline(text: str) -> str:
         return _protect(f'<img src="{src}" alt="{alt}"{t}>')
 
     def _link(m: re.Match) -> str:
-        label = html.escape(m.group("text") or "", quote=True)
+        label = _inline(m.group("text") or "", protected)   # bold/italic/code/images inside a label
         raw_href = safe_url(m.group("href") or "")
         if not raw_href:  # e.g. javascript: -> plain text, never a live link
             return _protect(label)
         href = html.escape(raw_href, quote=True)
         title = m.group("title")
         t = f' title="{html.escape(title, quote=True)}"' if title else ""
-        rel = ''
-        return _protect(f'<a href="{href}"{t}{rel}>{label}</a>')
+        return _protect(f'<a href="{href}"{t}>{label}</a>')
 
+    # code spans first: their content is literal (no emphasis, no links, no `**` pairing across spans)
+    text = _CODE_RE.sub(lambda m: _protect(f"<code>{_escape_brackets(html.escape(m.group(1), quote=False))}</code>"), text)
     text = _IMG_RE.sub(_img, text)
     text = _LINK_RE.sub(_link, text)
 
     text = html.escape(text, quote=False)  # sanitize the remaining prose
     text = _escape_brackets(text)
-    text = _CODE_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
     text = _BOLD_ITALIC_RE.sub(lambda m: f"<strong><em>{m.group(1)}</em></strong>", text)
     text = _BOLD_RE.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
     text = _STRIKE_RE.sub(lambda m: f"<del>{m.group(1)}</del>", text)
     text = _HIGHLIGHT_RE.sub(lambda m: f"<mark>{m.group(1)}</mark>", text)
     text = _ITALIC_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
     text = _UNDERSCORE_EM_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
+    return text
 
-    for i, chunk in enumerate(protected):
-        text = text.replace(f"\x00{i}\x00", chunk)
+
+def inline(text: str) -> str:
+    """Render one line/paragraph of inline Markdown to HTML (sanitized)."""
+    if text is None:
+        return ""
+    protected: List[str] = []
+    text = _inline(text, protected)
+    # A chunk can only reference placeholders created BEFORE it (a link wrapping an image), so resolve
+    # from the newest to the oldest: every nested placeholder is then expanded exactly once.
+    for i in range(len(protected) - 1, -1, -1):
+        text = text.replace(f"\x00{i}\x00", protected[i])
     return text
 
 
@@ -279,7 +288,8 @@ def _render_list(lines: List[str], i: int) -> tuple[str, int]:
         nested = ""
         while i < n and lines[i].strip() and len(lines[i]) - len(lines[i].lstrip()) > indent \
                 and (_ULI_RE.match(lines[i]) or _OLI_RE.match(lines[i])):
-            nested, i = _render_list(lines, i)
+            sub, i = _render_list(lines, i)
+            nested += sub
         items.append(f"<li>{inline(content)}{nested}</li>")
     return f"<{tag}>" + "".join(items) + f"</{tag}>", i
 
