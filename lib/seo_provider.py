@@ -72,6 +72,21 @@ def manual_keyword_data(
     }
 
 
+def normalize_difficulty(value, *, scale: int = 100) -> float:
+    """A difficulty on the 0-100 scale the ledger's priority score expects (SEO-15).
+
+    Providers disagree: OpenSEO already answers 0-100, DataForSEO's `competition` is 0-1. Mixing them made a
+    DataForSEO keyword look ~100x easier than the same keyword from OpenSEO and skewed `priority_score`.
+    `scale=1` means "the provider speaks 0-1"; the result is clamped to 0-100 either way."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if scale == 1:
+        v *= 100.0
+    return round(max(0.0, min(100.0, v)), 2)
+
+
 def _openseo_fetch(keyword: str) -> dict:
     base = (os.environ.get("OPENSEO_API_BASE") or "https://api.openseo.so/v1").rstrip("/")
     key = os.environ.get("OPENSEO_API_KEY", "")
@@ -87,7 +102,7 @@ def _openseo_fetch(keyword: str) -> dict:
         "provider": "openseo",
         "keyword": keyword,
         "volume": int(payload.get("volume", 0) or 0),
-        "difficulty": float(payload.get("difficulty", 0) or 0),
+        "difficulty": normalize_difficulty(payload.get("difficulty")),
         "intent": str(payload.get("intent", "informational")),
         "serp": payload.get("serp", [])[:10],
         "serp_gaps": payload.get("serp_gaps", [])[:3],
@@ -123,7 +138,10 @@ def _dataforseo_fetch(keyword: str) -> dict:
         "provider": "dataforseo",
         "keyword": keyword,
         "volume": int(first.get("search_volume", 0) or 0),
-        "difficulty": float(first.get("competition", 0) or 0),
+        # `competition_index` is already 0-100; the plain `competition` is 0-1
+        "difficulty": (normalize_difficulty(first["competition_index"])
+                       if first.get("competition_index") is not None
+                       else normalize_difficulty(first.get("competition"), scale=1)),
         "intent": str(first.get("intent", "informational")),
         "serp": [],
         "serp_gaps": [],

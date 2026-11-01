@@ -44,6 +44,17 @@ LEXICAL_MIN_SCORE = 0.34
 MAX_CATEGORIES = 3
 MAX_TAGS = 5
 
+
+def derived_tag_limit() -> int:
+    """How many tags to DERIVE when the brief supplies none (DERIVED_TAGS_MAX, default 3). Every tag is a
+    term with its own archive page; five auto-tags per post produced dozens of one-post archives - thin,
+    near-duplicate pages that dilute the site (SEO-22). Tags the operator/brief supplies still go up to
+    MAX_TAGS. Set 0 to derive none."""
+    try:
+        return max(0, min(MAX_TAGS, int(os.environ.get("DERIVED_TAGS_MAX", "3"))))
+    except ValueError:
+        return 3
+
 # A catch-all category means "no category" — never a reuse target. The JEV
 # choice question only offers the candidates it receives, so with just
 # "Uncategorized" on the site the judge would happily pick it (observed on
@@ -273,7 +284,7 @@ def derive_taxonomy(*, keyword: str = "", title: str = "", brief: dict | None = 
     if supplied_tags:
         tags = supplied_tags[:MAX_TAGS]
     else:
-        tags = derive_tags(keyword=keyword, title=title, brief=None)
+        tags = derive_tags(keyword=keyword, title=title, brief=None, max_tags=derived_tag_limit())
         tags_source = "derived"
 
     return {
