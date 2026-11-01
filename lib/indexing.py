@@ -117,8 +117,14 @@ def submit_bing_wmt(urls: Iterable[str], *, site_url: str,
         return {"ok": False, "error": redact_text(str(exc))[:300]}
 
 
-def submit_published(url: str, *, site_url: str = "") -> Dict[str, Any]:
+def submit_published(url: str, *, site_url: str = "", indexnow_key: str = "",
+                     bing_key: str = "", env_fallback: Optional[bool] = None) -> Dict[str, Any]:
     """Publish-path orchestrator: ping every enabled engine for ONE url.
+
+    Keys are per site (`Site.settings["indexing"]`), passed in by the caller: IndexNow verifies the key
+    by fetching `https://<host>/<key>.txt`, so a key that belongs to one host is rejected for every other
+    tenant's host (ADP-15). The environment keys are the single-site fallback; in shared (multi-tenant)
+    mode they are NOT used unless `env_fallback=True`, because they would only ever fail there.
 
     Best-effort by contract — called after the status flip in
     ``service.publish_article`` / ``refresh_article``; returns a report dict
@@ -132,12 +138,21 @@ def submit_published(url: str, *, site_url: str = "") -> Dict[str, Any]:
     site = (site_url or "").rstrip("/") or \
         f"{urlparse(url).scheme}://{urlparse(url).netloc}"
     out: Dict[str, Any] = {"url": url, "site": site}
-    key = (os.environ.get("INDEXNOW_KEY") or "").strip()
+    if env_fallback is None:
+        from lib.site_env import is_shared_mode
+        env_fallback = not is_shared_mode()
+    def pick(own: str, env_name: str) -> str:
+        own = (own or "").strip()
+        return own or ((os.environ.get(env_name) or "").strip() if env_fallback else "")
+
+    key = pick(indexnow_key, "INDEXNOW_KEY")
     if key:
         out["indexnow"] = submit_indexnow([url], base_url=site, key=key)
-    bing = (os.environ.get("BING_WMT_API_KEY") or "").strip()
+    bing = pick(bing_key, "BING_WMT_API_KEY")
     if bing:
         out["bing_wmt"] = submit_bing_wmt([url], site_url=site, api_key=bing)
     if "indexnow" not in out and "bing_wmt" not in out:
-        out["skipped"] = "INDEXNOW_KEY / BING_WMT_API_KEY not set"
+        out["skipped"] = ("no IndexNow / Bing key configured for this site "
+                          "(Site.settings.indexing.indexnow_key / bing_wmt_key)"
+                          if not env_fallback else "INDEXNOW_KEY / BING_WMT_API_KEY not set")
     return out

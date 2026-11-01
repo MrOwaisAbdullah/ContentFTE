@@ -238,3 +238,78 @@ def test_the_proxy_passes_coroutine_functions_through_and_sees_monkeypatches(mon
     assert asyncio.run(proxy.list_sites()) == {"patched": True}      # resolved at call time
     with pytest.raises(AttributeError):
         proxy.definitely_not_a_function
+
+
+# ------------------------------------------------------------------ ENG-20: no search-engine ping for a draft
+def _wp_article(svc):
+    from lib.db import Article, get_session
+    svc.upsert_site("wp", "WP", "wordpress", "https://wp.test", {"require_approval": False})
+    aid = svc.submit_article("wp", keyword="a draft")["id"]
+    s = get_session()
+    try:
+        a = s.get(Article, aid)
+        a.status, a.content_md, a.title = "approved", "# T\n\nbody", "T"
+        s.commit()
+    finally:
+        s.close()
+    return aid
+
+
+@pytest.mark.parametrize("wp_state,mode,pinged", [
+    ({"ok": True, "post_id": 5, "url": "https://wp.test/a", "status": "draft"}, "draft", False),
+    ({"ok": True, "post_id": 5, "url": "https://wp.test/a", "status": "publish"}, "auto", True),
+    ({"ok": False, "error": "boom"}, "auto", False),
+    ({"ok": True, "deduplicated": True, "post_id": 5, "url": "https://wp.test/a"}, "draft", False),
+])
+def test_indexing_is_only_pinged_for_a_page_that_is_actually_live(svc, monkeypatch, wp_state, mode, pinged):
+    aid = _wp_article(svc)
+    pings = []
+    monkeypatch.setattr(svc, "_wp_push", lambda art, meta, m: wp_state)
+    monkeypatch.setattr(svc, "_stage_images_for", lambda *a, **k: {})
+    import lib.indexing as indexing
+    monkeypatch.setattr(indexing, "submit_published", lambda url, **k: pings.append(url) or {"ok": True})
+    out = svc.publish_article(aid, mode=mode)
+    assert bool(pings) is pinged, out
+    if not pinged:
+        assert "skipped" in out["indexing"]
+
+
+def test_a_custom_site_publish_still_pings(svc, monkeypatch):
+    pings = []
+    import lib.indexing as indexing
+    monkeypatch.setattr(indexing, "submit_published", lambda url, **k: pings.append(url) or {"ok": True})
+    from lib.db import Article, get_session
+    aid = svc.submit_article("s", keyword="custom one")["id"]
+    s = get_session()
+    try:
+        a = s.get(Article, aid)
+        a.status, a.content_md = "approved", "# T\n\nbody"
+        s.commit()
+    finally:
+        s.close()
+    svc.publish_article(aid)
+    assert len(pings) == 1
+
+
+# ------------------------------------------------------------------ ENG-14: idempotency cache
+def test_idempotency_entries_expire_and_the_cache_is_bounded():
+    from sdk.idempotency import IdempotencyCache
+    now = [0.0]
+    c = IdempotencyCache(ttl=100, max_entries=3, clock=lambda: now[0])
+    c.set("a", {"v": 1})
+    now[0] = 99
+    assert c.get("a") == {"v": 1}
+    now[0] = 101
+    assert c.get("a") is None                       # the documented 24h window actually ends
+    for k in "bcdef":
+        c.set(k, {"k": k})
+    assert len(c) == 3 and c.get("b") is None and c.get("f") == {"k": "f"}   # oldest evicted, newest kept
+
+
+def test_a_replay_is_a_copy_so_one_handler_cannot_corrupt_later_replays():
+    from sdk.idempotency import IdempotencyCache
+    c = IdempotencyCache()
+    c.set("k", {"id": 1})
+    got = c.get("k")
+    got["instant_triggered"] = True
+    assert c.get("k") == {"id": 1}

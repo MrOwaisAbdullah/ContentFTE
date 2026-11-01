@@ -2847,15 +2847,45 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
         base_url = ((art.site.base_url if art.site is not None else "") or "").strip()
         if not live_url and base_url:
             live_url = f"{base_url.rstrip('/')}/{_resolve_slug(art)}"
-        if live_url:
+        if live_url and not _is_live(wp_state, mode):
+            # A WordPress draft (or a failed push) has no public URL: pinging search engines about it
+            # trains them to distrust the site's submissions and wastes the daily IndexNow quota (ENG-20).
+            out["indexing"] = {"url": live_url, "skipped": "not live yet - published as a WordPress "
+                               "draft, or the push failed; it is submitted when the post goes live"}
+        elif live_url:
             from lib.indexing import submit_published
             try:
-                out["indexing"] = submit_published(live_url, site_url=base_url)
+                out["indexing"] = submit_published(live_url, site_url=base_url,
+                                                   **_indexing_keys(art.site))
             except Exception:  # noqa: BLE001 — never raise from a ping
                 out["indexing"] = {"url": live_url, "error": "submission failed"}
         return out
     finally:
         s.close()
+
+
+def _indexing_keys(site) -> dict:
+    """This site's own IndexNow / Bing keys (Site.settings["indexing"]) as submit_published kwargs."""
+    group = ((getattr(site, "settings", None) or {}).get("indexing")) if site is not None else None
+    group = group if isinstance(group, dict) else {}
+    return {"indexnow_key": str(group.get("indexnow_key") or ""),
+            "bing_key": str(group.get("bing_wmt_key") or "")}
+
+
+def _is_live(wp_state: dict | None, mode: str) -> bool:
+    """Whether the publish put a PUBLIC page online, i.e. whether submitting its URL is meaningful.
+
+    Custom sites have no push (the article is served by the site itself), so they count as live as before.
+    For WordPress only a post that really went to the `publish` status counts; a draft, a failed push, and
+    a deduplicated re-run (status unknown) are live only when this call asked for `auto`."""
+    if wp_state is None:
+        return True
+    if not wp_state.get("ok"):
+        return False
+    status = str(wp_state.get("status") or "").lower()
+    if status:
+        return status == "publish"
+    return mode in ("auto", "publish")
 
 
 def _render_wp_body(conn, post) -> str:
@@ -2978,7 +3008,7 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
         if res.get("url"):
             from lib.indexing import submit_published
             try:
-                indexing = submit_published(res["url"], site_url=base)
+                indexing = submit_published(res["url"], site_url=base, **_indexing_keys(art.site))
             except Exception:  # noqa: BLE001 — never raise from a ping
                 indexing = {"url": res.get("url", ""), "error": "submission failed"}
         return {"article_id": art.id, "ok": True, "event": "article.refreshed",

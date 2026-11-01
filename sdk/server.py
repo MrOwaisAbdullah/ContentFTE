@@ -41,7 +41,7 @@ Endpoints:
     POST /sdk/v1/elementor/articles/{id}/build -> compose article as Elementor doc
 
 Auth: per-site API key via X-Site-Key header (SDK_MASTER_KEY, dev-open when
-unset). Idempotency-Key honored on POST /articles (24h in-memory cache).
+unset). Idempotency-Key honored on POST /articles (24h in-memory cache, bounded; see sdk/idempotency.py).
 Webhook events returned in responses: article.ready / article.drafted /
 article.published / article.needs_review. Every mutating action is
 audit-logged by the service.
@@ -65,6 +65,7 @@ import sdk.keys as site_keys
 import sdk.service as service
 from sdk.auth import AuthContext, authenticate, current
 from sdk.authz import authorize
+from sdk.idempotency import IdempotencyCache
 
 # `authorize` runs before every handler: it authenticates the key and, for site-scoped keys, enforces
 # the route table in sdk/authz.py (unlisted routes are refused to site keys).
@@ -72,7 +73,7 @@ router = APIRouter(prefix="/sdk/v1", tags=["sdk"], dependencies=[Depends(authori
 
 logger = logging.getLogger("sdk.server")
 
-_idempotency: dict[str, dict] = {}
+_idempotency = IdempotencyCache()
 
 
 def _ctx() -> AuthContext:
@@ -172,8 +173,9 @@ def submit_article(
         # Includes the site: two clients can pick the same label and Idempotency-Key.
         cache_key = hashlib.sha256(
             f"{site_key}:{site_slug}:{idempotency_key}:{body_hash}".encode()).hexdigest()
-        if cache_key in _idempotency:
-            return _idempotency[cache_key]
+        replay = _idempotency.get(cache_key)
+        if replay is not None:
+            return replay
     result = service.submit_article(site_slug, keyword=body.keyword or "",
                                     brief=body.brief)
     if "error" in result:
@@ -183,7 +185,7 @@ def submit_article(
         background_tasks.add_task(service.run_instant_pipeline, art_id)
         result["instant_triggered"] = True
     if cache_key:
-        _idempotency[cache_key] = result
+        _idempotency.set(cache_key, result)
     return result
 
 
