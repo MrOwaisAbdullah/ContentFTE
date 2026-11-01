@@ -147,7 +147,7 @@ def test_regenerate_approved_article_reverts_to_drafted():
 
     art = service.submit_article("gen-site", keyword="rewrite kw")
     asyncio.run(service.generate_content(art["id"], generate_fn=_fake_envelope))
-    assert service.approve_article(art["id"], True)["status"] == "approved"
+    assert service.approve_article(art["id"], True, force=True)["status"] == "approved"
 
     async def updated(brief):
         env = dict(ENVELOPE)
@@ -333,7 +333,7 @@ def test_rest_generate_route_and_full_status_flow():
         # approve -> publish still works on the drafted article
         service._default_generate = fake_generate
         assert client.post(f"/sdk/v1/articles/{aid}/approve",
-                           json={"approved": True}).json()["status"] == "approved"
+                           json={"approved": True, "force": True}).json()["status"] == "approved"
         pub = client.post(f"/sdk/v1/articles/{aid}/publish", json={"mode": "draft"})
         assert pub.status_code == 200 and pub.json()["status"] == "published"
     finally:
@@ -389,7 +389,7 @@ def test_mcp_brief_generate_status_publish_end_to_end():
         app.include_router(router)
         client = TestClient(app)
         assert client.post(f"/sdk/v1/articles/{generated['id']}/approve",
-                           json={"approved": True}).json()["status"] == "approved"
+                           json={"approved": True, "force": True}).json()["status"] == "approved"
         pub_raw = asyncio.run(mcp._tool_manager.call_tool(
             "contentfte_publish_article",
             {"params": {"article_id": generated["id"], "mode": "draft"}}))

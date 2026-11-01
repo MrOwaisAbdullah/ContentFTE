@@ -94,6 +94,8 @@ class ArticleSubmit(BaseModel):
 class ArticleApprove(BaseModel):
     approved: bool = True
     note: str = ""
+    # Override a failed quality gate. Audited; use only after reading the reasons.
+    force: bool = False
 
 
 class ArticleGenerate(BaseModel):
@@ -219,8 +221,22 @@ async def generate_article(article_id: int, body: ArticleGenerate | None = None,
 def approve_article(article_id: int, body: ArticleApprove,
                     x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
-    return _resolve(service.approve_article(article_id, approved=body.approved,
-                                            note=body.note, via="sdk"))
+    result = service.approve_article(article_id, approved=body.approved,
+                                     note=body.note, via="sdk", force=body.force)
+    if result.get("code") == "gate_failed":
+        # 409, not the generic 404 _resolve() would give: the article exists, its state
+        # just doesn't pass. The reasons are in `detail` so any client can show them.
+        raise HTTPException(status_code=409, detail=result["error"])
+    return _resolve(result)
+
+
+@router.get("/articles/{article_id}/gate")
+def article_gate(article_id: int, check_links: bool | None = None,
+                 x_site_key: str | None = Header(default=None)) -> dict:
+    """Run the deterministic quality gate without approving (read-only): blocking failures,
+    warnings and per-gate detail. `check_links=true` also HEADs every external link."""
+    _check_site_key(x_site_key)
+    return _resolve(service.check_article_gate(article_id, check_links=check_links))
 
 
 @router.post("/articles/{article_id}/publish")

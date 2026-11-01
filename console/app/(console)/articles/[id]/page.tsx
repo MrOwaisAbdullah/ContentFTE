@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   engine,
   ArticleDetail,
+  ArticleGate,
   LogsView,
   SiteList,
   WpPostReadback,
@@ -498,10 +499,14 @@ export default async function ArticlePage({
   const wpUrl = str(meta.wp_url);
   const lastEditAt = str(editLog.length ? editLog[editLog.length - 1]?.at : "").slice(0, 19).replace("T", " ");
 
-  const [sitesRes, logsRes] = await Promise.allSettled([
+  const [sitesRes, logsRes, gateRes] = await Promise.allSettled([
     engine<SiteList>(`/sites`),
     engine<LogsView>(`/logs?limit=200`),
+    // The engine's own verdict (fact-check vs stored research, draft checks, eval floor, AEO lint).
+    // Only meaningful once there is content to assess; a failure just hides the panel.
+    markdown.trim() ? engine<ArticleGate>(`/articles/${article.id}/gate`) : Promise.reject(new Error("no content")),
   ]);
+  const engineGate = gateRes.status === "fulfilled" ? gateRes.value : null;
   const siteSlug =
     sitesRes.status === "fulfilled"
       ? (sitesRes.value.sites.find((s) => s.id === article!.site_id)?.slug ?? "")
@@ -741,10 +746,45 @@ export default async function ArticlePage({
                       : "Six sub-scores weren't recorded for this run — the gate can't be fully re-verified from stored scores."}
                   </Alert>
                 ) : null}
+                {engineGate && !engineGate.pass && canApprove ? (
+                  <Alert tone="error">
+                    <div className="space-y-1">
+                      <p className="font-semibold">
+                        Quality gate {engineGate.enforced ? "will refuse this approval" : "(report-only mode)"}:
+                      </p>
+                      <ul className="list-disc space-y-0.5 pl-4">
+                        {engineGate.blocking.map((b) => (
+                          <li key={b}>{b}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </Alert>
+                ) : null}
+                {engineGate && engineGate.warnings.length > 0 && canApprove ? (
+                  <details className="rounded-md border border-line/60 bg-page/40 px-3 py-2 text-[11px] text-ink-dim">
+                    <summary className="cursor-pointer text-ink-faint">
+                      {engineGate.warnings.length} advisory note{engineGate.warnings.length === 1 ? "" : "s"}
+                    </summary>
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      {engineGate.warnings.map((w) => (
+                        <li key={w}>{w}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
                 {canApprove ? (
                   <form action={approveArticleAction} className="space-y-2">
                     <input type="hidden" name="id" value={article.id} />
                     <input type="hidden" name="approved" value="1" />
+                    {engineGate && !engineGate.pass && engineGate.enforced ? (
+                      <label className="flex items-start gap-2 text-[11px] leading-4 text-ink-dim">
+                        <input type="checkbox" name="force" value="1" className="mt-0.5 h-3.5 w-3.5 accent-accent" />
+                        <span>
+                          Override the quality gate. The failures above are recorded in the audit log as
+                          knowingly overridden.
+                        </span>
+                      </label>
+                    ) : null}
                     <input
                       name="note"
                       placeholder="Approval note - why it passes (optional)"

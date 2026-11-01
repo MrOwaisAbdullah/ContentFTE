@@ -203,6 +203,16 @@ class ApproveArticleInput(BaseModel):
     approved: bool = Field(default=True,
                            description="true = approve (gate can publish), false = reopen for edits")
     note: str = Field(default="", max_length=500, description="Optional operator note (audit)")
+    force: bool = Field(
+        default=False,
+        description="Override a failed quality gate (fact-check, draft checks, eval floor). "
+                    "Audited. Only set after reading the gate's reasons.")
+
+
+class GateCheckInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    article_id: int = Field(..., ge=1, description="Numeric article ID to assess")
+    check_links: bool = Field(default=False, description="Also HEAD every external link (slower)")
 
 
 class BrainNoteInput(BaseModel):
@@ -790,7 +800,26 @@ async def approve_article(params: ApproveArticleInput) -> str:
         "scores"} or {"error", "next"} (missing article, not evaluable yet).
     """
     return _out(service.approve_article(params.article_id, approved=params.approved,
-                                        note=params.note or "mcp", via="mcp"))
+                                        note=params.note or "mcp", via="mcp", force=params.force))
+
+
+@mcp.tool(
+    name="contentfte_check_gate",
+    annotations={"title": "Run the Quality Gate", "readOnlyHint": True,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+async def check_gate(params: GateCheckInput) -> str:
+    """Run the deterministic quality gate on an article WITHOUT approving it.
+
+    Checks the recorded draft checks, fact-checks numeric/date claims against the stored
+    research, enforces the eval sub-score floor when scores exist, optionally HEADs external
+    links, and lints answer-engine structure (TL;DR, question headings, tables, FAQ, sources).
+
+    Returns:
+        str: JSON {"pass", "blocking": [...], "warnings": [...], "checks": {...}} or {"error","next"}.
+    """
+    return _out(await asyncio.to_thread(service.check_article_gate, params.article_id,
+                                        params.check_links))
 
 
 @mcp.tool(

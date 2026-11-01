@@ -498,6 +498,7 @@ Checklist in §2.
 | D6 | Sheets retirement | Finish the Postgres cutover before Phase 3; two state stores double every fix. |
 | D7 | "VERIFIED ACCURACY" badge | Remove until it reflects a real gate result. |
 | D8 | Cannibalized clusters | Approve the merge/301 list in Appendix B. |
+| D10 | Refresh policy | Decide whether a decaying page should default to an in-place update (recommended) and only republish under a new URL + 301 on an intent shift — today ≥ 50 % decay or > 365 days old triggers the destructive path (SEO-04). |
 | D9 | Where workers run | Dokploy VPS worker (already hosts the bot) over GitHub Actions cron once Phase 3 lands. |
 
 ---
@@ -569,6 +570,34 @@ Also fixed in the same decay code path (plan SEO-03): a transient Search Console
 **Pre-existing failure, not caused by this work:** `tests/test_api_mcp.py::test_content_route_is_unified_delivery_payload` fails identically on a clean `master` (the test expects `scores == {}`, the service returns `{'sub_scores': {}}`). Left untouched.
 
 **Still open from the list** (deliberately not done in this pass): CON-12 component splitting and CON-13 users/roles (large UI refactors that need browser verification and a product decision on accounts), CON-14 a11y audit, CON-16 flash-text signing, SEC-15 full CSP with nonces, the SDK React renderer's raw-HTML fallback (SEC-06), the tool-name/schema contract test across all agents (PIPE-01/09/10), and everything in Phases 1–4 (scheduler, quotas, adapter protocol, per-site keys). The engine still needs per-tenant API keys (SEC-03) before shared mode is safe.
+
+### 2026-11-01 (third pass) — Phase 1: make the quality gates real
+
+Branch `improve/phase1-quality-gates` (stacked on `improve/phase0-console-engine-hardening`).
+
+| ID | What changed | Where |
+|---|---|---|
+| SEO-01 | **The gate now runs.** `lib/quality_gate.py::assess()` is a pure function over an article's stored content/meta. `approve_article` runs it and **refuses** (`code: gate_failed`, REST 409 with the reasons) unless the caller passes `force=true` — an explicit override that is written to the audit log with the overridden reasons. Reopening is never gated. `QUALITY_GATE_ENFORCE=off` makes it report-only. New read-only `GET /articles/{id}/gate` and MCP `contentfte_check_gate`. | `lib/quality_gate.py`, `sdk/service.py`, `sdk/server.py`, `mcp_server/server.py` |
+| | *What blocks* (all provable): a failed draft check recorded at generation; claims the stored research doesn't support; eval sub-score floor / overall < 90 **when the six sub-scores were recorded**; broken external links (opt-in: `QUALITY_GATE_CHECK_LINKS=1`). *What only warns:* AEO lint, missing research, missing sub-scores, bot-blocked links. | |
+| SEO-02 / PIPE-01 | Fact-check matcher rewritten: numbers match as **whole** numbers (the old matcher accepted "5%" if any digit 5 appeared anywhere in the research), only near a meaningful word from the claim's own sentence; attribution verbs match on word boundaries (`per` no longer fires inside "experience"); "according to X" needs X's *name* in the research, not a generic word like "report". | `lib/factcheck.py` |
+| SEO-24 | New deterministic AEO lint (all warnings): TL;DR length 40–60 words, question-style H2 ratio, comparison sections need a real table, FAQ emitted twice, attributed figures, source-domain count and quality. | `lib/aeo_lint.py` |
+| SEO-07 | `article_schema` enriched (still `Article`, still backward compatible): author `Person` + `sameAs`, publisher `Organization` + logo, `ImageObject`, description, keywords, word count, `mainEntityOfPage`. Fields appear **only from real data** — author/publisher come from `Site.settings["identity"]`; **no configured author ⇒ no author markup** (nothing is invented). New `build_article_graph()` produces the linked `@graph` form (Appendix C). | `lib/geo.py`, `lib/wordpress.py`, `lib/custom_site.py`, `sdk/service.py` |
+| SEO-08 / SEO-19 | **Honest `dateModified`.** It used to be the publish date, so it never differed from `datePublished`. Now `meta.modified_at`, bumped only when an edit changes ≥ 3% of the words (typos/whitespace don't count); `datePublished` is the real publish date. `_iso()` now always emits an explicit UTC offset (SQLite returned naive timestamps). | `lib/freshness.py`, `sdk/service.py` |
+| SEO-05 | `max_posts_per_cadence` is a real **sliding-window cap** (it was read, returned, and never applied). New per-site `settings.enforce_cadence` (console checkbox) makes `publish_article` refuse over-cap publishes; `force` still overrides. | `sdk/service.py`, console `actions/instances.ts` + settings form |
+| SEO-14 | The stale-year check followed a regex frozen at 2025; it now tracks the calendar. | `sdk/service.py` |
+| SEO-11 | Cannibalization v2: light stemming; ≥ 2 shared tokens required (a single shared word no longer collides); judged in both directions; **`won` (ranking) keywords are protected** (they were excluded); also checks **existing article titles**, not just the ledger. Catches the live site's near-duplicate slugs in tests. | `lib/ledger.py`, `tools/ledger_tool.py` |
+| PIPE-09 / contract | Brief agent was told to use `manage_sheet_tool` (doesn't exist) → `manage_sheet_data_tool`. New `tests/test_agent_contracts.py` imports every agent and asserts each backticked tool in a prompt exists on that agent, and no tool schema has an array without `items`. | `blog_agent/blog_agents.py`, `tests/test_agent_contracts.py` |
+| Console | Article page shows the engine's gate verdict (blocking reasons, advisory notes) and an explicit "override" tick; an approval refused by the gate lands on the article page (the queue can't show reasons). | `console/app/(console)/articles/[id]/page.tsx`, `actions/articles.ts`, `lib/engine.ts` |
+
+**Behaviour changes to know about:** (1) approving an engine-generated draft that fails its own checks, or whose numeric claims aren't in the stored research, is now refused unless forced — set `QUALITY_GATE_ENFORCE=off` to run report-only while you calibrate; (2) timestamps now carry `+00:00` on SQLite; (3) cannibalization flags fewer single-word collisions and more real near-duplicates.
+
+**New tests:** `test_factcheck_matching.py`, `test_quality_gate.py`, `test_quality_gate_wiring.py`, `test_article_schema.py`, `test_cadence_window.py`, `test_cannibalization.py`, `test_agent_contracts.py`.
+
+**Deliberately not done in Phase 1:**
+- **SEO-04** (in-place refresh as the default, new URL + 301 only on intent shift). Existing tests and spec §5.10 encode "≥ 50 % decay ⇒ major"; flipping it is a product decision — see D10.
+- **SEO-10** (require a real `brain/` note or owner evidence before drafting): needs the owner to write brain entries first, otherwise it would block all generation.
+- **SEO-09** (compute the overall score from sub-scores in code, code-snippet verification against docs) and the PIPE-03/04/05 posting/queue changes live in the Sheets-era agent loop that Phase 3 replaces.
+- **SEO-13/12** (linkguard orphan counting, link-validator soft-404 detection), **ADP** adapter work, per-site API keys — Phases 2–3.
 
 **Not verified:** a `next build` / running console in a browser (it would overwrite `.next`, which may belong to a running dev server), so the visual behaviour of the hidden-panel tabs, the secret placeholders, the new error/loading screens and the headers is untested in a browser. Server Actions behind a proxy may need `experimental.serverActions.allowedOrigins` (comment left in `next.config.ts`).
 

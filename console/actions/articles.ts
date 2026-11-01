@@ -87,13 +87,20 @@ export async function approveArticleAction(formData: FormData) {
   const approved = formData.get("approved") === "1";
   const from = String(formData.get("from") || "");
   const note = String(formData.get("note") || "");
+  // Explicit, audited override of a failed quality gate (the engine records it).
+  const force = approved && formData.get("force") === "1";
   const returnTo = from && PUBLISH_RETURN.has(from) ? from : back(id);
   try {
     await engine(`/articles/${id}/approve`, {
       method: "POST",
-      json: { approved, note },
+      json: { approved, note, force },
     });
   } catch (e) {
+    // 409 = the quality gate refused. Queues can't show the reasons or offer the override,
+    // so land on the article page, which does — never silently back on the queue.
+    if (e instanceof EngineError && e.status === 409) {
+      redirect(back(id, e.message.replace(/^409\s*/, "")));
+    }
     redirect(from && PUBLISH_RETURN.has(from) ? `${from}?err=${encodeURIComponent(errorOf(e))}` : back(id, errorOf(e)));
   }
   revalidatePath("/");

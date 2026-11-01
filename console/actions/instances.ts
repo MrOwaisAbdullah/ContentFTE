@@ -207,6 +207,7 @@ export async function updateSiteSettingsAction(formData: FormData) {
       set("max_posts_per_cadence", formInt(formData, "max_posts_per_cadence", 1, 50));
       set("require_approval", formBool(formData, "require_approval", true));
       set("auto_publish", formBool(formData, "auto_publish", true));
+      set("enforce_cadence", formBool(formData, "enforce_cadence", true));
       set("publish_mode", formEnum(formData, "publish_mode", PUBLISH_MODES));
     }
 

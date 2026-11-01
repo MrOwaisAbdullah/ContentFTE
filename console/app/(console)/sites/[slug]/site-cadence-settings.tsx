@@ -93,6 +93,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   const [maxPosts, setMaxPosts] = useState(Number(settings.max_posts_per_cadence ?? cadence?.max_posts_per_cadence ?? 1));
   const [requireApproval, setRequireApproval] = useState(Boolean(settings.require_approval ?? cadence?.require_approval ?? true));
   const [autoPublish, setAutoPublish] = useState(Boolean(settings.auto_publish ?? cadence?.auto_publish ?? false));
+  const [enforceCadence, setEnforceCadence] = useState(Boolean(settings.enforce_cadence ?? cadence?.enforced ?? false));
   const [publishMode, setPublishMode] = useState(String(settings.publish_mode || cadence?.publish_mode || site.publish_mode || "draft"));
 
   // WordPress Auth States
@@ -460,6 +461,28 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                       </label>
                       <p className="text-[11px] text-ink-faint">
                         When active, once an article is approved, the background scheduler automatically publishes it when the <code>{frequency}</code> slot arrives.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3 p-3.5 rounded-xl border border-line bg-surface/20">
+                    <input
+                      type="checkbox"
+                      id="enforce_cadence"
+                      name="enforce_cadence"
+                      value="1"
+                      checked={enforceCadence}
+                      onChange={(e) => setEnforceCadence(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-accent rounded"
+                    />
+                    <div className="space-y-0.5 flex-1">
+                      <label htmlFor="enforce_cadence" className="text-xs font-semibold text-ink cursor-pointer">
+                        Enforce the post cap on every publish
+                      </label>
+                      <p className="text-[11px] text-ink-faint">
+                        Refuse to publish once <code>{maxPosts}</code> post{maxPosts === 1 ? "" : "s"} already went out in the
+                        current <code>{frequency}</code> window (a one-off <em>force</em> still overrides). Off = the cadence is
+                        only a guide for the scheduler.
                       </p>
                     </div>
                   </div>

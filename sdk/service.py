@@ -37,6 +37,7 @@ from lib.db import (Article, Article as ArticleModel, AuditLog, BrainEntry,
                     BrandProfile, CostLedger, KeywordLedger, ReviewFeedback,
                     ShareOfVoice, Site, TavilyUsage, get_session, init_db)
 from lib.cost_ledger import finalize, record_cost, usage_cost
+from lib import quality_gate
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 from lib.secrets_redact import merge_settings, redact_settings
 from lib.store import article_scores
@@ -76,7 +77,51 @@ def _parse_faqs(raw: Any) -> list[dict] | None:
 
 
 def _iso(dt: Any) -> str | None:
-    return dt.isoformat() if dt else None
+    """ISO-8601 with an explicit offset. Every stored timestamp is UTC, but SQLite hands back
+    NAIVE datetimes (Postgres hands back aware ones), so the same row used to serialize as
+    '...T17:30:50' on one backend and '...T17:30:50+00:00' on the other -- and structured data
+    (datePublished/dateModified) needs the offset."""
+    if not dt:
+        return None
+    if isinstance(dt, datetime) and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _modified_iso(art: ArticleModel) -> str | None:
+    """`dateModified` for structured data: the last SUBSTANTIVE edit (meta.modified_at), never
+    earlier than the publish date. It used to be the publish date itself, so freshness was never
+    signalled; and it is only bumped for real content changes (lib/freshness.py)."""
+    from lib import freshness
+    return freshness.effective_modified(art.meta, _iso(art.published_at), _iso(art.created_at))
+
+
+def _schema_extra(art: ArticleModel, meta: dict, brief: dict) -> dict:
+    """Optional Article JSON-LD enrichment from REAL data only: the site's configured author and
+    publisher (Site.settings["identity"]), the brief's description/keywords, the word count and a
+    remote featured-image URL when one is recorded. Missing pieces are omitted, never invented."""
+    from lib import geo
+    site = art.site
+    ident = geo.identity_from_settings(
+        site.settings if site else None, site.name if site else "",
+        (site.base_url if site else "") or "")
+    image = None
+    for row in (meta.get("images") or []):
+        if isinstance(row, dict) and str(row.get("url") or "").startswith(("http://", "https://")):
+            image = {"url": row["url"], "caption": str(row.get("alt") or "")}
+            if row.get("slot") == "featured":
+                break
+    kws = [_focus_keyphrase(meta, brief)] + [
+        k.strip() for k in str(brief.get("secondary_keywords") or "").replace(";", ",").split(",")
+        if k.strip()]
+    return {
+        "author": ident["author"],
+        "publisher": ident["publisher"],
+        "image": image,
+        "description": str(brief.get("description") or meta.get("summary") or ""),
+        "keywords": [k for k in kws if k],
+        "word_count": len((art.content_md or "").split()) or None,
+    }
 
 
 def _cost_map(s, article_ids: list[int]) -> dict[int, float]:
@@ -999,6 +1044,13 @@ def _content_sections(md: str) -> list[dict]:
     return out
 
 
+def _stale_year_re(now: datetime | None = None) -> "re.Pattern[str]":
+    """Matches 'in <past year>' (2010 .. last year). The pattern used to be hard-coded to
+    20(1\\d|2[0-5]), so from 2026 on it never flagged a stale 'in 2025'/'in 2026' again."""
+    current = (now or datetime.now(timezone.utc)).year
+    return re.compile(rf"\bin\s+(?:{'|'.join(str(y) for y in range(2010, current))})\b", re.I)
+
+
 def _content_checks(*, content: str, title: str, summary: str,
                     faqs: list | None, brief: dict) -> dict:
     """Deterministic draft gate — every check is {pass, value, need}.
@@ -1020,7 +1072,7 @@ def _content_checks(*, content: str, title: str, summary: str,
     external = [l for l in md_links
                 if l.startswith(("http://", "https://"))
                 and not (site_base and l.startswith(site_base))]
-    stale_re = re.compile(r"\bin\s+20(?:1\d|2[0-5])\b", re.I)
+    stale_re = _stale_year_re()
     checks: dict[str, dict] = {
         "words": {"pass": words >= min_words, "value": words, "need": min_words},
         "tldr": {"pass": bool(re.search(r"TL\s*;?\s*DR", (content or "")[:800], re.I))},
@@ -1698,11 +1750,10 @@ async def generate_content(article_id: int, *, generate_fn=None,
         # Mechanical stale-year fix in the title only ("in 2025" -> current
         # year): safe because the pattern is explicit; body years are left to
         # the model instructions + the revise feedback above.
-        stale_title = re.search(r"\bin\s+20(?:1\d|2[0-5])\b", title or "", re.I)
+        stale_title = _stale_year_re().search(title or "")
         if stale_title:
             year = datetime.now(timezone.utc).year
-            title = re.sub(r"\bin\s+20(?:1\d|2[0-5])\b", f"in {year}",
-                           title, flags=re.I)
+            title = _stale_year_re().sub(f"in {year}", title)
             checks = _content_checks(content=content, title=title,
                                      summary=summary, faqs=faqs, brief=brief)
 
@@ -1817,8 +1868,9 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
                 slug=slug,
                 url=url,
                 faqs=_parse_faqs(meta.get("faqs") or brief.get("faqs")),
-                date_published=_iso(art.created_at),
-                date_modified=_iso(art.published_at or art.created_at),
+                date_published=_iso(art.published_at or art.created_at),
+                date_modified=_modified_iso(art),
+                schema_extra=_schema_extra(art, meta, brief),
                 focus_keyword=_focus_keyphrase(meta, brief),
                 # An operator PATCH of meta.tldr (SEO tab) wins over the
                 # TL;DR block parsed from the markdown by build_delivery_payload.
@@ -1832,18 +1884,101 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
         s.close()
 
 
+def gate_enforced() -> bool:
+    """QUALITY_GATE_ENFORCE=off turns the approval gate into report-only (still assessed,
+    recorded and audited, never refused). Default: enforced."""
+    return os.environ.get("QUALITY_GATE_ENFORCE", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def _research_corpus(s, art: ArticleModel) -> list[str]:
+    """Text the fact-check may ground claims in: the keyword's stored research snapshot and the
+    brief. Empty when no research was stored (the gate then warns instead of blocking)."""
+    parts: list[str] = []
+
+    def _add(v: Any) -> None:
+        if v in (None, "", [], {}):
+            return
+        parts.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str))
+
+    if art.keyword_id:
+        kw = s.get(KeywordLedger, art.keyword_id)
+        if kw is not None:
+            _add(kw.research_snapshot)
+    meta = art.meta or {}
+    for key in ("research", "research_excerpts", "brief"):
+        _add(meta.get(key))
+    return [p for p in parts if p.strip()]
+
+
+def _assess_gate(s, art: ArticleModel, check_links: bool | None = None) -> dict:
+    meta = art.meta or {}
+    return quality_gate.assess(
+        content_md=art.content_md or "",
+        meta=meta,
+        source_excerpts=_research_corpus(s, art),
+        faqs=meta.get("faqs"),
+        check_links=check_links,
+    )
+
+
+def check_article_gate(article_id: int, check_links: bool | None = None) -> dict:
+    """Read-only: run the deterministic quality gate (draft checks, fact-check against the stored
+    research, eval floor, optional link check, AEO lint) and return the report. Nothing is changed."""
+    init_db()
+    s = get_session()
+    try:
+        art = s.get(ArticleModel, article_id)
+        if art is None:
+            return _err(f"article {article_id} not found", "run list_articles first")
+        if not (art.content_md or "").strip():
+            return _err(f"article {article_id} has no content yet", "run generate_content first")
+        return {"id": art.id, "enforced": gate_enforced(),
+                **_assess_gate(s, art, check_links)}
+    finally:
+        s.close()
+
+
 def approve_article(article_id: int, approved: bool = True, note: str = "",
-                    via: str = "api") -> dict:
+                    via: str = "api", force: bool = False) -> dict:
+    """Approve (or reopen) an article.
+
+    Approving runs the deterministic quality gate first (see lib/quality_gate.py). If it has
+    blocking failures the approval is REFUSED (`code: gate_failed`) unless the caller passes
+    `force=True` — an explicit, audited operator override. Reopening (`approved=False`) is never gated."""
     init_db()
     s = get_session()
     try:
         art = s.get(ArticleModel, article_id)
         if art is None:
             return _err(f"article {article_id} not found", "run generate_article first")
+
+        gate: dict | None = None
+        overridden: list[str] = []
+        if approved:
+            gate = _assess_gate(s, art)
+            if not gate["pass"]:
+                if gate_enforced() and not force:
+                    s.add(AuditLog(article_id=art.id, site_id=art.site_id,
+                                   action="article.gate_blocked",
+                                   payload={"blocking": gate["blocking"], "via": via, "note": note}))
+                    s.commit()
+                    return {"error": "quality gate failed: " + "; ".join(gate["blocking"][:5]),
+                            "next": "fix the listed issues (edit or regenerate), or approve again with "
+                                    "force=true to override (the override is audited)",
+                            "code": "gate_failed", "gate": gate}
+                overridden = list(gate["blocking"])
+            new_meta = dict(art.meta or {})
+            new_meta["gate"] = {"pass": gate["pass"], "blocking": gate["blocking"],
+                                "warnings": gate["warnings"], "assessed_at": gate["assessed_at"],
+                                **({"overridden": True} if overridden else {})}
+            art.meta = new_meta
         art.status = "approved" if approved else "needs_review"
         s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                        action="article.approve" if approved else "article.needs_review",
-                       payload={"note": note, "via": via}))
+                       payload={"note": note, "via": via,
+                                **({"gate_pass": gate["pass"], "warnings": len(gate["warnings"])}
+                                   if gate else {}),
+                                **({"forced": True, "overridden": overridden} if overridden else {})}))
         # Self-learning input: a dedicated review_feedback row carrying the
         # operator's note/reason (the audit row above keeps the same data, but
         # this table is what mine_feedback scans for patterns).
@@ -1857,7 +1992,10 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         ))
         s.commit()
         return {"id": art.id, "status": art.status,
-                "event": "article.published" if approved else "article.needs_review"}
+                "event": "article.published" if approved else "article.needs_review",
+                **({"gate": {"pass": gate["pass"], "warnings": gate["warnings"],
+                             **({"overridden": overridden} if overridden else {})}}
+                   if gate else {})}
     finally:
         s.close()
 
@@ -2123,10 +2261,12 @@ def update_content(article_id: int, content_md: str, note: str = "",
         if not (content_md or "").strip():
             return _err("content_md is empty", "send the full replacement markdown")
         reopened = art.status == "approved"
+        previous_md = art.content_md or ""
         art.content_md = content_md
         if reopened:
             art.status = "generated"
-        meta = dict(art.meta or {})
+        from lib import freshness
+        meta = freshness.bump_modified(art.meta or {}, previous_md, content_md)
         meta["edit_log"] = [
             *(meta.get("edit_log") or []),
             {"at": datetime.now(timezone.utc).isoformat(), "note": note, "via": via},
@@ -2375,8 +2515,9 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
             inpost_images=inpost,
             cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
             entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
-            date_published=_iso(art.created_at),
-            date_modified=_iso(art.published_at or art.created_at),
+            date_published=_iso(art.published_at or art.created_at),
+            date_modified=_modified_iso(art),
+            schema_extra=_schema_extra(art, meta, brief),
             focus_keyphrase=_focus_keyphrase(meta, brief),
             render_target="blocks",
         )
@@ -2433,13 +2574,17 @@ def publish_article(article_id: int, mode: str = "draft", via: str = "api",
                 return _err(
                     f"article {article_id} is '{art.status}' — publish requires 'approved' (operator approval required by site cadence settings)",
                     "gate: approve the article in the console or via POST /sdk/v1/articles/{id}/approve")
-            if enforce_cadence and not force and not cadence.get("can_publish_now", True):
+            # Enforcement is opt-in per call OR per site (Site.settings["enforce_cadence"]); the
+            # console never sent the per-call flag, so the cadence it shows was advisory only.
+            if (enforce_cadence or cadence.get("enforced")) and not force \
+                    and not cadence.get("can_publish_now", True):
                 next_time = cadence.get("next_allowed_at")
                 freq = cadence.get("frequency")
                 hours = round((cadence.get("seconds_remaining") or 0) / 3600, 1)
                 return _err(
-                    f"cadence limit reached for site '{site.slug}': frequency is '{freq}'. "
-                    f"Next post allowed at {next_time} ({hours}h remaining)",
+                    f"cadence limit reached for site '{site.slug}': {cadence.get('posts_in_window')} of "
+                    f"{cadence.get('max_posts_per_cadence')} allowed post(s) already went out this '{freq}' "
+                    f"window. Next slot opens at {next_time} ({hours}h remaining)",
                     "wait for cadence window or pass force=true to override")
 
         if art.status not in ("approved", "published"):
@@ -2609,8 +2754,9 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                 inpost_images=inpost,
                 cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
                 entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
-                date_published=_iso(art.created_at),
-                date_modified=_iso(datetime.now(timezone.utc)),
+                date_published=_iso(art.published_at or art.created_at),
+                date_modified=_modified_iso(art),
+                schema_extra=_schema_extra(art, meta, brief),
                 focus_keyphrase=_focus_keyphrase(meta, brief),
                 render_target="blocks",
             )
@@ -2747,20 +2893,27 @@ def get_site_cadence_status(s, site: Site) -> dict:
     auto_publish = bool(settings.get("auto_publish", False))
     publish_mode = str(settings.get("publish_mode") or "draft")
 
-    latest_pub = s.execute(
+    # Published posts, newest first. The window is the cadence interval: at most
+    # `max_posts_per_cadence` posts may have gone out within the trailing interval.
+    # (This used to look only at the time since the LAST post, so the cap was read,
+    # reported, and never applied -- plan SEO-05.)
+    rows = s.execute(
         select(Article)
         .where(Article.site_id == site.id, Article.status == "published")
         .order_by(Article.published_at.desc(), Article.created_at.desc())
-    ).scalars().first()
+        .limit(200)
+    ).scalars().all()
+    latest_pub = rows[0] if rows else None
 
     now = datetime.now(timezone.utc)
     interval = CADENCE_INTERVALS.get(freq, timedelta(days=1))
 
-    last_pub_dt = None
-    if latest_pub is not None:
-        last_pub_dt = latest_pub.published_at or latest_pub.created_at
-        if last_pub_dt and last_pub_dt.tzinfo is None:
-            last_pub_dt = last_pub_dt.replace(tzinfo=timezone.utc)
+    def _aware(dt):
+        return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
+
+    pub_times = sorted(t for t in (_aware(a.published_at or a.created_at) for a in rows) if t is not None)
+    last_pub_dt = pub_times[-1] if pub_times else None
+    in_window = [t for t in pub_times if interval is not None and now - t < interval]
 
     can_publish_now = True
     next_allowed_at = None
@@ -2768,11 +2921,14 @@ def get_site_cadence_status(s, site: Site) -> dict:
 
     if freq == "manual":
         can_auto_publish = False
-    elif interval is not None and last_pub_dt is not None:
-        next_allowed_at = last_pub_dt + interval
-        if now < next_allowed_at:
+    elif interval is not None:
+        if len(in_window) >= max_posts:
+            # The slot frees up when the oldest post that still counts ages out of the window.
             can_publish_now = False
-            seconds_remaining = int((next_allowed_at - now).total_seconds())
+            next_allowed_at = in_window[len(in_window) - max_posts] + interval
+            seconds_remaining = max(0, int((next_allowed_at - now).total_seconds()))
+        elif last_pub_dt is not None:
+            next_allowed_at = last_pub_dt + interval   # informational: when the last post's window ends
         can_auto_publish = auto_publish and can_publish_now
     else:
         can_auto_publish = auto_publish
@@ -2790,6 +2946,8 @@ def get_site_cadence_status(s, site: Site) -> dict:
         "can_publish_now": can_publish_now,
         "seconds_remaining": seconds_remaining,
         "can_auto_publish": can_auto_publish,
+        "posts_in_window": len(in_window),
+        "enforced": bool(settings.get("enforce_cadence", False)),
     }
 
 
@@ -3105,8 +3263,9 @@ def elementor_build(article_id: int, post_id: int | None = None,
             slug=slug,
             cta=brief.get("cta") if isinstance(brief.get("cta"), dict) else None,
             entities=brief.get("entities") if isinstance(brief.get("entities"), list) else None,
-            date_published=_iso(art.created_at),
-            date_modified=_iso(art.published_at or art.created_at),
+            date_published=_iso(art.published_at or art.created_at),
+            date_modified=_modified_iso(art),
+            schema_extra=_schema_extra(art, meta, brief),
             focus_keyphrase=_focus_keyphrase(meta, brief),
             render_target="elementor",
         )

@@ -96,6 +96,19 @@ export interface SiteList {
   count: number;
 }
 
+/** GET /articles/{id}/gate — the engine's deterministic quality gate (plan SEO-01). */
+export interface ArticleGate {
+  id: number;
+  /** false → approval is refused unless forced (when `enforced`). */
+  pass: boolean;
+  enforced: boolean;
+  /** Provable failures: unsupported claims, failed draft checks, eval floor, broken links. */
+  blocking: string[];
+  /** Advisory: AEO lint, missing research / sub-scores. */
+  warnings: string[];
+  assessed_at: string;
+}
+
 /** GET /stages — one finished `stage.run` audit row (console Wave 5). */
 export interface StageRun {
   id: number;
@@ -129,6 +142,10 @@ export interface SiteCadenceStatus {
   can_publish_now: boolean;
   seconds_remaining: number;
   can_auto_publish: boolean;
+  /** posts that went out inside the current cadence window (counts toward max_posts_per_cadence) */
+  posts_in_window?: number;
+  /** the site refuses publishes over the cap (settings.enforce_cadence) */
+  enforced?: boolean;
 }
 
 /** GET /sites/{slug}/health — ledger + WP config + live probes + cadence (spec §5.6). */
