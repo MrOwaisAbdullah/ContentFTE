@@ -61,6 +61,11 @@ from agents import (
 )
 from discord import app_commands
 from discord.ext import commands, tasks
+
+try:  # bot.py is copied to /app alone by the Dockerfile together with access.py
+    import access
+except ImportError:  # pragma: no cover - running from the repo root
+    from discord_bot import access
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.service_account import Credentials
 
@@ -1424,9 +1429,44 @@ intents.message_content = True
 intents.reactions = True
 
 
+# --- Access control (plan SEC-07 / SEC-18) -----------------------------------------------------
+# Who may drive the bot is decided by discord_bot/access.py: ALLOWED_DISCORD_USER_IDS if set, otherwise
+# only the Discord application's owner / team. The channel alone is NOT authorization.
+ALLOWED_USER_IDS = access.parse_ids(os.environ.get("ALLOWED_DISCORD_USER_IDS", ""))
+_owner_ids_cache: Optional[frozenset] = None
+
+
+async def _owner_ids() -> frozenset:
+    global _owner_ids_cache
+    if _owner_ids_cache is None:
+        info = await bot.application_info()
+        team = getattr(info, "team", None)
+        ids = {m.id for m in team.members} if team else {info.owner.id}
+        _owner_ids_cache = frozenset(ids)
+    return _owner_ids_cache
+
+
+async def _is_authorized(user_id: int) -> bool:
+    return access.is_authorized(user_id, ALLOWED_USER_IDS,
+                                frozenset() if ALLOWED_USER_IDS else await _owner_ids())
+
+
+class AuthorizedTree(app_commands.CommandTree):
+    """Every slash command (/run, /edit, /repurpose, /add_topic, ...) passes through this check."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if await _is_authorized(interaction.user.id):
+            return True
+        logger.warning("[auth] refused /%s from user %s",
+                       getattr(interaction.command, "name", "?"), interaction.user.id)
+        await interaction.response.send_message(
+            "You're not authorized to use this bot.", ephemeral=True)
+        return False
+
+
 class ContentSparkBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents, help_command=None)
+        super().__init__(command_prefix="!", intents=intents, help_command=None, tree_cls=AuthorizedTree)
         self.last_event_at = time.monotonic()
 
     async def setup_hook(self):
@@ -1508,9 +1548,16 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     emoji = str(payload.emoji)
     if emoji not in ("✅", "❌"):
         return
+    if not await _is_authorized(payload.user_id):
+        logger.warning("[auth] ignored %s reaction from unauthorized user %s", emoji, payload.user_id)
+        return
 
     channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
     message = await channel.fetch_message(payload.message_id)
+    if not access.is_pipeline_message(message.author.bot, message.webhook_id):
+        # A human can type "**Title:** X" and react; only drafts/candidates the pipeline posted count.
+        logger.warning("[auth] ignored reaction on a human-authored message %s", payload.message_id)
+        return
     logger.info(f"[reaction] {emoji} on message {payload.message_id} in approval channel")
 
     candidate_topic = _extract_candidate_topic(message.content)
@@ -1726,6 +1773,8 @@ async def _send_chunked(channel, text: str, limit: int = 1900) -> None:
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+    if not await _is_authorized(message.author.id):
+        return  # silently: this agent holds approval, publish and live-edit tools
     # No mention required -- this server only ever has the owner and the
     # bot in it, so every non-bot message is implicitly directed at it;
     # requiring an explicit @mention every time was just friction. Still

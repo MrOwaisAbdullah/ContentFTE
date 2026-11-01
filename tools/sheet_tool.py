@@ -1768,6 +1768,63 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
         delay=delay
     )
 
+def manage_sheet_data_restricted(
+    worksheet_name: str,
+    action: Literal[
+        "get_worksheet", "get_all_records", "get_row", "get_column",
+        "get_range", "append_row", "insert_row", "update_row",
+        "update_cell", "update_cells", "find_row_by_key"
+    ],
+    data: Optional[List[List[str]]] = None,
+    row_values: Optional[List[str]] = None,
+    row_index: Optional[int] = None,
+    col_values: Optional[List[str]] = None,
+    col_index: Optional[int] = None,
+    cell_range: Optional[str] = None,
+    key_column: Optional[str] = None,
+    key_value: Optional[str] = None,
+) -> BaseResult:
+    """Read and write the pipeline's Google Sheet worksheets (research_data, content_briefs, ...).
+
+    You may read any worksheet and append rows. You may NOT delete rows, clear a worksheet, or edit the
+    approval/publication worksheets (generated_posts, published_posts, review_feedback_log): a human
+    decides those. Values are stored as plain text (never evaluated as formulas).
+
+    Args:
+        worksheet_name (str): Name of the worksheet.
+        action (str): get_worksheet | get_all_records | get_row | get_column | get_range | append_row |
+                      insert_row | update_row | update_cell | update_cells | find_row_by_key.
+        data (List[List[str]], optional): Rows for batch updates.
+        row_values (List[str], optional): Values for a single row (append/insert/update).
+        row_index (int, optional): 1-based row index.
+        col_values (List[str], optional): Values for a column update.
+        col_index (int, optional): 1-based column index.
+        cell_range (str, optional): A1 range, e.g. 'A1:C10'.
+        key_column (str, optional): Header of the lookup column (find_row_by_key).
+        key_value (str, optional): Value to find in the key column (find_row_by_key).
+
+    Returns:
+        BaseResult: {'status': 'success'|'error', 'message': ..., plus action-specific fields}.
+    """
+    from tools.sheet_guard import check_agent_write
+
+    refusal = check_agent_write(worksheet_name, action)
+    if refusal:
+        return {"status": "error", "message": refusal}
+    return manage_sheet_data(
+        worksheet_name=worksheet_name, action=action, data=data, row_values=row_values,
+        row_index=row_index, col_values=col_values, col_index=col_index, cell_range=cell_range,
+        # RAW: a model-supplied "=IMPORTDATA(...)" must be stored as text, not executed by Sheets.
+        value_input_option="RAW", key_column=key_column, key_value=key_value,
+    )
+
+
+# Registered under the SAME name as the full tool, so every existing prompt that says
+# `manage_sheet_data_tool` keeps working for the agents that get this safer version.
+manage_sheet_data_restricted_tool = function_tool(
+    manage_sheet_data_restricted, name_override="manage_sheet_data_tool")
+
+
 def validate_row(row, row_index):
     """Validate the row content and FAQs."""
     errors = []

@@ -4,7 +4,7 @@ from agents import Agent, ModelSettings, AgentHooks,RunContextWrapper, handoff, 
 from blog_agent.custom_runner import FallbackAgentRunner
 from tools.tools import post_to_sanity_tool, get_author_context_tool, get_brain_notes_tool, textstat_tool, grammar_check_tool, fetch_internal_links_tool
 from lib.models import *
-from tools.sheet_tool import manage_sheet_data_tool, get_keyword_tool
+from tools.sheet_tool import manage_sheet_data_tool, manage_sheet_data_restricted_tool, get_keyword_tool
 from tools.factcheck_tool import factcheck_gate_tool
 from tools.ledger_tool import (get_next_brief_task_tool, register_brief_task_tool,
                                get_brief_template_tool, mark_brief_saved_tool,
@@ -191,7 +191,7 @@ content_evaluation_agent = Agent(
 
      ```
      """.replace("owaisabdullah.dev", SITE_HOST),
-    tools=[manage_sheet_data_tool, web_search_tool, textstat_tool, grammar_check_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
+    tools=[manage_sheet_data_restricted_tool, web_search_tool, textstat_tool, grammar_check_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, jev_verify_claim_tool, jev_score_title_hook_tool, jev_check_pii_tool],
     # Cross-provider evaluation: DeepSeek evaluates Gemini-written content
     # and vice versa, preventing same-provider bias. DeepSeek V4 Flash is
     # pay-per-token (~$0.07/M) -- negligible for the few evaluation calls
@@ -447,7 +447,7 @@ content_generator_agent = Agent(
     "warnings": []
     }
     """.replace("owaisabdullah.dev", SITE_HOST),
-    tools=[manage_sheet_data_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, fetch_rescue_links_tool, check_link_hygiene_tool, factcheck_gate_tool, jev_rank_internal_links_tool, jev_verify_external_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, get_offer_catalog_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
+    tools=[manage_sheet_data_restricted_tool, get_author_context_tool, get_brain_notes_tool, web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, fetch_internal_links_tool, fetch_rescue_links_tool, check_link_hygiene_tool, factcheck_gate_tool, jev_rank_internal_links_tool, jev_verify_external_links_tool, jev_score_draft_quality_tool, jev_check_pii_tool, get_offer_catalog_tool, content_evaluation_agent.as_tool(tool_name="get_evaluation_feedback", tool_description="Get evaluation feedback for the content to use the feedback for improvements")],
     handoff_description="Use the given brief to create a high quality seo friendly Blog content, and use evaluation tools for feedback and improve the content using it.",
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
@@ -912,7 +912,7 @@ brief_agent = Agent(
     
      **Always return complete JSON with:** status, Keyword/Topic, Brief Content, FAQs, External Source Links, Content Summary, errors, warnings
      """,
-    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool, get_skill_pack_tool, build_paa_page_tool, build_comparison_page_tool, plan_keyword_cluster_tool, get_keyword_metrics_tool, check_cannibalization_tool],
+    tools=[web_search_tool, tavily_search_tool, tavily_extract_tool, tavily_crawl_tool, manage_sheet_data_restricted_tool, get_author_context_tool, jev_score_brief_quality_tool, get_next_brief_task_tool, register_brief_task_tool, get_brief_template_tool, mark_brief_saved_tool, get_offer_catalog_tool, get_skill_pack_tool, build_paa_page_tool, build_comparison_page_tool, plan_keyword_cluster_tool, get_keyword_metrics_tool, check_cannibalization_tool],
     hooks=MyAgentHooks(),
     model=custom_runner.get_model_by_name("gemini-flash-latest"),
     model_settings=ModelSettings(temperature=0.8),
