@@ -20,6 +20,10 @@
     "p4": {
       "name": "improve/phase4-remaining-hardening",
       "summary": "SSRF guard, log redaction, Discord access control, restricted sheet tool, client retry rules, adapter fixes, /ready, upgraded dependencies, this status board"
+    },
+    "p5": {
+      "name": "improve/phase5-pipeline-adapters",
+      "summary": "/run_workflow repaired, WP inline renderer rewritten (linked images, code spans, nested lists), keyword/overall-score gates made honest, link validator soft-404 + bot-blocked handling, per-site IndexNow keys, bounded idempotency cache, flash-message codes"
     }
   },
   "items": {
@@ -187,8 +191,9 @@
       "note": "stop auto-creating sites on read/submit; validate slugs"
     },
     "ENG-14": {
-      "status": "open",
-      "note": "move the idempotency cache to the database with a TTL and unique key"
+      "status": "partial",
+      "branch": "p5",
+      "note": "bounded 24h TTL cache that replays copies; still per process - a database-backed key store is needed for multiple workers"
     },
     "ENG-15": {
       "status": "partial",
@@ -214,8 +219,9 @@
       "note": "Python and TypeScript clients"
     },
     "ENG-20": {
-      "status": "open",
-      "note": "publish in draft mode should not set status=published or ping IndexNow for a draft URL"
+      "status": "partial",
+      "branch": "p5",
+      "note": "no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open"
     },
     "ENG-21": {
       "status": "partial",
@@ -250,7 +256,8 @@
       "status": "open"
     },
     "PIPE-08": {
-      "status": "open"
+      "status": "done",
+      "branch": "p5"
     },
     "PIPE-09": {
       "status": "done",
@@ -308,8 +315,9 @@
       "note": "Sanity createIfNotExists silently ignores a changed re-publish; no draft mode"
     },
     "ADP-02": {
-      "status": "open",
-      "note": "replace the regex inline renderer with a markdown AST (linked images, nested lists, code spans)"
+      "status": "partial",
+      "branch": "p5",
+      "note": "inline renderer fixed (linked images, code spans, nested lists, balanced-paren URLs); a full markdown AST (markdown-it-py) is still the cleaner end state"
     },
     "ADP-03": {
       "status": "done",
@@ -363,8 +371,8 @@
       "note": "Sanity: publish without mainImage, publishedAt/updatedAt/canonical/ogImage fields"
     },
     "ADP-15": {
-      "status": "open",
-      "note": "per-site IndexNow/Bing keys"
+      "status": "done",
+      "branch": "p5"
     },
     "SEO-01": {
       "status": "done",
@@ -402,8 +410,9 @@
       "branch": "p1"
     },
     "SEO-09": {
-      "status": "open",
-      "note": "compute the overall score in code from sub-scores; verify code snippets against current docs"
+      "status": "partial",
+      "branch": "p5",
+      "note": "overall is capped at mean(sub-scores)+EVAL_OVERALL_TOLERANCE; verifying code snippets against current docs is still open"
     },
     "SEO-10": {
       "status": "decision",
@@ -414,12 +423,13 @@
       "branch": "p1"
     },
     "SEO-12": {
-      "status": "open",
-      "note": "link validator: compare final path, soft-404 detection, treat 403/429 as unverifiable (partly in quality gate)"
+      "status": "done",
+      "branch": "p5"
     },
     "SEO-13": {
-      "status": "open",
-      "note": "linkguard: exact path matching, explicit orphan list, scale minimums for small sites"
+      "status": "partial",
+      "branch": "p5",
+      "note": "exact-path inbound counts; explicit orphan list and small-site minimums still open"
     },
     "SEO-14": {
       "status": "done",
@@ -435,8 +445,9 @@
       "note": "minimum-prior-clicks floor done; seasonality/year-over-year and cause split open"
     },
     "SEO-17": {
-      "status": "open",
-      "note": "SERP drift threshold wording, persisted baselines, SERP-feature tracking"
+      "status": "partial",
+      "branch": "p5",
+      "note": "threshold wording corrected (overlap < 40% = churn > 60%); persisted baselines and SERP-feature tracking still open"
     },
     "SEO-18": {
       "status": "open",
@@ -452,8 +463,8 @@
       "note": "duplicate-FAQ lint added; FAQ optional-by-intent (and emitted once) still open"
     },
     "SEO-21": {
-      "status": "open",
-      "note": "downgrade the secondary-keyword minimum from a hard gate to a warning"
+      "status": "done",
+      "branch": "p5"
     },
     "SEO-22": {
       "status": "open",
@@ -569,8 +580,8 @@
       "note": "tests for session, redirect-safety, secrets, instance guard, limiter; server-action tests open"
     },
     "CON-16": {
-      "status": "open",
-      "note": "flash messages should be short codes, not arbitrary query text"
+      "status": "done",
+      "branch": "p5"
     },
     "TEN-01": {
       "status": "done",

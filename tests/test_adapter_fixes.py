@@ -217,3 +217,101 @@ def test_post_blog_reports_the_real_error_not_an_unbound_local(monkeypatch):
     out = ad.post_blog("T", "s", "body", [], "", "my-slug", "alt", [])
     assert out["status"] == "error" and "author lookup failed" in out["error"]
     assert out["post_url"].endswith("my-slug")
+
+
+# ---- ADP-02: the WordPress inline renderer ----------------------------------------------------------
+def test_linked_image_keeps_the_image_and_leaks_no_placeholder():
+    from lib.wp_render import inline
+    out = inline("[![alt](https://x.com/a.png)](https://y.com)")
+    assert "\x00" not in out
+    assert out == '<a href="https://y.com"><img src="https://x.com/a.png" alt="alt"></a>'
+
+
+def test_code_spans_are_literal_and_do_not_mis_nest_with_emphasis():
+    from lib.wp_render import inline
+    assert inline("a `**x**` b `**y**` c") == "a <code>**x**</code> b <code>**y**</code> c"
+    # a shortcode inside code must stay inert in WordPress
+    assert "[gallery]" not in inline("`[gallery]`")
+
+
+def test_link_labels_render_inline_marks_and_urls_keep_balanced_parentheses():
+    from lib.wp_render import inline
+    assert inline("[**bold** link](https://e.com/Foo_(bar))") == \
+        '<a href="https://e.com/Foo_(bar)"><strong>bold</strong> link</a>'
+    assert inline("[x](javascript:alert(1))") == "x"          # still never a live link
+
+
+def test_two_sublists_under_one_item_are_both_kept():
+    from lib.wp_render import markdown_to_wp_html
+    html = markdown_to_wp_html("- a\n  - b\n  1. c\n- d", blocks=False)
+    assert "<li>b</li>" in html and "<li>c</li>" in html
+
+
+# ---- SEO-12: link validator ---------------------------------------------------------------------------
+def test_soft_404_detection():
+    from lib.link_validator import _is_soft_404
+    assert _is_soft_404("https://e.com/blog/made-up", "https://e.com/") is True           # deep link -> homepage
+    assert _is_soft_404("https://e.com/blog/made-up", "https://www.e.com/") is True
+    assert _is_soft_404("https://e.com/a", "https://e.com/404") is True
+    assert _is_soft_404("https://e.com/a", "https://e.com/a/") is False                   # trailing slash only
+    assert _is_soft_404("https://e.com/old", "https://e.com/new-page") is False           # a real move
+    assert _is_soft_404("https://e.com/", "https://e.com/en/") is False
+    assert _is_soft_404("https://e.com/a", "https://other.com/") is False                 # another site's root
+
+
+def test_a_bot_blocked_link_is_kept_not_stripped(monkeypatch):
+    import lib.link_validator as lv
+    monkeypatch.setattr(lv, "_head_ok", lambda url, timeout=8.0: (False, 403 if "blocked" in url else 404))
+    md = "[a](https://blocked.test/x) and [b](https://gone.test/y)"
+    res = lv.validate_links(md, known_internal_slugs=[], check_external_head=True)
+    by = {e["url"]: e for e in res["external"]}
+    assert by["https://blocked.test/x"]["valid"] is True and by["https://blocked.test/x"]["unverifiable"] is True
+    assert by["https://gone.test/y"]["valid"] is False
+    stripped = lv.strip_invalid_links(md, res)
+    assert "[a](https://blocked.test/x)" in stripped and "[b](" not in stripped
+
+
+# ---- ADP-15: per-site IndexNow / Bing keys ------------------------------------------------------------
+def test_each_site_uses_its_own_indexnow_key_and_shared_mode_ignores_the_global_one(monkeypatch):
+    import lib.indexing as ix
+    calls = []
+    monkeypatch.setattr(ix, "submit_indexnow", lambda urls, base_url, key: calls.append(("nb", base_url, key)) or {"ok": True})
+    monkeypatch.setattr(ix, "submit_bing_wmt", lambda urls, site_url, api_key: calls.append(("bing", site_url, api_key)) or {"ok": True})
+    monkeypatch.setenv("INDEXING_ENABLED", "1")
+    monkeypatch.setenv("INDEXNOW_KEY", "GLOBAL")
+    monkeypatch.setenv("BING_WMT_API_KEY", "GLOBALBING")
+
+    ix.submit_published("https://a.test/x", site_url="https://a.test", indexnow_key="A-KEY", env_fallback=False)
+    assert calls == [("nb", "https://a.test", "A-KEY")]
+
+    calls.clear()
+    monkeypatch.setenv("TENANCY_MODE", "shared")
+    out = ix.submit_published("https://b.test/x", site_url="https://b.test")   # no own key, shared mode
+    assert calls == [] and "no IndexNow" in out["skipped"]                      # the global key would just fail
+
+    calls.clear()
+    monkeypatch.setenv("TENANCY_MODE", "isolated")
+    ix.submit_published("https://c.test/x", site_url="https://c.test")          # single-site fallback still works
+    assert ("nb", "https://c.test", "GLOBAL") in calls and ("bing", "https://c.test", "GLOBALBING") in calls
+
+
+def test_the_service_passes_the_sites_own_keys():
+    from sdk import service
+
+    class _Site:
+        settings = {"indexing": {"indexnow_key": "K1", "bing_wmt_key": "B1"}}
+    assert service._indexing_keys(_Site()) == {"indexnow_key": "K1", "bing_key": "B1"}
+    assert service._indexing_keys(None) == {"indexnow_key": "", "bing_key": ""}
+
+
+# ---- SEO-09: the headline score is derived from the sub-scores ---------------------------------------
+def test_an_inflated_overall_cannot_outrun_its_sub_scores():
+    from lib.eval_gate import EvalReport, check_gate, computed_overall, effective_overall
+    subs = dict.fromkeys(("accuracy", "depth", "seo", "voice", "originality", "citability"), 82)
+    r = EvalReport(overall=94, sub_scores=subs)
+    assert computed_overall(subs) == 82 and effective_overall(r) == 87        # mean 82 + tolerance 5
+    verdict = check_gate(r)
+    assert verdict["publish"] is False and "reported 94" in verdict["reasons"][0]
+    honest = EvalReport(overall=91, sub_scores=dict.fromkeys(subs, 91))
+    assert check_gate(honest)["publish"] is True
+    assert effective_overall(EvalReport(overall=95, sub_scores={"accuracy": 99})) == 95   # incomplete: unchanged
