@@ -137,6 +137,15 @@ export function formInt(
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
+/** Clamped decimal (e.g. a USD amount), rounded to cents; undefined when absent / not a number. */
+export function formMoney(fd: FormLike, name: string, min: number, max: number): number | undefined {
+  const raw = formText(fd, name);
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.round(Math.min(max, Math.max(min, n)) * 100) / 100;
+}
+
 /** One of `allowed`, else undefined (never an arbitrary string). */
 export function formEnum<T extends string>(
   fd: FormLike,

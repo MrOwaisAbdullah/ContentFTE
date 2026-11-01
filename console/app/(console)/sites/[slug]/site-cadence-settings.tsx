@@ -77,6 +77,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   const wpSettings = (settings.wp || {}) as Record<string, any>;
   const imageSettings = (settings.image || {}) as Record<string, any>;
   const contentSettings = (settings.content || {}) as Record<string, any>;
+  const budgetSettings = (settings.budget || {}) as Record<string, any>;
   const indexingSettings = (settings.indexing || {}) as Record<string, any>;
   const notifSettings = (settings.notifications || {}) as Record<string, any>;
   // Secret VALUES never reach the browser (stripped by lib/engine.ts); only
@@ -114,6 +115,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
   const [minWords, setMinWords] = useState(Number(contentSettings.min_words ?? 1500));
   const [brandVoice, setBrandVoice] = useState(String(contentSettings.brand_voice_prompt || ""));
   const [generateFaqs, setGenerateFaqs] = useState(Boolean(contentSettings.generate_faqs ?? true));
+  const [monthlyBudget, setMonthlyBudget] = useState(String(budgetSettings.monthly_usd ?? ""));
 
   const [autoIndex, setAutoIndex] = useState(Boolean(indexingSettings.auto_index_on_publish ?? true));
   const [indexnowKey, setIndexnowKey] = useState("");
@@ -301,7 +303,7 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
           <form action={updateSiteSettingsAction} className="space-y-6" noValidate>
             <input type="hidden" name="slug" value={site.slug} />
             {/* Every tab stays mounted (hidden), so one save submits all groups; the action only touches the groups listed here. */}
-            <input type="hidden" name="_groups" value="cadence wp image content indexing notifications" />
+            <input type="hidden" name="_groups" value="cadence wp image content budget indexing notifications" />
 
             {/* TAB 1: CADENCE & APPROVAL */}
             <section hidden={activeTab !== "cadence"} aria-hidden={activeTab !== "cadence"}>{(
@@ -779,6 +781,29 @@ export function SiteCadenceSettings({ site, cadence }: Props) {
                   />
                   <p className="text-[11px] text-ink-faint">
                     Custom instructions injected into the Content Agent prompt for every article created under this site.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="budget_monthly_usd" className="block text-xs font-semibold uppercase tracking-wider text-ink">
+                    Monthly spend cap (USD)
+                  </label>
+                  <input
+                    id="budget_monthly_usd"
+                    type="number"
+                    name="budget_monthly_usd"
+                    min={0}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={monthlyBudget}
+                    onChange={(e) => setMonthlyBudget(e.target.value)}
+                    placeholder="0 = no cap"
+                    className="w-40 px-3 py-2 rounded-lg border border-line bg-card font-mono text-xs text-ink focus:outline-none focus:border-accent"
+                  />
+                  <p className="text-[11px] text-ink-faint">
+                    Once this site&apos;s month-to-date spend reaches the cap, the engine refuses writing and image generation
+                    for it (publishing and reading keep working) until next month or until you raise the cap. Protects you from
+                    one client running up the bill.
                   </p>
                 </div>
               </div>

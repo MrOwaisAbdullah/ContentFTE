@@ -91,10 +91,15 @@ def _check_site_key(x_site_key: str | None) -> str:
     return ctx.label
 
 
+# Service error dicts may carry a machine-readable `code`; map it to the right HTTP status instead of
+# the generic 404 (the article exists -- it's the request that can't be honoured).
+_CODE_STATUS = {"budget_exceeded": 402, "gate_failed": 409}
+
+
 def _resolve(data: dict) -> dict:
     """Service error dicts become HTTP errors; success passes through."""
     if "error" in data:
-        raise HTTPException(status_code=404, detail=data["error"])
+        raise HTTPException(status_code=_CODE_STATUS.get(data.get("code"), 404), detail=data["error"])
     return data
 
 
@@ -228,6 +233,8 @@ async def generate_article(article_id: int, body: ArticleGenerate | None = None,
     result = await service.generate_content(
         article_id, regenerate=bool(body and body.regenerate))
     if "error" in result:
+        if result.get("code") == "budget_exceeded":
+            raise HTTPException(status_code=402, detail=result["error"])
         if "not found" in result["error"]:
             raise HTTPException(status_code=404, detail=result["error"])
         if result["error"].startswith(("generation failed", "agent returned",
@@ -523,13 +530,15 @@ def get_briefs(site_slug: str, limit: int = 100,
 
 
 @router.get("/logs")
-def get_logs(kind: str = "", limit: int = 200, offset: int = 0,
+def get_logs(kind: str = "", limit: int = 200, offset: int = 0, site_slug: str = "",
              x_site_key: str | None = Header(default=None)) -> dict:
     """Logs worksheet view (read-only): audit_log rows (kind = action
     prefix, e.g. "usage" or "publish"; empty = all) + the cost ledger.
     `offset` pages the surfaced list(s) — the console's Older/Newer pager."""
     _check_site_key(x_site_key)
-    return _resolve(service.list_logs(kind=kind, limit=limit, offset=offset))
+    # A site key sees its own rows only; the platform key may pass a site or omit it for everything.
+    return _resolve(service.list_logs(kind=kind, limit=limit, offset=offset,
+                                      site_slug=_ctx().scoped_site(site_slug)))
 
 
 @router.get("/spend/summary")

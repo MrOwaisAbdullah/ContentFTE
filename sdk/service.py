@@ -812,7 +812,78 @@ def list_briefs(site_slug: str, limit: int = 100) -> dict:
         s.close()
 
 
-def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
+def _scope_site(s, site_slug: str, *, require_in_shared: bool = False):
+    """Resolve an optional site filter -> (site | None, error | None).
+
+    The old pattern was `site = lookup(slug) if slug else None` followed by "filter only if site is
+    not None" -- so a MISTYPED slug, or no slug at all, silently returned every tenant's rows (plan
+    ENG-08). Now:
+      * a slug that doesn't exist is an error, never a wider query;
+      * with `require_in_shared`, an empty slug on an engine that serves several sites
+        (TENANCY_MODE=shared) is an error too -- tenant content must always be asked for by site;
+      * an empty slug on a single-site engine still means "this instance's site(s)"."""
+    from lib.site_env import is_shared_mode
+    slug = (site_slug or "").strip()
+    if slug:
+        site = _site_by_slug(s, slug)
+        if site is None:
+            return None, _err(f"site '{slug}' not found", "run list_sites for valid slugs")
+        return site, None
+    if require_in_shared and is_shared_mode():
+        return None, _err("site_slug is required: this engine serves several sites",
+                          "pass the site's slug")
+    return None, None
+
+
+def _site_cost_filter(site_id: int):
+    """CostLedger rows that belong to a site: recorded against it, or against one of its articles."""
+    return (CostLedger.site_id == site_id) | (
+        CostLedger.article_id.in_(select(Article.id).where(Article.site_id == site_id)))
+
+
+def _month_start(now: datetime | None = None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def site_month_spend(s, site_id: int) -> float:
+    """Month-to-date USD spent by one site (every cost row except the `total` roll-ups)."""
+    q = (select(func.coalesce(func.sum(CostLedger.amount_usd), 0.0))
+         .where(CostLedger.kind != "total", CostLedger.created_at >= _month_start())
+         .where(_site_cost_filter(site_id)))
+    return float(s.scalar(q) or 0.0)
+
+
+def budget_status(s, site: Site) -> dict:
+    """Spend vs the site's monthly cap (`Site.settings["budget"]["monthly_usd"]`; 0/unset = no cap)."""
+    raw = ((site.settings or {}).get("budget") or {}).get("monthly_usd")
+    try:
+        cap = float(raw) if raw not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        cap = 0.0
+    spent = site_month_spend(s, site.id)
+    return {"cap_usd": round(cap, 4) if cap > 0 else None, "mtd_usd": round(spent, 4),
+            "remaining_usd": round(max(0.0, cap - spent), 4) if cap > 0 else None,
+            "exceeded": bool(cap > 0 and spent >= cap)}
+
+
+def _budget_block(s, art: ArticleModel) -> dict | None:
+    """An error dict when this article's site has used up its monthly cap, else None. Called before
+    every operation that spends money (LLM generation, image generation) so one client cannot run up
+    the platform's bill (plan TEN-03). Publishing and reading are never blocked by it."""
+    site = art.site
+    if site is None:
+        return None
+    b = budget_status(s, site)
+    if not b["exceeded"]:
+        return None
+    return {"error": (f"monthly spend cap reached for site '{site.slug}': ${b['mtd_usd']:.2f} of "
+                      f"${b['cap_usd']:.2f} used this month"),
+            "next": "raise settings.budget.monthly_usd for this site, or wait until next month",
+            "code": "budget_exceeded", "budget": b}
+
+
+def list_logs(kind: str = "", limit: int = 200, offset: int = 0, site_slug: str = "") -> dict:
     """Read-only logs view for the console (Sheets usage/audit parity).
 
     Returns audit rows (action-prefix filtered by `kind`: "usage" ->
@@ -823,11 +894,16 @@ def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
     init_db()
     s = get_session()
     try:
+        site, bad = _scope_site(s, site_slug)
+        if bad:
+            return bad
         k = (kind or "").strip()
         offset = max(0, int(offset or 0))
         audit: list[dict] = []
         if k != "cost":
             aq = select(AuditLog)
+            if site is not None:  # platform-wide rows (stage runs, usage) have no site and are excluded
+                aq = aq.where(AuditLog.site_id == site.id)
             if k:
                 aq = aq.where(AuditLog.action.startswith(k))
             audit_rows = s.execute(
@@ -838,8 +914,11 @@ def list_logs(kind: str = "", limit: int = 200, offset: int = 0) -> dict:
                      for a in audit_rows]
         costs = []
         if not k or k == "cost":
+            cq = select(CostLedger)
+            if site is not None:
+                cq = cq.where(_site_cost_filter(site.id))
             for c in s.execute(
-                select(CostLedger).order_by(CostLedger.id.desc())
+                cq.order_by(CostLedger.id.desc())
                 .limit(limit).offset(offset)
             ).scalars():
                 costs.append({"id": c.id, "article_id": c.article_id, "kind": c.kind,
@@ -864,11 +943,10 @@ def get_spend_summary(site_slug: str = "") -> dict:
         # Month start (1st 00:00 UTC)
         mtd_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        site_id = None
-        if site_slug:
-            site = _site_by_slug(s, site_slug)
-            if site:
-                site_id = site.id
+        site, bad = _scope_site(s, site_slug)
+        if bad:
+            return bad
+        site_id = site.id if site is not None else None
 
         base_q = select(func.coalesce(func.sum(CostLedger.amount_usd), 0.0)).where(CostLedger.kind != "total")
         if site_id:
@@ -884,6 +962,7 @@ def get_spend_summary(site_slug: str = "") -> dict:
 
         return {
             "site_slug": site_slug,
+            **({"budget": budget_status(s, site)} if site is not None else {}),
             "wtd_usd": round(wtd_spend, 4),
             "mtd_usd": round(mtd_spend, 4),
             "total_usd": round(total_spend, 4),
@@ -1406,6 +1485,9 @@ def stage_images(article_id: int) -> dict:
         if art is None:
             return _err(f"article {article_id} not found",
                         "submit one first: contentfte_submit_article")
+        blocked = _budget_block(s, art)
+        if blocked:
+            return blocked
         meta = dict(art.meta) if isinstance(art.meta, dict) else {}
         out = _stage_images_for(art, meta, reason="manual")
         if meta.get("images"):
@@ -1488,6 +1570,9 @@ def regenerate_article_image(article_id: int, image_name: str) -> dict:
         art = s.get(ArticleModel, article_id)
         if art is None:
             return _err(f"article {article_id} not found", "run list_articles first")
+        blocked = _budget_block(s, art)
+        if blocked:
+            return blocked
         # Deep copy before mutating: a shallow copy shares the nested `images`
         # row objects with the committed value, so an in-place row edit would
         # compare EQUAL to the old meta and SQLAlchemy would never mark the
@@ -1646,6 +1731,9 @@ async def generate_content(article_id: int, *, generate_fn=None,
         if art.status == "published" and not regenerate:
             return _err(f"article {article_id} is published",
                         "pass regenerate=true to rewrite it (status returns to 'drafted')")
+        blocked = _budget_block(s, art)
+        if blocked:
+            return blocked
 
         meta = art.meta if isinstance(art.meta, dict) else {}
         brief_meta = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
@@ -2023,7 +2111,9 @@ def list_brain_entries(site_slug="", kind=""):
     init_db()
     s = get_session()
     try:
-        site = _site_by_slug(s, site_slug) if site_slug else None
+        site, bad = _scope_site(s, site_slug, require_in_shared=True)
+        if bad:
+            return bad
         q = select(BrainEntry)
         if site is not None:
             q = q.where(BrainEntry.site_id == site.id)
@@ -2052,7 +2142,9 @@ def create_brain_entry(site_slug="", kind="voice", title="", tags=None, content=
     init_db()
     s = get_session()
     try:
-        site = _site_by_slug(s, site_slug) if site_slug else None
+        site, bad = _scope_site(s, site_slug, require_in_shared=True)
+        if bad:
+            return bad   # a typo'd slug used to create a site-less entry visible to EVERY site
         if not (title or "").strip():
             return _err("title is required", "pass a title for the brain entry")
         e = BrainEntry(site_id=site.id if site else None,
@@ -2104,13 +2196,22 @@ def delete_brain_entry(entry_id):
 
 
 def get_brain_notes(topic="", site_slug=""):
+    """Brain notes for a topic. These are injected into the writer's prompt, so on an engine that
+    serves several sites they must come ONLY from that site: the site-less ("global") rows and the
+    repo's brain/*.md files belong to the operator's own site and are not shared with tenants
+    (plan ENG-08 -- one tenant's first-hand stories used to surface in another tenant's draft)."""
+    from lib.site_env import is_shared_mode
+    shared = is_shared_mode()
     init_db()
     s = get_session()
     try:
-        site = _site_by_slug(s, site_slug) if site_slug else None
+        site, bad = _scope_site(s, site_slug, require_in_shared=True)
+        if bad:
+            return bad
         q = select(BrainEntry)
         if site is not None:
-            q = q.where((BrainEntry.site_id == site.id) | (BrainEntry.site_id.is_(None)))
+            cond = BrainEntry.site_id == site.id
+            q = q.where(cond if shared else (cond | BrainEntry.site_id.is_(None)))
         rows = s.execute(q).scalars().all()
         db_entries = [{"title": e.title, "tags": list(e.tags or []),
                        "content": e.content, "kind": e.kind} for e in rows]
@@ -2121,7 +2222,7 @@ def get_brain_notes(topic="", site_slug=""):
     try:
         from pathlib import Path
         brain_dir = Path(__file__).resolve().parents[1] / "brain"
-        if brain_dir.is_dir():
+        if brain_dir.is_dir() and not shared:
             for pp in sorted(brain_dir.glob("*.md")):
                 if pp.name == "README.md" or pp.name.startswith("_"):
                     continue
@@ -2196,7 +2297,9 @@ def mine_feedback(site_slug="", min_rows=5):
     init_db()
     s = get_session()
     try:
-        site = _site_by_slug(s, site_slug) if site_slug else None
+        site, bad = _scope_site(s, site_slug, require_in_shared=True)
+        if bad:
+            return bad
         q = select(ReviewFeedback)
         if site is not None:
             q = q.where(ReviewFeedback.site_id == site.id)
@@ -2238,7 +2341,9 @@ def list_review_feedback(site_slug="", limit=100):
     init_db()
     s = get_session()
     try:
-        site = _site_by_slug(s, site_slug) if site_slug else None
+        site, bad = _scope_site(s, site_slug, require_in_shared=True)
+        if bad:
+            return bad
         q = select(ReviewFeedback)
         if site is not None:
             q = q.where(ReviewFeedback.site_id == site.id)

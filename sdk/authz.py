@@ -73,7 +73,7 @@ ROUTES: dict[tuple[str, str], tuple[str, str]] = {
     # sends caller-supplied credentials to a caller-supplied URL (SSRF) until safe_fetch exists:
     ("POST", f"{P}/sites/{{site_slug}}/test-connection"): (PLATFORM, "admin"),
     ("GET", f"{P}/search-console"): (PLATFORM, "admin"),         # spans every site on the instance
-    ("GET", f"{P}/logs"): (PLATFORM, "admin"),                   # audit + cost rows are not site-filtered yet
+    ("GET", f"{P}/logs"): (SELF, "read"),                        # handler pins `site_slug` to the key's site
     ("GET", f"{P}/stages"): (PLATFORM, "admin"),
     ("POST", f"{P}/run/{{stage}}"): (PLATFORM, "admin"),         # stage handlers are not site-scoped yet
     ("GET", f"{P}/wp/posts/{{post_id}}"): (PLATFORM, "admin"),   # resolves WP credentials from process env

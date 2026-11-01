@@ -13,6 +13,7 @@ import {
   formBool,
   formEnum,
   formInt,
+  formMoney,
   formText,
   mergeGroup,
   type Json,
@@ -253,6 +254,16 @@ export async function updateSiteSettingsAction(formData: FormData) {
         min_words: formInt(formData, "min_words", 300, 10_000),
         brand_voice_prompt: formText(formData, "brand_voice_prompt")?.slice(0, 4000),
         generate_faqs: formBool(formData, "generate_faqs", true),
+      });
+    }
+
+    if (groups.has("budget")) {
+      // 0 (or blank) = no cap. The engine refuses paid operations (generation, images) for this
+      // site once month-to-date spend reaches the cap.
+      // A submitted-but-blank field means "remove the cap" (0), not "leave it as it was".
+      const cap = formMoney(formData, "budget_monthly_usd", 0, 100_000);
+      settings.budget = mergeGroup(cur.budget, {
+        monthly_usd: cap ?? (formText(formData, "budget_monthly_usd") === "" ? 0 : undefined),
       });
     }
 

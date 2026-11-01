@@ -113,3 +113,19 @@ test("form helpers: absent fields are undefined, values are clamped/allow-listed
   assert.equal(formBool(fd, "unchecked", true), false); // submitted group, box unticked
   assert.equal(formBool(fd, "unchecked", false), undefined); // group not submitted → untouched
 });
+
+test("formMoney parses cents, clamps, and treats blank/garbage as absent", async () => {
+  const { formMoney } = await import("../lib/site-secrets.ts");
+  const fd = new FormData();
+  fd.set("a", "12.345");
+  fd.set("neg", "-5");
+  fd.set("huge", "999999999");
+  fd.set("blank", "");
+  fd.set("bad", "abc");
+  assert.equal(formMoney(fd, "a", 0, 1000), 12.35);
+  assert.equal(formMoney(fd, "neg", 0, 1000), 0);
+  assert.equal(formMoney(fd, "huge", 0, 1000), 1000);
+  assert.equal(formMoney(fd, "blank", 0, 1000), undefined);
+  assert.equal(formMoney(fd, "bad", 0, 1000), undefined);
+  assert.equal(formMoney(fd, "missing", 0, 1000), undefined);
+});
