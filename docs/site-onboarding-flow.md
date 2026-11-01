@@ -23,7 +23,7 @@ The code lives in `sdk/service.py` (canonical ops) → `sdk/server.py`
 | **Site** | A row keyed by `slug` with `site_type` = `custom` \| `wordpress`, an optional `base_url`, and `publish_mode`. Create it once. |
 | **Article lifecycle** | `briefed` → `drafted` → `approved` → `published`; a rejected review sets `needs_review`. `publish_article` only accepts `approved` (or `published`). |
 | **Interfaces** | Everything below is available three ways, same behavior: **REST** (`/sdk/v1/*`), **MCP** (`contentfte_*` tools), and the **clients** (`sdk/python_client.py`, npm `content-fte`). |
-| **Auth** | REST/MCP: `X-Site-Key` header == `SDK_MASTER_KEY` (dev-open when unset). |
+| **Auth** | REST **and** `/mcp`: `X-Site-Key` header (or `Authorization: Bearer`) == `SDK_MASTER_KEY`. Fails closed (503) when unset; local dev opts in with `SDK_ALLOW_UNAUTHENTICATED=1`. |
 | **Audit + cost** | Every mutating op writes an `AuditLog` row; publish finalizes the per-article cost into `Article.cost_usd`. |
 | **Fail-open** | A WordPress/Elementor/webhook failure never loses the article or rolls back status — the outcome rides in the response (`wp.ok=false`, …) and a re-run retries. |
 

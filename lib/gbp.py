@@ -50,10 +50,10 @@ _PHONE_RE = re.compile(
     re.IGNORECASE,
 )
 _HOURS_RE = re.compile(
-    r"(?:hours|hour|open|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r"(?:_brief|_short|_extended)?)\s*[:#]?\s*((?:[01]\d|2[012]):[0-5]\d\s*[:–-]\s*"
-    r"(?:[01]\d|2[012]):[0-5]\d\s*(?:am|pm)?(?:,\s*(?:mon|tue|wed|thu|fri|sat|sun"
-    r"(?:_brief|_short|_extended)?)?)*",
+    r"(?:opening\s+hours|hours|open|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+    r"\s*[:#]?\s*"
+    r"((?:[01]?\d|2[0-3]):[0-5]\d\s*(?:am|pm)?\s*(?:-|\u2013|to)\s*"
+    r"(?:[01]?\d|2[0-3]):[0-5]\d\s*(?:am|pm)?)",
     re.IGNORECASE,
 )
 _SERVICES_RE = re.compile(
@@ -111,8 +111,8 @@ def _compare_field(gbp_val: str | None, site_val: str | None,
                 "message": f"{field}: both absent"}
     if gbp_val is None or site_val is None:
         return {"match": False, "gbp": gbp_val, "site": site_val,
-                "message": f"{field}: GBP {'' if gbp_val is None else 'has value'; "
-                f"site {'' if site_val is None else 'has value'}"}
+                "message": (f"{field}: GBP {'absent' if gbp_val is None else 'has value'}; "
+                            f"site {'absent' if site_val is None else 'has value'}")}
     gbp_l = gbp_val.lower()
     site_l = site_val.lower()
     if gbp_l == site_l:

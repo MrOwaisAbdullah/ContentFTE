@@ -39,8 +39,10 @@ from sdk import service
 
 # contentfte_run_stage: one concurrent run per stage (mirrors the REST
 # /run/{stage} single-flight); task refs are kept so asyncio cannot GC them.
-_stage_lock = threading.Lock()
-_running_stages: set[str] = set()
+# The registry is SHARED with REST (sdk.server): with separate sets the same stage
+# could be started once over REST and once over MCP at the same time (plan ENG-05).
+from sdk.server import _run_lock as _stage_lock, _running_stages  # noqa: E402
+
 _stage_tasks: set[asyncio.Task] = set()
 
 # FastMCP auto-enables DNS-rebinding protection for host=127.0.0.1 with an
@@ -133,7 +135,7 @@ class WpPostInput(BaseModel):
 class PublishArticleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     article_id: int = Field(..., ge=1, description="Numeric article ID to publish")
-    mode: Literal["draft", "auto"] = Field(
+    mode: Literal["draft", "auto", "publish"] = Field(
         default="draft",
         description="'draft' = create as WP draft (default for new sites); 'auto' = publish live")
 
@@ -167,7 +169,7 @@ class ElementorBuildInput(BaseModel):
     post_id: int | None = Field(
         default=None, ge=1,
         description="Existing WP post ID — omit to create one (or reuse the article's meta.wp_post_id)")
-    mode: Literal["draft", "auto"] = Field(
+    mode: Literal["draft", "auto", "publish"] = Field(
         default="draft",
         description="'draft' (default for new sites) | 'auto' = publish live")
 

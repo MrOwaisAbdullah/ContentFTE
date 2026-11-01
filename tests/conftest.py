@@ -34,6 +34,10 @@ _GUARDED = (
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
     monkeypatch.setenv("CONTENTFTE_REVISE", "0")
+    # The engine now fails closed when SDK_MASTER_KEY is unset (plan SEC-02);
+    # the suite's keyless TestClients opt in the same way a developer would.
+    # tests/test_engine_auth.py clears this to prove the closed default.
+    monkeypatch.setenv("SDK_ALLOW_UNAUTHENTICATED", "1")
     if os.environ.get(_LIVE) not in _LIVE_ON:
         for key in _GUARDED:
             monkeypatch.delenv(key, raising=False)

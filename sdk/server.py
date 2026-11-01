@@ -62,6 +62,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import sdk.service as service
+from sdk.auth import check_key
 
 router = APIRouter(prefix="/sdk/v1", tags=["sdk"])
 
@@ -71,11 +72,9 @@ _idempotency: dict[str, dict] = {}
 
 
 def _check_site_key(x_site_key: str | None) -> str:
-    import os
-    expected = os.environ.get("SDK_MASTER_KEY", "")
-    if expected and x_site_key != expected:
-        raise HTTPException(status_code=401, detail="invalid X-Site-Key")
-    return x_site_key or "dev"
+    """Shared with /mcp and the legacy routes; fails closed when no key is
+    configured (see sdk/auth.py)."""
+    return check_key(x_site_key)
 
 
 def _resolve(data: dict) -> dict:
@@ -535,19 +534,12 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
             started = datetime.now(timezone.utc)
             t0 = time.monotonic()
             ok, detail = True, ""
-            old_slug = os.environ.get("SITE_SLUG")
             try:
-                if site_slug:
-                    os.environ["SITE_SLUG"] = site_slug
                 asyncio.run(handlers[stage]())
             except Exception as e:
                 ok, detail = False, f"{type(e).__name__}: {e}"
                 raise
             finally:
-                if old_slug is None:
-                    os.environ.pop("SITE_SLUG", None)
-                else:
-                    os.environ["SITE_SLUG"] = old_slug
                 try:
                     service.record_stage_run(
                         stage, ok=ok, detail=detail,
@@ -560,7 +552,18 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
                 _running_stages.discard(stage)
 
     background_tasks.add_task(_invoke)
-    return {"status": "accepted", "stage": stage}
+    out = {"status": "accepted", "stage": stage}
+    if site_slug:
+        # This used to set os.environ["SITE_SLUG"] around the run. Nothing ever read
+        # it, and the mutation raced between concurrent requests, so it only made the
+        # request LOOK site-scoped. Stage handlers still run against this instance's
+        # configured site; say so instead of implying otherwise (plan ENG-05). True
+        # per-site stages arrive with the TenantContext work (Phase 2).
+        out["site_slug"] = site_slug
+        out["warning"] = ("stage handlers are not site-scoped yet: this ran against the "
+                          "instance's configured site, not necessarily "
+                          f"'{site_slug}'. Run it on that site's own engine instance.")
+    return out
 
 
 @router.get("/wp/posts/{post_id}")

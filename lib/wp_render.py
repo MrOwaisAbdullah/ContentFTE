@@ -41,6 +41,29 @@ _HIGHLIGHT_RE = re.compile(r'==(\S.*?\S|\S)==')
 _UNDERSCORE_EM_RE = re.compile(r'(?<![\w_])_(\S.*?\S|\S)_(?![\w_])')
 
 
+# URL schemes allowed in rendered links/images (plan SEC-06). `html.escape` stops
+# attribute breakout but does nothing about `javascript:` / `data:` targets, and the
+# markdown comes from LLM drafts that ingest untrusted web research.
+_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tel"})
+_IMG_SCHEMES = frozenset({"http", "https"})
+_SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.\-]*):")
+# Browsers drop tabs/newlines/NULs/leading C0 whitespace inside a URL before parsing
+# the scheme, so "java<TAB>script:" and " javascript:" are still javascript:.
+_URL_STRIP_RE = re.compile(r"[\x00-\x20\x7f]+")
+
+
+def safe_url(url: str, schemes: frozenset = _LINK_SCHEMES) -> str:
+    """The URL if it is relative or uses an allow-listed scheme, else ''."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    probe = _URL_STRIP_RE.sub("", raw).lower()
+    m = _SCHEME_RE.match(probe)
+    if m and m.group(1) not in schemes:
+        return ""
+    return raw
+
+
 def _escape_brackets(text: str) -> str:
     """Escape stray shortcode brackets (real links are protected beforehand)."""
     return text.replace("[", "&#91;").replace("]", "&#93;")
@@ -58,14 +81,20 @@ def inline(text: str) -> str:
 
     def _img(m: re.Match) -> str:
         alt = html.escape(m.group("alt") or "", quote=True)
-        src = html.escape(m.group("src") or "", quote=True)
+        raw_src = safe_url(m.group("src") or "", _IMG_SCHEMES)
+        if not raw_src:  # disallowed scheme: drop the image, keep nothing executable
+            return _protect("")
+        src = html.escape(raw_src, quote=True)
         title = m.group("title")
         t = f' title="{html.escape(title, quote=True)}"' if title else ""
         return _protect(f'<img src="{src}" alt="{alt}"{t}>')
 
     def _link(m: re.Match) -> str:
-        href = html.escape(m.group("href") or "", quote=True)
         label = html.escape(m.group("text") or "", quote=True)
+        raw_href = safe_url(m.group("href") or "")
+        if not raw_href:  # e.g. javascript: -> plain text, never a live link
+            return _protect(label)
+        href = html.escape(raw_href, quote=True)
         title = m.group("title")
         t = f' title="{html.escape(title, quote=True)}"' if title else ""
         rel = ''
@@ -388,4 +417,11 @@ def inject_inpost_images(html_body: str, images: List[Dict[str, Any]]) -> str:
 def jsonld_script(schema: Optional[dict]) -> str:
     if not schema:
         return ""
-    return f'<script type="application/ld+json">{json.dumps(schema, ensure_ascii=False)}</script>'
+    # json.dumps leaves "<" intact, so a "</script>" inside a title/FAQ answer would
+    # close the tag and let the rest run as markup (stored XSS). The \uXXXX escapes
+    # below are still valid JSON, so crawlers read the identical structured data.
+    payload = json.dumps(schema, ensure_ascii=False)
+    for ch, esc in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
+                    ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+        payload = payload.replace(ch, esc)
+    return f'<script type="application/ld+json">{payload}</script>'

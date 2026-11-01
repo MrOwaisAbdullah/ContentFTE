@@ -25,6 +25,7 @@ from agents import set_tracing_disabled
 
 # Phase 1 SDK REST API (§5.12) — thin routes over sdk.service.
 from sdk.server import router as sdk_router
+from sdk.auth import KeyAuthMiddleware, keys_equal
 from sdk import service as sdk_service
 # Phase 1 MCP (§5.13) — thin consumer of the same service, mounted on this
 # FastAPI app (single-server architecture; API first, MCP second).
@@ -99,7 +100,9 @@ app.add_middleware(
 
 # MCP mounted at /mcp (streamable_http_path="/" was set at FastMCP init).
 # POST /mcp (no trailing slash) 307s to /mcp/ — normal, harmless.
-app.mount("/mcp", contentfte_mcp.streamable_http_app(), name="mcp")
+# Fronted by the same key check as /sdk/v1 (X-Site-Key or Authorization: Bearer):
+# without it anyone who could reach the engine could run every MCP tool (plan SEC-01).
+app.mount("/mcp", KeyAuthMiddleware(contentfte_mcp.streamable_http_app()), name="mcp")
 
 # Define API key header
 API_KEY_NAME = "Authorization"
@@ -120,7 +123,7 @@ async def verify_api_key(api_key: str = Depends(api_key_header)):
     if not api_key.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authorization header must start with 'Bearer '")
     token = api_key[len("Bearer "):] # Extract the token part
-    if token != EXPECTED_API_KEY:
+    if not keys_equal(token, EXPECTED_API_KEY):  # constant-time (plan SEC-02)
         raise HTTPException(status_code=401, detail="Invalid API key")
     return api_key # Return the key or just indicate success
 

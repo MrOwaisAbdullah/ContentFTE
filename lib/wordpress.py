@@ -164,6 +164,17 @@ def build_prepared_post(
     )
 
 
+# The REST docs and the TypeScript SDK type advertise `draft | publish`; the MCP
+# tool and this connector historically said `draft | auto`. Only "auto" went live,
+# so a REST client sending "publish" got a WordPress DRAFT while the article was
+# marked published (plan ENG-02). Every spelling of "go live" now means live.
+LIVE_MODES = frozenset({"auto", "publish", "live"})
+
+
+def is_live_mode(mode) -> bool:
+    return str(mode or "").strip().lower() in LIVE_MODES
+
+
 class WordPressConnector:
     def __init__(self, config: WPConfig):
         if not config.base_url or not config.username or not config.app_password:
@@ -365,7 +376,7 @@ class WordPressConnector:
             "content": body,
             "excerpt": post.excerpt,
             "slug": post.slug,
-            "status": "publish" if mode == "auto" else "draft",
+            "status": "publish" if is_live_mode(mode) else "draft",
             "categories": cat_ids,
             "tags": tag_ids,
             **self._meta_payload(post),

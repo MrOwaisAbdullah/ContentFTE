@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,12 +34,17 @@ from sqlalchemy import delete, func, select
 from lib import custom_site
 from lib import generation
 from lib.db import (Article, Article as ArticleModel, AuditLog, BrainEntry,
-                    CostLedger, KeywordLedger, ReviewFeedback, Site, get_session,
-                    init_db)
+                    BrandProfile, CostLedger, KeywordLedger, ReviewFeedback,
+                    ShareOfVoice, Site, TavilyUsage, get_session, init_db)
 from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
+from lib.secrets_redact import merge_settings, redact_settings
 from lib.store import article_scores
 from lib.taxonomy import derive_taxonomy
+
+# `logger` was referenced (run_instant_pipeline) but never defined, so every
+# failure in that background path raised NameError instead of logging (plan ENG-01).
+logger = logging.getLogger(__name__)
 
 
 def _err(message: str, nxt: str = "") -> dict:
@@ -94,18 +100,26 @@ def init() -> None:
     init_db()
 
 
+def _site_row(r: Site) -> dict:
+    # Secrets (WP application password, IndexNow/Bing keys, Discord webhook)
+    # never leave the engine: this payload goes to every API client, the MCP
+    # tool (i.e. into LLM context) and the browser-facing console. `secrets_set`
+    # says which exist so UIs can show "saved" without the value (plan SEC-04).
+    safe_settings, secrets_set = redact_settings(r.settings)
+    return {"id": r.id, "slug": r.slug, "name": r.name, "site_type": r.site_type,
+            "base_url": r.base_url,
+            # publish_mode rides in settings (the column it used to
+            # occupy was never written — always the default).
+            "publish_mode": str((r.settings or {}).get("publish_mode") or "draft"),
+            "settings": safe_settings, "secrets_set": secrets_set,
+            "has_key": bool(r.api_key), "created_at": _iso(r.created_at)}
+
+
 def list_sites() -> dict:
     init_db()
     s = get_session()
     try:
-        sites = [{"id": r.id, "slug": r.slug, "name": r.name, "site_type": r.site_type,
-                  "base_url": r.base_url,
-                  # publish_mode rides in settings (the column it used to
-                  # occupy was never written — always the default).
-                  "publish_mode": str((r.settings or {}).get("publish_mode") or "draft"),
-                  "settings": r.settings or {}, "has_key": bool(r.api_key),
-                  "created_at": _iso(r.created_at)}
-                 for r in s.execute(select(Site)).scalars()]
+        sites = [_site_row(r) for r in s.execute(select(Site)).scalars()]
         return {"sites": sites, "count": len(sites)}
     finally:
         s.close()
@@ -214,9 +228,9 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
                 site.base_url = base_url
                 updated = True
             if settings is not None:
-                current_settings = dict(site.settings or {})
-                current_settings.update(settings)
-                site.settings = current_settings
+                # Group-aware merge: a partial `wp` group no longer discards the
+                # stored password; blank secret = keep, None = remove (plan CON-04).
+                site.settings = merge_settings(site.settings, settings)
                 updated = True
             if updated:
                 s.commit()
@@ -249,7 +263,18 @@ def delete_site(slug: str) -> dict:
         s.execute(delete(BrainEntry).where(BrainEntry.site_id == site_id))
         s.execute(delete(ReviewFeedback).where(ReviewFeedback.site_id == site_id))
         s.execute(delete(AuditLog).where(AuditLog.site_id == site_id))
+        # Every other table with a FK to sites.id. SQLite never enforced these, but
+        # Postgres rejects the final DELETE with an FK violation (a 500) as soon as a
+        # site has a brand profile -- which every provisioned site does (plan ENG-11).
+        s.execute(delete(CostLedger).where(CostLedger.site_id == site_id))
+        s.execute(delete(BrandProfile).where(BrandProfile.site_id == site_id))
+        s.execute(delete(ShareOfVoice).where(ShareOfVoice.site_id == site_id))
+        s.execute(delete(TavilyUsage).where(TavilyUsage.site_id == site_id))
         s.delete(site)
+        # The site's own audit rows are gone, so leave one site-less record of the
+        # deletion itself.
+        s.add(AuditLog(site_id=None, action="site.deleted",
+                       payload={"slug": slug, "id": site_id, "articles": len(articles)}))
         s.commit()
         return {"deleted": slug, "id": site_id}
     finally:
@@ -1065,7 +1090,14 @@ def _wp_config(site=None):
     resolution means a shared engine can never push site B's article into
     site A's WordPress — the highest-severity cross-instance bleed there
     is. Post-id-scoped ops (wp_post/_elementor_client) have no article to
-    resolve from and stay env-based."""
+    resolve from and stay env-based.
+
+    Shared mode (TENANCY_MODE=shared, one process / many sites): there is no
+    "the" WordPress for the process, so a site without its own settings["wp"]
+    gets an EMPTY config (callers report "not configured") instead of silently
+    publishing into whichever WP the process env names -- or, in site_health,
+    sending that site's password to another tenant's host (plan TEN-01 / SEC-08)."""
+    from lib.site_env import is_shared_mode
     from lib.wordpress import WPConfig
 
     settings = getattr(site, "settings", None)
@@ -1074,6 +1106,8 @@ def _wp_config(site=None):
         return WPConfig(base_url=str(wp.get("base_url") or "").rstrip("/"),
                         username=str(wp.get("username") or ""),
                         app_password=str(wp.get("app_password") or ""))
+    if is_shared_mode():
+        return WPConfig(base_url="", username="", app_password="")
     return WPConfig.from_env()
 
 
@@ -2791,13 +2825,17 @@ def site_health(site_slug: str, *, http_get=None) -> dict:
         published = len(s.execute(
             select(Article).where(Article.site_id == site.id,
                                   Article.status == "published")).scalars().all())
-        import os
-        wp_ok = bool(os.environ.get("WP_BASE_URL") and os.environ.get("WP_USERNAME"))
+        # Per-site credentials (plan SEC-08): reading WP_* from the process env here
+        # meant a shared engine sent tenant A's application password to tenant B's
+        # host, and reported the wrong tenant's config as "OK".
+        wp_cfg = _wp_config(site)
+        wp_ok = bool(wp_cfg.base_url and wp_cfg.username and wp_cfg.app_password)
         checks = [
             "keyword ledger: OK" if briefable > 0 else
             "keyword ledger: EMPTY queue — research/approve keywords (§5.16)",
             "WordPress config: OK" if wp_ok else
-            "WordPress config: missing WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD",
+            "WordPress config: missing base URL / username / application password "
+            "(site settings, or WP_* env on a single-site instance)",
         ]
         critical: list[str] = []
         base = (site.base_url or "").strip().rstrip("/")
@@ -2841,8 +2879,7 @@ def site_health(site_slug: str, *, http_get=None) -> dict:
             if (site.site_type or "") == "wordpress" and wp_ok:
                 try:
                     r = get(f"{base}/wp-json/wp/v2/settings", timeout=5,
-                            auth=(os.environ.get("WP_USERNAME") or "",
-                                  os.environ.get("WP_APP_PASSWORD") or ""))
+                            auth=(wp_cfg.username, wp_cfg.app_password))
                     code = int(getattr(r, "status_code", 0) or 0)
                     if code == 200:
                         visible = (r.json() or {}).get("blog_public")
@@ -3027,8 +3064,9 @@ def elementor_build(article_id: int, post_id: int | None = None,
     meta.wp_post_id is always reused → builds never duplicate posts.
     Local imports keep WordPressConnector/ElementorClient patchable in tests.
     """
+    mode = "auto" if str(mode).strip().lower() in ("publish", "live") else mode  # same meaning (plan ENG-02)
     if mode not in ("draft", "auto"):
-        return _err(f"invalid mode '{mode}'", "use 'draft' (default) or 'auto'")
+        return _err(f"invalid mode '{mode}'", "use 'draft' (default) or 'auto' (alias: 'publish')")
     init_db()
     s = get_session()
     try:

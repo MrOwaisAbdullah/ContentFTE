@@ -88,4 +88,8 @@ def run_factcheck_gate(
 
 # Agent-facing tool (LLM calls `factcheck_gate_tool`; plain code should call
 # `run_factcheck_gate` directly — no agent context needed).
-factcheck_gate_tool = function_tool(run_factcheck_gate)
+# name_override: the writer prompts (blog_agent/blog_agents.py) call this tool by
+# the name `factcheck_gate_tool`; without it the SDK registers `run_factcheck_gate`,
+# the model's call fails with tool-not-found and the "mandatory" gate silently never
+# runs (plan PIPE-01).
+factcheck_gate_tool = function_tool(run_factcheck_gate, name_override="factcheck_gate_tool")
