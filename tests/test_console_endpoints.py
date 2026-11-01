@@ -189,7 +189,7 @@ def test_patch_meta_op_updates_allowlist_and_reopens_approved():
 
     # unknown keys alone are rejected — never a silent no-op
     bad = client.patch(f"/sdk/v1/articles/{aid}/meta", json={"bogus": "x"})
-    assert bad.status_code == 404
+    assert bad.status_code == 400   # a request problem (was a misleading 404 before ENG-16)
     assert "allowlisted" in bad.json()["detail"]
 
     # approved article reopens to generated on a meta change

@@ -59,9 +59,10 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import sdk.keys as site_keys
+from sdk.errors import EngineHTTPError
 import sdk.service as service
 from sdk.auth import AuthContext, authenticate, current
 from sdk.authz import authorize
@@ -101,7 +102,7 @@ _CODE_STATUS = {"budget_exceeded": 402, "gate_failed": 409,
 def _resolve(data: dict) -> dict:
     """Service error dicts become HTTP errors; success passes through."""
     if "error" in data:
-        raise HTTPException(status_code=_CODE_STATUS.get(data.get("code"), 404), detail=data["error"])
+        raise EngineHTTPError(data)
     return data
 
 
@@ -179,7 +180,7 @@ def submit_article(
     result = service.submit_article(site_slug, keyword=body.keyword or "", brief=body.brief,
                                     create_site=service._may_autocreate_site(site_slug))
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise EngineHTTPError(result, 400)
     if body.instant and "id" in result:
         art_id = result["id"]
         background_tasks.add_task(service.run_instant_pipeline, art_id)
@@ -237,13 +238,13 @@ async def generate_article(article_id: int, body: ArticleGenerate | None = None,
         article_id, regenerate=bool(body and body.regenerate))
     if "error" in result:
         if result.get("code") in _CODE_STATUS:
-            raise HTTPException(status_code=_CODE_STATUS[result["code"]], detail=result["error"])
+            raise EngineHTTPError(result)
         if "not found" in result["error"]:
-            raise HTTPException(status_code=404, detail=result["error"])
+            raise EngineHTTPError(result, 404)
         if result["error"].startswith(("generation failed", "agent returned",
                                        "generated content")):
-            raise HTTPException(status_code=502, detail=result["error"])
-        raise HTTPException(status_code=400, detail=result["error"])
+            raise EngineHTTPError(result, 502)
+        raise EngineHTTPError(result, 400)
     return result
 
 
@@ -256,7 +257,7 @@ def approve_article(article_id: int, body: ArticleApprove,
     if result.get("code") == "gate_failed":
         # 409, not the generic 404 _resolve() would give: the article exists, its state
         # just doesn't pass. The reasons are in `detail` so any client can show them.
-        raise HTTPException(status_code=409, detail=result["error"])
+        raise EngineHTTPError(result, 409)
     return _resolve(result)
 
 
@@ -281,10 +282,10 @@ def publish_article(article_id: int, body: ArticlePublish | None = None,
     if "error" in result:
         err_msg = str(result["error"])
         if "cadence limit reached" in err_msg.lower():
-            raise HTTPException(status_code=429, detail=result["error"])
+            raise EngineHTTPError(result, 429)
         if "requires 'approved'" in err_msg or result.get("code") == "publish_in_progress":
-            raise HTTPException(status_code=409, detail=result["error"])
-        raise HTTPException(status_code=404, detail=result["error"])
+            raise EngineHTTPError(result, 409)
+        raise EngineHTTPError(result, 404)
     return result
 
 
@@ -351,7 +352,7 @@ def get_article_image(article_id: int, name: str,
     _check_site_key(x_site_key)
     result = service.get_article_image(article_id, name)
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise EngineHTTPError(result, 404)
     return FileResponse(result["path"], media_type=result["media_type"],
                         headers={"Cache-Control": "private, max-age=60"})
 
@@ -420,7 +421,7 @@ def create_site_key(site_slug: str, body: KeyCreate | None = None,
     body = body or KeyCreate()
     result = site_keys.create_site_key(site_slug, label=body.label, scopes=body.scopes, via="sdk")
     if "error" in result and "unknown scope" in result["error"]:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise EngineHTTPError(result, 400)
     return _resolve(result)
 
 
@@ -562,15 +563,25 @@ def patch_content(article_id: int, body: ContentPatch,
                                            note=body.note))
 
 
+class MetaPatch(BaseModel):
+    """The editable meta fields. Typed so a list/object/oversized value is a 422 at the door instead of being
+    str()-ed into the article (ENG-17). Unknown keys are ignored, as before."""
+    title: str | None = Field(default=None, max_length=300)
+    slug: str | None = Field(default=None, max_length=200)
+    focus_keyword: str | None = Field(default=None, max_length=200)
+    summary: str | None = Field(default=None, max_length=2000)
+    tldr: str | None = Field(default=None, max_length=1500)
+
+
 @router.patch("/articles/{article_id}/meta")
-def patch_meta(article_id: int, body: dict,
+def patch_meta(article_id: int, body: MetaPatch,
                x_site_key: str | None = Header(default=None)) -> dict:
     """Operator PATCH of allowed meta fields (title / slug / focus_keyword /
     summary / tldr). Only allowlisted keys are applied; every other meta key
     stays untouched. An approved article is reopened to generated so the approve
     gate can re-run on the new fields; a published article keeps its status."""
     _check_site_key(x_site_key)
-    return _resolve(service.patch_article_meta(article_id, body))
+    return _resolve(service.patch_article_meta(article_id, body.model_dump(exclude_none=True)))
 
 
 _running_stages: set[str] = set()
@@ -695,6 +706,6 @@ def elementor_build(article_id: int, body: ElementorBuild | None = None,
                                      mode=(body.mode if body else "draft"))
     if "error" in result:
         if "not found" in result["error"] or "no content" in result["error"]:
-            raise HTTPException(status_code=404, detail=result["error"])
-        raise HTTPException(status_code=400, detail=result["error"])
+            raise EngineHTTPError(result, 404)
+        raise EngineHTTPError(result, 400)
     return result

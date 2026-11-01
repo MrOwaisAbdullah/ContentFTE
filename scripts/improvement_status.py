@@ -132,13 +132,119 @@ def render(findings: dict, status: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# --------------------------------------------------------------------------------------------------------
+# The plan document carries the same information as task lists - `- [x]` done, `- [~]` partly done,
+# `- [ ]` not done - grouped by roadmap phase. Both are GENERATED from improvement-status.json between
+# markers, so the plan can never disagree with the board.
+BOX = {"done": "[x]", "partial": "[~]"}
+TAG = {"decision": " _(needs your decision)_", "owner": " _(owner action)_", "other-repo": " _(other repository)_"}
+SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "": 4}
+
+
+def _idkey(fid: str):
+    code, num = fid.split("-")
+    return (list(AREAS).index(code), int(num))
+
+
+def _short(branch_key: str, status: dict) -> str:
+    name = status.get("branches", {}).get(branch_key, {}).get("name", "")
+    return name.replace("improve/", "") if name else ""
+
+
+def phase_counts(findings: dict, status: dict, phase: str) -> Counter:
+    return Counter(e["status"] for f, e in status["items"].items() if f in findings and e.get("phase") == phase)
+
+
+def phase_status_line(findings: dict, status: dict, phase: str) -> str:
+    c = phase_counts(findings, status, phase)
+    total = sum(c.values())
+    done, part = c.get("done", 0), c.get("partial", 0)
+    left = total - done - part
+    state = "complete" if total and done == total else ("not started" if not done and not part else "in progress")
+    return (f"**Status: {state}** - {done} of {total} done, {part} partly done, {left} not done "
+            f"(item-by-item list in section 2).")
+
+
+def render_phase_tasks(findings: dict, status: dict) -> str:
+    items, phases = status["items"], status.get("phases", {})
+    out = [
+        "Legend: `[x]` done - `[~]` partly done (the note says what is left) - `[ ]` not done. "
+        "Items waiting on you, on an owner-only action, or on the website repository say so in italics.",
+        "",
+    ]
+    for key, ph in phases.items():
+        ids = [f for f in findings if items.get(f, {}).get("phase") == key]
+        if not ids:
+            continue
+        heading = f"Phase {key}" if key != "F" else "Frontend"
+        out += [f"#### {heading} - {ph['title']} ({ph['effort']})", "",
+                f"_Goal:_ {ph['goal']}", "",
+                phase_status_line(findings, status, key), ""]
+        ids.sort(key=lambda f: (SEV_RANK.get(findings[f]["severity"], 4), _idkey(f)))
+        for f in ids:
+            e = items[f]
+            sev = findings[f]["severity"] or "-"
+            line = f"- {BOX.get(e['status'], '[ ]')} **{f}** ({sev}) {findings[f]['title']}"
+            if e.get("note"):
+                line += f" - {e['note']}"
+            line += TAG.get(e["status"], "")
+            br = _short(e.get("branch", ""), status)
+            if br and e["status"] in ("done", "partial"):
+                line += f" - `{br}`"
+            out.append(line)
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def render_delivery_map(findings: dict, status: dict) -> str:
+    """Which delivery branch moved which phase (a branch is a shipping batch; a phase is a goal)."""
+    items, branches, phases = status["items"], status.get("branches", {}), status.get("phases", {})
+    cols = list(branches)
+    head = "| Phase | " + " | ".join(f"`{_short(k, status)}`" for k in cols) + " | Not fully done |"
+    lines = [head, "|---|" + "---|" * (len(cols) + 1)]
+    for key, ph in phases.items():
+        ids = [f for f in findings if items.get(f, {}).get("phase") == key]
+        if not ids:
+            continue
+        row = [str(sum(1 for f in ids if items[f].get("branch") == k and items[f]["status"] in ("done", "partial")) or "-")
+               for k in cols]
+        todo = sum(1 for f in ids if items[f]["status"] != "done")
+        lines.append(f"| {key if key != 'F' else 'Frontend'} - {ph['title']} | " + " | ".join(row) + f" | {todo} |")
+    return "\n".join(lines) + "\n"
+
+
+def _between(text: str, start: str, end: str, body: str) -> str:
+    pat = re.compile(re.escape(start) + r".*?" + re.escape(end), re.S)
+    if not pat.search(text):
+        raise SystemExit(f"plan is missing the markers {start} ... {end}")
+    return pat.sub(lambda _m: f"{start}\n{body}{end}", text, count=1)
+
+
+def sync_plan(text: str, findings: dict, status: dict) -> str:
+    """The plan text with every generated block refreshed."""
+    text = _between(text, "<!-- phase-tasks:start -->", "<!-- phase-tasks:end -->",
+                    "\n" + render_phase_tasks(findings, status))
+    text = _between(text, "<!-- delivery-map:start -->", "<!-- delivery-map:end -->",
+                    "\n" + render_delivery_map(findings, status) + "\n")
+    for key in status.get("phases", {}):
+        a, b = f"<!-- phase-status:{key}:start -->", f"<!-- phase-status:{key}:end -->"
+        if a in text:
+            text = _between(text, a, b, phase_status_line(findings, status, key) + "\n")
+    return text
+
+
 def main(argv: list[str]) -> int:
     findings, status = plan_findings(), load_status()
     errs = problems(findings, status)
     text = render(findings, status)
+    raw_plan = PLAN.read_text(encoding="utf-8")
+    plan_nl = "\r\n" if "\r\n" in raw_plan else "\n"
+    plan_new = sync_plan(raw_plan.replace("\r\n", "\n"), findings, status)
     if "--check" in argv:
         if OUT.read_text(encoding="utf-8").replace("\r\n", "\n") != text:
             errs.append("docs/improvement-status.md is stale - run: python scripts/improvement_status.py")
+        if raw_plan.replace("\r\n", "\n") != plan_new:
+            errs.append("the task lists in docs/improvement-plan-2026-11.md are stale - run: python scripts/improvement_status.py")
         for e in errs:
             print("ERROR:", e)
         return 1 if errs else 0
@@ -147,7 +253,8 @@ def main(argv: list[str]) -> int:
             print("ERROR:", e)
         return 1
     OUT.write_text(text, encoding="utf-8", newline="\n")
-    print(f"wrote {OUT.relative_to(ROOT)} ({len(findings)} findings)")
+    PLAN.write_text(plan_new.replace("\n", plan_nl), encoding="utf-8", newline="")
+    print(f"wrote {OUT.relative_to(ROOT)} and refreshed the task lists in {PLAN.name} ({len(findings)} findings)")
     return 0
 
 

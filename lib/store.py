@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlsplit
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lib.db import (Article, AuditLog, CostLedger, KeywordLedger, Site,
@@ -199,10 +200,16 @@ def get_or_create_site(session: Session, slug: str = "") -> Site:
         slug = DEFAULT_SITE_SLUG
     site = session.execute(select(Site).where(Site.slug == slug)).scalar_one_or_none()
     if site is None:
-        site = Site(slug=slug, name=slug.replace("-", " ").title())
-        session.add(site)
-        session.commit()
-        session.refresh(site)
+        try:
+            site = Site(slug=slug, name=slug.replace("-", " ").title())
+            session.add(site)
+            session.commit()
+            session.refresh(site)
+        except IntegrityError:
+            # Site.slug is unique: a concurrent caller created it between our SELECT and INSERT. That is
+            # not an error - the site exists, so read it (ENG-12).
+            session.rollback()
+            site = session.execute(select(Site).where(Site.slug == slug)).scalar_one()
     return site
 
 

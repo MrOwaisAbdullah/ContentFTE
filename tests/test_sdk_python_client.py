@@ -96,3 +96,11 @@ def test_retries_give_up_after_max_attempts(client, monkeypatch):
     with pytest.raises(requests.HTTPError, match="503"):
         client.get_article(1)
     assert len(calls) == 3
+
+
+def test_the_error_carries_the_servers_code_and_next_hint(client, monkeypatch):
+    script(monkeypatch, [Resp(409, {"detail": "article 5 is 'drafted' - publish requires 'approved'",
+                                    "code": "invalid_state", "next": "approve it first"})])
+    with pytest.raises(requests.HTTPError) as exc:
+        client.get_article(5)
+    assert exc.value.code == "invalid_state" and exc.value.next == "approve it first"

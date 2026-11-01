@@ -27,6 +27,8 @@ from agents import set_tracing_disabled
 from sdk.server import router as sdk_router
 from sdk.auth import KeyAuthMiddleware, keys_equal
 from sdk import service as sdk_service
+from sdk.observability import RequestIdMiddleware, configure_logging
+from sdk.errors import install as install_error_handler
 # Phase 1 MCP (§5.13) — thin consumer of the same service, mounted on this
 # FastAPI app (single-server architecture; API first, MCP second).
 from mcp_server.server import mcp as contentfte_mcp
@@ -80,15 +82,32 @@ async def lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(lifespan=lifespan)
+def _docs_enabled() -> bool:
+    """The interactive docs and /openapi.json list every route, parameter and model to anyone who can reach
+    the engine. Off unless ENGINE_DOCS=1 (SEC-15); the typed clients and MCP do not need them."""
+    return (os.environ.get("ENGINE_DOCS") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+configure_logging()
+_docs = _docs_enabled()
+app = FastAPI(lifespan=lifespan,
+              docs_url="/docs" if _docs else None,
+              redoc_url="/redoc" if _docs else None,
+              openapi_url="/openapi.json" if _docs else None)
+app.add_middleware(RequestIdMiddleware)
+install_error_handler(app)
 app.include_router(sdk_router)
 
 # --- CORS: the SDK's primary consumers are browser apps (React/Next/Astro),
 # so /sdk/v1 needs preflight (X-Site-Key + Idempotency-Key are non-simple
 # headers). Auth is header-based, never cookies, so open origins are safe
 # from CSRF; tighten with SDK_CORS_ORIGINS (comma-separated) if desired.
+# In shared (multi-tenant) mode the default is NO cross-origin access: a wildcard lets any web page a tenant's
+# user visits probe the platform API with whatever key that page was given. Set SDK_CORS_ORIGINS explicitly.
+from lib.site_env import is_shared_mode as _is_shared_mode
+
 _sdk_cors_origins = [o.strip() for o in
-                     os.environ.get("SDK_CORS_ORIGINS", "*").split(",") if o.strip()]
+                     os.environ.get("SDK_CORS_ORIGINS", "" if _is_shared_mode() else "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_sdk_cors_origins,

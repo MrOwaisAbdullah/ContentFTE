@@ -14,7 +14,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lib.db import TavilyUsage, get_session, init_db
@@ -23,38 +24,64 @@ from lib.store import DEFAULT_SITE_SLUG, get_or_create_site
 logger = logging.getLogger(__name__)
 
 
-def monthly_budget() -> int:
-    try:
-        return int(os.environ.get("TAVILY_MONTHLY_BUDGET") or "1000")
-    except ValueError:
-        return 1000
+def monthly_budget(site=None) -> int:
+    """The month's call budget: this site's own `settings.budget.tavily_monthly` when set, else the process-wide
+    TAVILY_MONTHLY_BUDGET (default 1000). One shared number let a single busy tenant spend everyone's quota
+    (TEN-03)."""
+    own = ((getattr(site, "settings", None) or {}).get("budget") or {}).get("tavily_monthly") if site is not None else None
+    for raw in (own, os.environ.get("TAVILY_MONTHLY_BUDGET")):
+        try:
+            if raw not in (None, ""):
+                return max(0, int(float(raw)))
+        except (TypeError, ValueError):
+            continue
+    return 1000
 
 
 def _month() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
-def check_and_increment(session: Session, site_slug: str = "", n: int = 1) -> Dict[str, Any]:
-    """Increment this month's Tavily counter and report whether calls remain.
-
-    Returns {allowed, used, budget, remaining, exhausted, month}. `allowed`
-    is False once used >= budget (the caller should pause-and-flag)."""
-    site = get_or_create_site(session, site_slug)
-    month = _month()
-    budget = monthly_budget()
+def _usage_row(session: Session, site_id: int, month: str) -> TavilyUsage:
     row = session.execute(
-        select(TavilyUsage).where(TavilyUsage.site_id == site.id, TavilyUsage.month == month)
+        select(TavilyUsage).where(TavilyUsage.site_id == site_id, TavilyUsage.month == month)
     ).scalar_one_or_none()
-    if row is None:
-        row = TavilyUsage(site_id=site.id, month=month, calls=0)
+    if row is not None:
+        return row
+    try:
+        row = TavilyUsage(site_id=site_id, month=month, calls=0)
         session.add(row)
         session.commit()
         session.refresh(row)
-    used_before = row.calls
-    allowed = used_before < budget
-    if allowed:
-        row.calls = used_before + n
-        session.commit()
+        return row
+    except IntegrityError:           # two workers created it at once: the unique key makes the loser re-read
+        session.rollback()
+        return session.execute(
+            select(TavilyUsage).where(TavilyUsage.site_id == site_id, TavilyUsage.month == month)
+        ).scalar_one()
+
+
+def check_and_increment(session: Session, site_slug: str = "", n: int = 1) -> Dict[str, Any]:
+    """Increment this month's Tavily counter and report whether calls remain.
+
+    Returns {allowed, used, budget, remaining, exhausted, month}. `allowed` is False once used >= budget (the
+    caller should pause-and-flag).
+
+    The increment is ONE conditional UPDATE (`calls = calls + n WHERE calls < budget`), so two concurrent
+    callers cannot both read the same value and both write back value+1 (a lost update that under-counted
+    spend), and the budget can never be overshot by a race (ENG-12)."""
+    site = get_or_create_site(session, site_slug)
+    month = _month()
+    budget = monthly_budget(site)
+    row = _usage_row(session, site.id, month)
+    result = session.execute(
+        update(TavilyUsage)
+        .where(TavilyUsage.id == row.id, TavilyUsage.calls < budget)
+        .values(calls=TavilyUsage.calls + n)
+    )
+    session.commit()
+    allowed = result.rowcount == 1
+    session.refresh(row)
     used = row.calls
     return {
         "allowed": allowed,
@@ -89,7 +116,7 @@ def budget_status(site_slug: str = "") -> Dict[str, Any]:
         session = get_session()
         try:
             site = get_or_create_site(session, site_slug)
-            budget = monthly_budget()
+            budget = monthly_budget(site)
             row = session.execute(
                 select(TavilyUsage).where(
                     TavilyUsage.site_id == site.id, TavilyUsage.month == _month())

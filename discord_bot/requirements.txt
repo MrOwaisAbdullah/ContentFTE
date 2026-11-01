@@ -1,5 +1,7 @@
-discord.py>=2.4.0
-gspread>=6.2.1
-google-auth>=2.30.0
-requests>=2.32.4
-openai-agents>=0.19.2
+# Bounded to the major versions this bot was written and tested against, so a rebuild cannot silently pull a
+# breaking major release. Raise a cap deliberately, after running the bot.
+discord.py>=2.4.0,<3
+gspread>=6.2.1,<7
+google-auth>=2.30.0,<3
+requests>=2.32.4,<3
+openai-agents>=0.19.2,<1

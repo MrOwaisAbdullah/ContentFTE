@@ -2471,6 +2471,9 @@ def update_content(article_id: int, content_md: str, note: str = "",
         s.close()
 
 
+_META_FIELD_LIMITS = {"title": 300, "slug": 200, "focus_keyword": 200, "summary": 2000, "tldr": 1500}
+
+
 def patch_article_meta(article_id: int, fields: dict[str, str]) -> dict:
     """Operator PATCH of allowed meta fields (title / slug / focus_keyword / summary / tldr).
 
@@ -2489,7 +2492,13 @@ def patch_article_meta(article_id: int, fields: dict[str, str]) -> dict:
         if art is None:
             return _err(f"article {article_id} not found", "run list_articles first")
         if not isinstance(fields, dict) or not fields:
-            return _err("fields dict must be non-empty", "send {title: '...', slug: '...'}")
+            return _err("no allowlisted fields supplied (fields dict is empty)", "send at least one of title,slug,focus_keyword,summary,tldr")
+        too_long = [k for k, limit in _META_FIELD_LIMITS.items()
+                    if k in fields and len(str(fields[k] if fields[k] is not None else "")) > limit]
+        if too_long:
+            return _err(f"invalid value: {', '.join(too_long)} too long "
+                        f"(max {', '.join(f'{k}={_META_FIELD_LIMITS[k]}' for k in too_long)} chars)",
+                        "shorten the field and retry")
         meta = dict(art.meta) if isinstance(art.meta, dict) else {}
         brief = meta.get("brief") if isinstance(meta.get("brief"), dict) else {}
         changed: list[str] = []
@@ -3188,11 +3197,23 @@ CADENCE_INTERVALS: dict[str, timedelta | None] = {
 }
 
 
+def _int_setting(value: Any, *, default: int, lo: int, hi: int) -> int:
+    """A numeric setting from `Site.settings` (a free-form JSON blob an operator or a client edits), as an int
+    in [lo, hi]. A string like "abc", null or a nested object used to raise ValueError/TypeError inside
+    `get_site_cadence_status`, which the console, publish and the scheduler all call - one bad value took the
+    whole site's pages down (ENG-17)."""
+    try:
+        n = int(float(str(value).strip())) if value not in (None, "", False) else default
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(lo, min(hi, n))
+
+
 def get_site_cadence_status(s, site: Site) -> dict:
     """Computes the current posting cadence status and next publication slot for a site."""
     settings = dict(site.settings or {})
     freq = str(settings.get("posting_frequency") or "daily")
-    max_posts = int(settings.get("max_posts_per_cadence") or 1)
+    max_posts = _int_setting(settings.get("max_posts_per_cadence"), default=1, lo=1, hi=100)
     require_approval = bool(settings.get("require_approval", True))
     auto_publish = bool(settings.get("auto_publish", False))
     publish_mode = str(settings.get("publish_mode") or "draft")

@@ -39,13 +39,15 @@ def test_redact_settings_strips_secrets_and_flags_them():
     assert safe["wp"]["username"] == "editor"                 # non-secret survives
     assert safe["image"]["max_tokens"] == 512                  # numeric config survives
     assert flags == {"wp_app_password": True, "indexnow_key": True,
-                     "bing_wmt_key": True, "discord_webhook_url": True}
+                     "bing_wmt_key": True, "discord_webhook_url": True,
+                     "delivery_webhook_url": False, "delivery_secret": False}
     assert FULL_SETTINGS["wp"]["app_password"] == SECRET_WP   # input not mutated
 
 
 def test_redact_settings_handles_missing_and_blank():
     assert redact_settings(None) == ({}, {"wp_app_password": False, "indexnow_key": False,
-                                          "bing_wmt_key": False, "discord_webhook_url": False})
+                                          "bing_wmt_key": False, "discord_webhook_url": False,
+                                          "delivery_webhook_url": False, "delivery_secret": False})
     _, flags = redact_settings({"wp": {"app_password": "   "}})
     assert flags["wp_app_password"] is False
 

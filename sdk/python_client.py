@@ -63,14 +63,19 @@ class ContentFTEClient:
             if resp.status_code >= 400:
                 # A client error (401 bad key, 404, 409 gate/in-progress, 422 ...) will not change on
                 # retry, and used to be retried three times with backoff. Surface the server's reason.
-                detail = ""
+                detail, code, hint = "", "", ""
                 try:
-                    detail = str((resp.json() or {}).get("detail", ""))
+                    body = resp.json() or {}
+                    detail = str(body.get("detail", ""))
+                    code, hint = str(body.get("code", "")), str(body.get("next", ""))
                 except ValueError:
                     detail = (resp.text or "")[:200]
-                raise requests.HTTPError(
+                err = requests.HTTPError(
                     f"{method} {path} -> {resp.status_code}" + (f": {detail}" if detail else ""),
                     response=resp)
+                err.code = code          # machine-readable: not_found / invalid_state / gate_failed / ...
+                err.next = hint          # what the operator should do about it
+                raise err
             return resp.json()
         raise last_exc  # type: ignore[misc]
 

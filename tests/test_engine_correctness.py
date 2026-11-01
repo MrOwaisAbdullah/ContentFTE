@@ -402,3 +402,98 @@ def test_delivery_secrets_never_leave_through_the_site_api(svc):
     clean, flags = redact_settings({"delivery": {"webhook_url": "https://x.test/h?token=abc", "secret": "shh"}})
     assert "shh" not in str(clean) and "token=abc" not in str(clean)
     assert flags["delivery_secret"] is True and flags["delivery_webhook_url"] is True
+
+
+# ------------------------------------------------------------------ ENG-17: typed meta patch, bad settings
+def test_a_garbage_numeric_setting_degrades_to_the_default_instead_of_crashing(svc):
+    f = svc._int_setting
+    assert f("abc", default=1, lo=1, hi=100) == 1
+    assert f(None, default=3, lo=1, hi=100) == 3
+    assert f({"x": 1}, default=2, lo=1, hi=100) == 2
+    assert f("7", default=1, lo=1, hi=100) == 7 and f(7.9, default=1, lo=1, hi=100) == 7
+    assert f(-5, default=1, lo=1, hi=100) == 1 and f(10**9, default=1, lo=1, hi=100) == 100
+    assert f(float("inf"), default=4, lo=1, hi=100) == 4
+    from lib.db import Site, get_session
+    s = get_session()
+    try:
+        site = s.query(Site).filter_by(slug="s").one()
+        site.settings = {**(site.settings or {}), "max_posts_per_cadence": "lots", "posting_frequency": "daily"}
+        s.commit()
+        assert svc.get_site_cadence_status(s, site)["max_posts_per_cadence"] == 1     # was a ValueError
+    finally:
+        s.close()
+
+
+def test_meta_patch_rejects_wrong_types_and_oversized_values(svc):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from sdk.server import router
+    monkey_app = FastAPI()
+    monkey_app.include_router(router)
+    import os
+    os.environ["SDK_ALLOW_UNAUTHENTICATED"] = "1"
+    try:
+        c = TestClient(monkey_app)
+        aid = svc.submit_article("s", keyword="meta kw")["id"]
+        assert c.patch(f"/sdk/v1/articles/{aid}/meta", json={"title": ["a", "list"]}).status_code == 422
+        assert c.patch(f"/sdk/v1/articles/{aid}/meta", json={"title": "x" * 301}).status_code == 422
+        ok = c.patch(f"/sdk/v1/articles/{aid}/meta", json={"title": "A real title", "ignored": "x"})
+        assert ok.status_code == 200 and ok.json()["title"] == "A real title"
+    finally:
+        os.environ.pop("SDK_ALLOW_UNAUTHENTICATED", None)
+
+
+# ------------------------------------------------------------------ ENG-12 / TEN-03: atomic Tavily meter
+def test_concurrent_metering_never_overshoots_the_budget(svc, monkeypatch):
+    from lib import tavily_meter
+    monkeypatch.setenv("TAVILY_MONTHLY_BUDGET", "7")
+    results, errors = [], []
+
+    def worker():
+        try:
+            for _ in range(5):
+                results.append(tavily_meter.meter("s")["allowed"])
+        except Exception as e:           # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]       # 30 attempts against a budget of 7
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    assert results.count(True) == 7 and results.count(False) == 23
+    assert tavily_meter.budget_status("s")["used"] == 7
+
+
+def test_a_site_can_carry_its_own_tavily_budget(svc, monkeypatch):
+    from lib import tavily_meter
+    from lib.db import Site, get_session
+    monkeypatch.setenv("TAVILY_MONTHLY_BUDGET", "1000")
+    s = get_session()
+    try:
+        site = s.query(Site).filter_by(slug="s").one()
+        site.settings = {**(site.settings or {}), "budget": {"tavily_monthly": 2}}
+        s.commit()
+    finally:
+        s.close()
+    assert [tavily_meter.meter("s")["allowed"] for _ in range(4)] == [True, True, False, False]
+    assert tavily_meter.budget_status("s")["budget"] == 2
+
+
+def test_concurrent_site_creation_does_not_blow_up(svc):
+    from lib.db import Site, get_session
+    from lib.store import get_or_create_site
+    errors, ids = [], []
+
+    def worker():
+        s = get_session()
+        try:
+            ids.append(get_or_create_site(s, "raced-site").id)
+        except Exception as e:
+            errors.append(e)
+        finally:
+            s.close()
+
+    ts = [threading.Thread(target=worker) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errors and len(set(ids)) == 1

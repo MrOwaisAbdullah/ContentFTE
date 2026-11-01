@@ -24,6 +24,10 @@ export class ContentFTEError extends Error {
     public readonly status: number,
     public readonly detail: string,
     message: string,
+    /** Machine-readable reason: not_found, invalid_state, gate_failed, budget_exceeded, ... ("" if the server sent none). */
+    public readonly code: string = "",
+    /** What to do about it, when the server says. */
+    public readonly next: string = "",
   ) {
     super(message);
     this.name = "ContentFTEError";
@@ -173,8 +177,13 @@ export class ContentFTEClient {
       if (!res.ok) {
         // 4xx will not change on retry (this used to retry 401/404/409/422 three times). Keep the reason.
         let detail = "";
+        let code = "";
+        let next = "";
         try {
-          detail = String(((await res.json()) as { detail?: unknown })?.detail ?? "");
+          const body = (await res.json()) as { detail?: unknown; code?: unknown; next?: unknown };
+          detail = String(body?.detail ?? "");
+          code = String(body?.code ?? "");
+          next = String(body?.next ?? "");
         } catch {
           /* non-JSON error body */
         }
@@ -182,6 +191,8 @@ export class ContentFTEClient {
           res.status,
           detail,
           `${method} ${path} failed: ${res.status}${detail ? ` - ${detail}` : ""}`,
+          code,
+          next,
         );
       }
       return res.json();
