@@ -26,7 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lib.db import Article, AuditLog, KeywordLedger, Site, get_session, init_db
+from lib.db import (Article, AuditLog, KeywordLedger, Site, explain_missing_site,
+                    get_session, init_db)
 from lib.decay import DECAY_WINDOW_DAYS, plan_refresh_briefs
 
 logger = logging.getLogger(__name__)
@@ -34,11 +35,23 @@ logger = logging.getLogger(__name__)
 # GSC data lags ~2-3 days; end the window there, not today.
 _GSC_LAG_DAYS = 3
 
+# A page needs a meaningful prior baseline before a drop counts as "decay":
+# 3 -> 2 clicks is a 33% "decay" but pure noise. Pages below the floor are
+# reported as skipped, not refreshed.
+MIN_PRIOR_CLICKS = int(os.environ.get("DECAY_MIN_PRIOR_CLICKS") or "10")
 
-def _clicks_between(page_url: str, start: date, end: date) -> int:
+
+def _clicks_between(page_url: str, start: date, end: date,
+                    site_url: Optional[str] = None) -> int:
     """Live GSC click total for one page in [start, end]. Imports the client
-    lazily so importing this module (and its tests) needs no GSC creds."""
-    from lib.search_console import query_search_analytics
+    lazily so importing this module (and its tests) needs no GSC creds.
+
+    A *failed* query raises (it must never be read as "0 clicks", which would
+    score the page as 100% decayed and flip its keyword to `lost`); a
+    successful query with no rows is a genuine 0. `site_url` is the site's own
+    Search Console property (multi-site) -- the process-wide SITE_URL default
+    would score every site against the first site's property."""
+    from lib.search_console import SITE_URL, query_search_analytics
 
     rows = query_search_analytics(
         start_date=start,
@@ -48,6 +61,8 @@ def _clicks_between(page_url: str, start: date, end: date) -> int:
             "filters": [{"dimension": "page", "operator": "equals",
                          "expression": page_url}]
         }],
+        site_url=site_url or SITE_URL,
+        raise_on_error=True,
     )
     return int(rows[0].get("clicks", 0)) if rows else 0
 
@@ -61,9 +76,25 @@ def _windows():
     return cur_start, cur_end, prior_start, prior_end
 
 
+def _published_url(article: Article, base: str) -> str:
+    """The URL the article is actually live at. Prefer what the publisher
+    recorded; only fall back to the Sanity-style `{base}/blog/{slug}` guess."""
+    meta = article.meta or {}
+    for key in ("wp_url", "url", "published_url"):
+        v = str(meta.get(key) or "").strip()
+        if v:
+            return v
+    return f"{base}/blog/{article.slug}" if (base and article.slug) else ""
+
+
 def collect_pages(session: Session, site: Site,
-                  clicks_fn: Callable[[str, date, date], int] = _clicks_between):
-    """Per-article decay metrics for a site's published/ranking posts."""
+                  clicks_fn: Callable[[str, date, date], int] = _clicks_between,
+                  skipped: Optional[list] = None):
+    """Per-article decay metrics for a site's published/ranking posts.
+
+    Pages whose Search Console query fails, or whose prior window is below
+    MIN_PRIOR_CLICKS, are left out of the result and (when `skipped` is given)
+    recorded there with a reason."""
     base = (site.base_url or "").rstrip("/")
     cs, ce, ps, pe = _windows()
     pages = []
@@ -74,19 +105,36 @@ def collect_pages(session: Session, site: Site,
         )
     ).scalars()
     for a in rows:
-        url = f"{base}/blog/{a.slug}" if (base and a.slug) else (a.meta or {}).get("url", "")
+        url = _published_url(a, base)
         if not url:
             continue
         keyword = ""
         if a.keyword_id:
             kr = session.get(KeywordLedger, a.keyword_id)
             keyword = kr.keyword if kr else ""
+        try:
+            # Order matters (tests and GSC call budgeting): current window first.
+            current_clicks = clicks_fn(url, cs, ce)
+            prior_clicks = clicks_fn(url, ps, pe)
+        except Exception as exc:  # GSC unavailable for this page -> not "0 clicks"
+            logger.warning("decay: Search Console query failed for %s: %s", url, exc)
+            if skipped is not None:
+                skipped.append({"url": url, "reason": f"search console error: {exc}"})
+            continue
+        if prior_clicks < MIN_PRIOR_CLICKS:
+            if skipped is not None:
+                skipped.append({
+                    "url": url,
+                    "reason": f"prior window has {prior_clicks} clicks "
+                              f"(< {MIN_PRIOR_CLICKS}); too little data to call decay",
+                })
+            continue
         pages.append({
             "url": url,
             "title": a.title,
             "keyword": keyword,
-            "current_clicks": clicks_fn(url, cs, ce),
-            "prior_clicks": clicks_fn(url, ps, pe),
+            "current_clicks": current_clicks,
+            "prior_clicks": prior_clicks,
             "article_id": a.id,
             "keyword_id": a.keyword_id,
         })
@@ -94,7 +142,7 @@ def collect_pages(session: Session, site: Site,
 
 
 def run(dry_run: bool = False, site_slug: str = "",
-        clicks_fn: Callable[[str, date, date], int] = _clicks_between,
+        clicks_fn: Optional[Callable[[str, date, date], int]] = None,
         session: Optional[Session] = None) -> Dict[str, Any]:
     """Run the decay scan. Injectable for tests (clicks_fn + session)."""
     own_session = session is None
@@ -111,9 +159,21 @@ def run(dry_run: bool = False, site_slug: str = "",
                 select(Site).order_by(Site.id.asc())
             ).scalars().first()
         if site is None:
-            return {"status": "error", "message": f"site '{site_slug or 'default'}' not found"}
+            return {"status": "error", "message": explain_missing_site(session, site_slug)}
 
-        pages = collect_pages(session, site, clicks_fn)
+        if clicks_fn is None:
+            from lib.search_console import resolve_site_property
+            prop = resolve_site_property(site.base_url or "", site.settings or {})
+            if not prop:
+                return {"status": "error",
+                        "message": f"site '{site.slug}' has no Search Console property "
+                                   "(set base_url or settings.search_console_site_url)"}
+
+            def clicks_fn(url: str, start: date, end: date, _prop: str = prop) -> int:
+                return _clicks_between(url, start, end, site_url=_prop)
+
+        skipped: list = []
+        pages = collect_pages(session, site, clicks_fn, skipped)
         briefs = plan_refresh_briefs(pages)
         by_url = {p["url"]: p for p in pages}
 
@@ -142,6 +202,7 @@ def run(dry_run: bool = False, site_slug: str = "",
             "pages_scanned": len(pages),
             "refresh_count": len(briefs),
             "refresh_briefs": briefs,
+            "skipped": skipped,
             "dry_run": dry_run,
         }
     finally:
@@ -161,7 +222,10 @@ def main() -> None:
         print(f"ERROR: {res.get('message')}")
         raise SystemExit(1)
     print(f"[decay_job] site={res['site']} scanned={res['pages_scanned']} "
-          f"refresh_briefs={res['refresh_count']} dry_run={res['dry_run']}")
+          f"refresh_briefs={res['refresh_count']} skipped={len(res.get('skipped', []))} "
+          f"dry_run={res['dry_run']}")
+    for sk in res.get("skipped", []):
+        print(f"  ~ skipped {sk['url']}: {sk['reason']}")
     for b in res["refresh_briefs"]:
         print(f"  - {b['mode']:5} {b['page_url']} (decay={b['decay_pct']}) "
               f"-> {b['actions'][0]}")

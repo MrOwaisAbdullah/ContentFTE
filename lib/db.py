@@ -39,6 +39,23 @@ def database_url() -> str:
     return "sqlite:///./contentfte.db"
 
 
+def describe_database() -> str:
+    """Human-readable, credential-free description of the configured database,
+    for error messages ("which DB did this job actually connect to?")."""
+    raw = os.environ.get("DATABASE_URL", "").strip()
+    if not raw:
+        return ("DATABASE_URL is not set, so this process used the local sqlite "
+                "file ./contentfte.db (empty on a CI runner)")
+    try:
+        from sqlalchemy.engine import make_url
+        u = make_url(raw)
+        where = u.host or (u.database or "local file")
+        db = f"/{u.database}" if u.host and u.database else ""
+        return f"{u.get_backend_name()} database at {where}{db}"
+    except Exception:
+        return "a database from DATABASE_URL (unparseable URL)"
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -318,3 +335,21 @@ def init_db() -> None:
                     conn.commit()
             except Exception:
                 pass
+
+
+def explain_missing_site(session, site_slug: str = "") -> str:
+    """Say WHY a job found no site. An empty database (typically a CI job whose
+    DATABASE_URL secret is unset or points elsewhere) reads very differently
+    from a mistyped slug, and the old "site 'default' not found" hid the
+    difference."""
+    from sqlalchemy import func, select
+    total = session.execute(select(func.count(Site.id))).scalar() or 0
+    where = describe_database()
+    if total == 0:
+        return (f"no sites exist in the database this job connected to ({where}). "
+                "Check that the workflow's DATABASE_URL secret points at the engine's "
+                "database - an unset secret falls back to an empty local sqlite file.")
+    names = ", ".join(session.execute(select(Site.slug).order_by(Site.id)).scalars())
+    if site_slug:
+        return f"site '{site_slug}' not found in {where}; sites there: {names}"
+    return f"no usable site found in {where}; sites there: {names}"

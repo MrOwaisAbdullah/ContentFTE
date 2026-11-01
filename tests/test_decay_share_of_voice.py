@@ -237,3 +237,118 @@ def test_pipeline_workflow_schedules_decay_monthly():
     assert "stage=decay" in wf          # resolve mapping
     assert "- decay" in wf              # workflow_dispatch option
 
+
+
+# ---------------------------------------------------------------------------
+# Plan SEO-03: a failed Search Console query is NOT "0 clicks"
+# ---------------------------------------------------------------------------
+def _seed_one_published(temp_db, slug="t", base="https://example.com", meta=None):
+    from lib.db import Article, KeywordLedger, Site
+    s = temp_db.get_session()
+    site = Site(slug=slug, name=slug.upper(), base_url=base)
+    s.add(site)
+    s.commit()
+    kw = KeywordLedger(site_id=site.id, keyword="kw", status="published")
+    s.add(kw)
+    s.commit()
+    art = Article(site_id=site.id, keyword_id=kw.id, title="A", slug="a",
+                  status="published", meta=meta or {})
+    s.add(art)
+    s.commit()
+    return s, site, kw
+
+
+def test_gsc_failure_on_current_window_is_skipped_not_scored_as_decay(temp_db):
+    job = _load_decay_job()
+    s, site, kw = _seed_one_published(temp_db)
+    try:
+        calls = {"n": 0}
+
+        def flaky(url, start, end):
+            calls["n"] += 1
+            if calls["n"] == 1:           # current window fails
+                raise RuntimeError("503 from Search Console")
+            return 100                    # prior window answered
+
+        res = job.run(dry_run=False, site_slug="t", clicks_fn=flaky, session=s)
+        assert res["status"] == "ok"
+        assert res["refresh_count"] == 0          # NOT a 100% "decay"
+        assert res["pages_scanned"] == 0
+        assert "search console error" in res["skipped"][0]["reason"]
+        s.refresh(kw)
+        assert kw.status == "published"            # keyword NOT flipped to lost
+    finally:
+        s.close()
+
+
+def test_low_baseline_pages_are_skipped(temp_db):
+    job = _load_decay_job()
+    s, site, kw = _seed_one_published(temp_db)
+    try:
+        calls = {"n": 0}
+
+        def tiny(url, start, end):
+            calls["n"] += 1
+            return 2 if calls["n"] % 2 == 1 else 3   # 3 -> 2 clicks = "33% decay" of noise
+
+        res = job.run(dry_run=False, site_slug="t", clicks_fn=tiny, session=s)
+        assert res["refresh_count"] == 0
+        assert "too little data" in res["skipped"][0]["reason"]
+    finally:
+        s.close()
+
+
+def test_recorded_published_url_wins_over_the_blog_slug_guess(temp_db):
+    job = _load_decay_job()
+    s, site, kw = _seed_one_published(
+        temp_db, meta={"wp_url": "https://example.com/2026/05/a-real-permalink/"})
+    try:
+        seen = []
+
+        def spy(url, start, end):
+            seen.append(url)
+            return 100
+
+        job.run(dry_run=True, site_slug="t", clicks_fn=spy, session=s)
+        assert set(seen) == {"https://example.com/2026/05/a-real-permalink/"}
+    finally:
+        s.close()
+
+
+def test_default_clicks_fn_queries_the_sites_own_property(temp_db, monkeypatch):
+    job = _load_decay_job()
+    s, site, kw = _seed_one_published(temp_db, base="https://site-b.example")
+    site.settings = {"search_console_site_url": "sc-domain:site-b.example"}
+    s.commit()
+    try:
+        import lib.search_console as gsc
+        used = []
+
+        def fake_query(**kw_):
+            used.append((kw_["site_url"], kw_["raise_on_error"]))
+            return [{"clicks": 100}]
+
+        monkeypatch.setattr(gsc, "query_search_analytics", fake_query)
+        res = job.run(dry_run=True, site_slug="t", session=s)   # no clicks_fn -> real path
+        assert res["status"] == "ok"
+        assert used and all(u == ("sc-domain:site-b.example", True) for u in used)
+    finally:
+        s.close()
+
+
+def test_missing_site_message_says_why(temp_db):
+    from lib.db import explain_missing_site
+    job = _load_decay_job()
+    s = temp_db.get_session()
+    try:
+        res = job.run(dry_run=True, site_slug="", clicks_fn=lambda u, a, b: 0, session=s)
+        assert res["status"] == "error"
+        assert "no sites exist" in res["message"] and "DATABASE_URL" in res["message"]
+        assert "default" not in res["message"].split("(")[0]      # old misleading wording gone
+        from lib.db import Site
+        s.add(Site(slug="real", name="R"))
+        s.commit()
+        assert "sites there: real" in explain_missing_site(s, "typo")
+        assert "'typo' not found" in explain_missing_site(s, "typo")
+    finally:
+        s.close()

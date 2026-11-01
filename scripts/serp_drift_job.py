@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lib.db import AuditLog, KeywordLedger, SeoCache, Site, get_session, init_db
+from lib.db import (AuditLog, KeywordLedger, SeoCache, Site, explain_missing_site,
+                    get_session, init_db)
 from lib.seo_provider import get_keyword_data, provider_name
 from lib.serp_drift import detect_drift, serp_urls
 
@@ -77,7 +78,7 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
             ).scalars().first()
         if site is None:
             return {"status": "error",
-                    "message": f"site '{site_slug or 'default'}' not found"}
+                    "message": explain_missing_site(session, site_slug)}
 
         rows = session.execute(
             select(SeoCache).where(SeoCache.provider == provider)

@@ -59,6 +59,20 @@ def _looks_like_refusal_or_empty(text: str) -> bool:
     return any(marker in lowered for marker in _REFUSAL_MARKERS)
 
 
+# The triage prompt asks the model to append `PRIMARY_KEYWORD:` / `SECONDARY_KEYWORDS:`
+# lines after the topic. The workflow deliberately takes the keyword targets from the
+# sheet claim, never from the model's copy, so those lines are dead weight -- and
+# worse, they used to ride along inside the topic string into the Jev gate, the
+# researcher prompt and the Discord "Researched ..." ping.
+_KEYWORD_TARGET_LINE_RE = re.compile(
+    r"^[ 	]*(?:PRIMARY_KEYWORD|SECONDARY_KEYWORDS)[ 	]*:.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _strip_keyword_target_lines(text) -> str:
+    """The triage output with any PRIMARY_KEYWORD:/SECONDARY_KEYWORDS: lines removed."""
+    return _KEYWORD_TARGET_LINE_RE.sub("", str(text)).strip()
+
+
 async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_by_name, increment_usage, MAX_TURNS, max_retries: int = 2) -> Dict[str, Optional[str]]:
     """
     Executes a combined workflow using Agents SDK, where the Triage Agent selects a keyword or link from ContentSpark_Keywords,
@@ -308,7 +322,9 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
         release_keyword_claim()
         return {"error": f"Triage Agent failed after {max_retries} attempts: {str(triage_result)}"}
 
-    input_string = triage_result.final_output if hasattr(triage_result, 'final_output') else str(triage_result)  # The output is a single string
+    input_string = _strip_keyword_target_lines(
+        triage_result.final_output if hasattr(triage_result, 'final_output') else str(triage_result)
+    )  # The output is a single string
 
     # An empty ContentSpark_Keywords queue makes get_keyword_tool return an
     # error dict, but the Triage Agent then just relays that as a polite

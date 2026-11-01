@@ -73,13 +73,18 @@ def query_search_analytics(
     row_limit: int = 25,
     dimension_filter_groups: Optional[List[Dict[str, Any]]] = None,
     site_url: str = SITE_URL,
+    raise_on_error: bool = False,
 ) -> List[Dict[str, Any]]:
     """Queries the Search Analytics API and returns the raw `rows` list
     (each row has `keys` matching `dimensions`, plus `clicks`, `impressions`,
     `ctr`, `position`). Returns an empty list on any failure -- callers
     should treat "no data" and "query failed" the same way (nothing to
     report), logging the distinction rather than raising, since a Search
-    Console hiccup shouldn't fail an otherwise-working pipeline stage."""
+    Console hiccup shouldn't fail an otherwise-working pipeline stage.
+
+    Pass `raise_on_error=True` when "no data" and "query failed" must NOT be
+    conflated -- e.g. the decay job, where a failed query read as zero clicks
+    scores the page as 100% decayed."""
     body: Dict[str, Any] = {
         "startDate": start_date.isoformat(),
         "endDate": end_date.isoformat(),
@@ -102,6 +107,8 @@ def query_search_analytics(
         return response.json().get("rows", [])
     except Exception as e:
         logger.warning(f"query_search_analytics failed: {e}")
+        if raise_on_error:
+            raise
         return []
 
 

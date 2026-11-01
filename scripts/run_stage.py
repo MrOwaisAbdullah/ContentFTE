@@ -223,14 +223,20 @@ def _notify_discord(title: str, summary: str, content: str = "", faqs: str = "")
             print(f"Failed to send Discord FAQ chunk {i}/{len(faq_chunks)}: {e}")
 
 
-def _notify_discord_status(stage: str, success: bool, detail: str = "") -> None:
+def _notify_discord_status(stage: str, success: bool, detail: str = "",
+                           skipped: bool = False) -> None:
     """Posts a one-line status update for every stage run so failures show
-    up in Discord instead of only in the Actions log."""
+    up in Discord instead of only in the Actions log. `skipped` is for a run
+    that deliberately did nothing (e.g. a feature switched off) -- reporting
+    that as "completed" misleads whoever reads the channel."""
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
     if not webhook_url:
         return
-    icon = "✅" if success else "❌"
-    content = f"{icon} Stage `{stage}` {'completed' if success else 'failed'}."
+    if skipped:
+        content = f"⏭️ Stage `{stage}` skipped."
+    else:
+        icon = "✅" if success else "❌"
+        content = f"{icon} Stage `{stage}` {'completed' if success else 'failed'}."
     if detail:
         content += f"\n```{detail[:1800]}```"
     try:
@@ -2300,8 +2306,8 @@ async def run_serp_drift() -> None:
     res = job.run()
     if res.get("status") == "skipped":
         print(f"[serp_drift] skipped: {res.get('message')}")
-        _notify_discord_status("serp_drift", success=True,
-                               detail=f"Skipped: {res.get('message')}")
+        _notify_discord_status("serp_drift", success=True, skipped=True,
+                               detail=str(res.get("message") or "skipped"))
         return
     if res.get("status") != "ok":
         raise RuntimeError(f"serp drift job failed: {res.get('message')}")

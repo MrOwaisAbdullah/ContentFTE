@@ -297,3 +297,19 @@ def test_site_schema_stores_secondaries():
     with open(site, encoding="utf-8") as fh:
         src = fh.read()
     assert 'name: "secondaryKeywords"' in src
+
+
+def test_triage_keyword_target_lines_are_not_part_of_the_topic():
+    """The Discord ping used to read 'Researched <topic>\n\nPRIMARY_KEYWORD: \nSECONDARY_KEYWORDS:'
+    because the model's trailing target lines rode along inside the topic string."""
+    from blog_agent.research_agent import _strip_keyword_target_lines as strip
+
+    raw = ("How to Secure Your MCP Servers: Avoiding Hardcoded Credential Leaks\n"
+           "PRIMARY_KEYWORD: \nSECONDARY_KEYWORDS:")
+    assert strip(raw) == "How to Secure Your MCP Servers: Avoiding Hardcoded Credential Leaks"
+    # populated values and mixed case are stripped too; the topic itself is untouched
+    assert strip("best coffee maker 2025\nprimary_keyword: coffee maker\n"
+                 "Secondary_Keywords: espresso; drip") == "best coffee maker 2025"
+    # a topic that merely mentions the words mid-line is left alone
+    assert strip("Why PRIMARY_KEYWORD: matters in SEO briefs") == "Why PRIMARY_KEYWORD: matters in SEO briefs"
+    assert strip("") == ""
