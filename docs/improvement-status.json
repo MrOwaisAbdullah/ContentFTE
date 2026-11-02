@@ -211,10 +211,10 @@
       "phase": "2"
     },
     "ENG-10": {
-      "status": "partial",
+      "status": "done",
       "branch": "p5",
       "phase": "2",
-      "note": "approve no longer regresses a published article and the event is now article.approved (legacy_event keeps the old name for one release); a full transition table is still open"
+      "note": "approve no longer regresses a published article; the event is article.approved (legacy_event for one release); an empty article cannot be published (PUBLISH_REQUIRE_CONTENT) and approving one warns (QUALITY_GATE_REQUIRE_CONTENT=1 makes it a hard stop)"
     },
     "ENG-11": {
       "status": "done",
@@ -257,9 +257,10 @@
       "phase": "2"
     },
     "ENG-18": {
-      "status": "open",
-      "note": "article_stats: SQL aggregates instead of loading every article's markdown",
-      "phase": "2"
+      "status": "done",
+      "branch": "p5",
+      "phase": "2",
+      "note": "article_stats defers the body and counts words in SQL (approximate: runs of spaces over-count slightly); the exact count stays on the per-article endpoints"
     },
     "ENG-19": {
       "status": "done",
@@ -268,10 +269,10 @@
       "phase": "2"
     },
     "ENG-20": {
-      "status": "partial",
+      "status": "done",
       "branch": "p5",
-      "note": "no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open",
-      "phase": "2"
+      "phase": "2",
+      "note": "a WordPress draft push does not stamp published_at and does not ping search engines; 'live' is reported on the publish result; going live later stamps it"
     },
     "ENG-21": {
       "status": "done",
@@ -696,9 +697,9 @@
     },
     "CON-05": {
       "status": "partial",
-      "branch": "p1",
-      "note": "cadence/enforce and the spend cap are read by the engine; image/content/indexing/notification groups are still saved but never consumed",
-      "phase": "2"
+      "branch": "p5",
+      "phase": "2",
+      "note": "cadence, budget AND the Content group (min words, FAQ on/off, brand voice prompt) are now read by the engine; the Image group (preference, relevancy threshold, VLM model, revisions), Indexing and Notifications groups are still saved but not consumed"
     },
     "CON-06": {
       "status": "done",

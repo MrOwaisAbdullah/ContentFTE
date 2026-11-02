@@ -383,10 +383,19 @@ def test_wordpress_push_requires_content(monkeypatch):
     _wp_env(monkeypatch)
     art_id = _approved_article(content="")
     out = service.publish_article(art_id)
-    assert out["status"] == "published"
-    assert out["wp"]["ok"] is False
-    assert "no content_md" in out["wp"]["error"]
+    # An empty article is refused before anything is pushed or flipped (ENG-10); it used to "publish" and then
+    # report the WordPress push as failed.
+    assert "no content to publish" in out["error"]
     assert _FakeConnector.instances == []
+    assert service.get_article(art_id)["status"] == "approved"
+    # the WordPress push itself still refuses an empty body if called around the guard
+    import os
+    os.environ["PUBLISH_REQUIRE_CONTENT"] = "0"
+    try:
+        out2 = service.publish_article(art_id)
+        assert out2["wp"]["ok"] is False and "no content_md" in out2["wp"]["error"]
+    finally:
+        os.environ.pop("PUBLISH_REQUIRE_CONTENT", None)
 
 
 # --- refresh / decay path (§5.11) -------------------------------------------

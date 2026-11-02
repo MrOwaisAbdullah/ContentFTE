@@ -153,3 +153,39 @@ def test_zero_faqs_passes_the_draft_check_only_when_faqs_are_optional(monkeypatc
     relaxed = service._content_checks(content=body, title="T", summary="s" * 40, faqs=[],
                                       brief={"keyword": "k", "faq_required": False})
     assert relaxed["faqs"]["pass"] is True and relaxed["faqs"]["need"] == 0
+
+
+# ---- CON-05: the site's Content settings are READ by the engine -----------------------------------------------------
+def test_site_content_settings_reach_the_brief_and_drive_the_floor_faqs_and_voice(monkeypatch):
+    from lib.brief_templates import faq_min_for, word_floor_for_brief
+    from sdk import service
+    monkeypatch.delenv("GEN_MIN_WORDS", raising=False)
+    monkeypatch.delenv("FAQ_MIN", raising=False)
+
+    class Site:
+        settings = {"content": {"min_words": 1200, "generate_faqs": False, "brand_voice_prompt": "Dry, precise, no hype."}}
+
+    brief = service.apply_site_content_settings({"keyword": "best crm", "intent": "informational"}, Site())
+    assert brief["min_words"] == 1200 and word_floor_for_brief(brief) == 1200
+    assert faq_min_for(brief) == 0 and brief["brand_voice_prompt"] == "Dry, precise, no hype."
+    # a per-article value on the brief wins over the site default
+    assert service.apply_site_content_settings({"min_words": 500, "faq_required": True}, Site())["min_words"] == 500
+    assert faq_min_for(service.apply_site_content_settings({"faq_required": True}, Site())) == 3
+    # garbage / absent settings change nothing
+    class Bad:
+        settings = {"content": {"min_words": "lots", "generate_faqs": "maybe"}}
+    assert service.apply_site_content_settings({"keyword": "k"}, Bad()) == {"keyword": "k"}
+    assert service.apply_site_content_settings({"keyword": "k"}, None) == {"keyword": "k"}
+    # nothing set: the intent/tutorial floor applies, and the operator's GEN_MIN_WORDS still outranks the site
+    assert word_floor_for_brief({"intent": "informational", "keyword": "what is x"}) == 900
+    monkeypatch.setenv("GEN_MIN_WORDS", "700")
+    assert word_floor_for_brief(brief) == 700
+
+
+def test_the_generation_prompt_carries_the_sites_voice_instructions(monkeypatch):
+    monkeypatch.delenv("GEN_MIN_WORDS", raising=False)
+    from lib.generation import render_prompt
+    base = {"keyword": "best crm", "intent": "informational", "brief_payload": "x"}
+    with_voice = render_prompt({**base, "brand_voice_prompt": "Dry, precise, no hype.", "min_words": 1234})
+    assert "Dry, precise, no hype." in with_voice and "1234 words" in with_voice
+    assert "Site voice instructions" not in render_prompt(base)

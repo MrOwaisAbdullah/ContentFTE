@@ -60,7 +60,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | 1 | 8 | - | - | - | 12 | 13 |
-| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 14 | 14 |
+| 2 - Tenant context, auth and secrets | 4 | - | 1 | 2 | 4 | 16 | 11 |
 | 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 12 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
@@ -140,7 +140,7 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 
 _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant state, secrets out of plaintext, readiness and error contracts, observable requests.
 
-**Status: in progress** - 16 of 30 done, 10 partly done, 4 not done (item-by-item list in section 2).
+**Status: in progress** - 19 of 30 done, 8 partly done, 3 not done (item-by-item list in section 2).
 
 - [x] **SEC-03** (High) No key→site binding - `phase2-site-api-keys`
 - [~] **ENG-04** (High) generate_content: no single-flight per article; token usage read from module-global LAST_USAGE (concurrent run… - single-flight done; LAST_USAGE module global and cost-in-finally still open - `phase4-remaining-hardening`
@@ -149,26 +149,26 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [x] **ENG-08** (High) Unknown or empty site_slug returns all tenants' data for brain entries, review feedback, mine_feedback, spend … - `phase3-tenant-isolation`
 - [~] **PIPE-06** (High) Brand DNA applied only in main.py lifespan, for the first Site, to module-level agents, once per process - scheduled runs (run_stage) and the API lifespan share one helper that injects the site's Brand DNA; agents are still module-level objects rather than built per run from a TenantContext (TEN-02) - `phase5-pipeline-adapters`
 - [x] **CON-03** (High) Active instance is one global cookie resolved at call time; with two tabs on different instances, a click in t… - `phase0-console-engine-hardening`
-- [~] **CON-05** (High) Settings the engine never reads: image., content - cadence/enforce and the spend cap are read by the engine; image/content/indexing/notification groups are still saved but never consumed - `phase1-quality-gates`
+- [~] **CON-05** (High) Settings the engine never reads: image., content - cadence, budget AND the Content group (min words, FAQ on/off, brand voice prompt) are now read by the engine; the Image group (preference, relevancy threshold, VLM model, revisions), Indexing and Notifications groups are still saved but not consumed - `phase5-pipeline-adapters`
 - [ ] **TEN-02** (High) Import-time site identity and process-global provider config: SITE_BASE_URL/SITE_HOST/SITE_PREFIX frozen at im… - replace import-time site identity/provider globals with TenantContext lookups
 - [x] **SEC-09** (Medium) Console middleware only checks that a console_session cookie exists; requireSession() runs in the layout and 3… - `phase0-console-engine-hardening`
 - [x] **SEC-10** (Medium) Console login: no rate limit or lockout; error text names OPERATOR_PASSWORD; 7-day token with no revocation; n… - `phase0-console-engine-hardening`
 - [x] **SEC-14** (Medium) Plaintext secrets at rest: Site.settings.wp.app_password in DB JSON; engine API keys in console/instances.json… - site secrets (WordPress app password, IndexNow/Bing keys, Discord webhook, delivery secret) are Fernet-encrypted in the database with SECRETS_KEY (rotation supported) and decrypted only where used; scripts/encrypt_site_secrets.py converts existing rows; the console encrypts instances.json API keys with INSTANCES_KEY. Both are off until you set a key - you must generate and store them. - `phase5-pipeline-adapters`
 - [x] **SEC-19** (Medium) Screenshot SSRF guard runs once, before navigation - `phase5-pipeline-adapters`
 - [~] **ENG-09** (Medium) list_logs / list_stages have no site filter; record_stage_run writes no site_id. - /logs is site-filtered; stage history/stage rows still have no site_id (platform-only) - `phase3-tenant-isolation`
-- [~] **ENG-10** (Medium) approve_article has no state guard (can regress published→approved, approve content-less briefs) and emits art… - approve no longer regresses a published article and the event is now article.approved (legacy_event keeps the old name for one release); a full transition table is still open - `phase5-pipeline-adapters`
+- [x] **ENG-10** (Medium) approve_article has no state guard (can regress published→approved, approve content-less briefs) and emits art… - approve no longer regresses a published article; the event is article.approved (legacy_event for one release); an empty article cannot be published (PUBLISH_REQUIRE_CONTENT) and approving one warns (QUALITY_GATE_REQUIRE_CONTENT=1 makes it a hard stop) - `phase5-pipeline-adapters`
 - [~] **ENG-12** (Medium) Check-then-insert races (submit_article, upsert_site, get_or_create_site, upsert_keyword); no unique (site_id,… - atomic Tavily meter, concurrent site creation safe; unique (site_id, keyword_id) on articles and a unique finalize row need a migration, so they wait for Alembic (OPS-01) - `phase5-pipeline-adapters`
 - [~] **ENG-13** (Medium) Read paths have write side effects: get_or_create_site on reads and submit_article auto-create a site from any… - REST/MCP submit refuses unknown sites unless SDK_AUTO_CREATE_SITES=1 or it is the default site; new slugs are validated; read paths in lib/store.py still auto-create - `phase5-pipeline-adapters`
 - [~] **ENG-15** (Medium) init_db() runs create_all on every service call (extra round-trips on Neon); no Alembic, so column changes nev… - create_all once per engine; SQLite busy timeout (WAL opt-in); Alembic baseline added (existing databases: alembic stamp 0001); a UTC TypeDecorator for timestamps is still open - `phase5-pipeline-adapters`
 - [x] **ENG-16** (Medium) Error envelope: every service error → 404; publish picks codes by substring; MCP keeps a next hint REST drops. - classified statuses + machine-readable code and next on REST errors; both clients expose them - `phase5-pipeline-adapters`
 - [x] **ENG-17** (Medium) Input hygiene: untyped patch_meta(body: dict); unclamped limit (negative = unlimited on SQLite, 500 on PG); no… - `phase5-pipeline-adapters`
-- [ ] **ENG-18** (Medium) article_stats (every dashboard hit) loads every article's content_md + meta and aggregates in Python; same for… - article_stats: SQL aggregates instead of loading every article's markdown
+- [x] **ENG-18** (Medium) article_stats (every dashboard hit) loads every article's content_md + meta and aggregates in Python; same for… - article_stats defers the body and counts words in SQL (approximate: runs of spaces over-count slightly); the exact count stays on the per-article endpoints - `phase5-pipeline-adapters`
 - [x] **ENG-19** (Medium) Both clients retry 4xx (401/404/409/422) because raise_for_status()/!res.ok is inside the retry try; non-idemp… - Python and TypeScript clients - `phase4-remaining-hardening`
 - [x] **CON-06** (Medium) No fetch timeout; the layout awaits 3 engine calls on every request → one hung engine freezes every page. - `phase0-console-engine-hardening`
 - [x] **SEC-15** (Low) Hardening: no security headers in next.config.ts; engine CORS defaults to  (and omits DELETE/PUT); OpenAPI doc… - security headers, media proxy, /docs gated, shared-mode CORS default-deny, and a per-request-nonce CSP (every script on /login verified to carry the nonce against a real production server). The nonce policy ships in report-only mode (CSP_MODE); switching to enforce is your call after you click through the console in a browser. - `phase5-pipeline-adapters`
 - [~] **SEC-20** (Low) Model-chosen fetch URLs enable data exfiltration - model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment - `phase5-pipeline-adapters`
 - [x] **SEC-21** (Low) Second-order injection via brain/ - get_brain_notes_tool returns first-hand voice notes in full but only the titles/tags of LLM-drafted coverage records, as data under a different key - `phase5-pipeline-adapters`
-- [~] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open - `phase5-pipeline-adapters`
+- [x] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - a WordPress draft push does not stamp published_at and does not ping search engines; 'live' is reported on the publish result; going live later stamps it - `phase5-pipeline-adapters`
 - [x] **ENG-21** (Low) Observability: /health always OK (no DB check), no readiness probe, no request id, print() in places. - X-Request-ID on every response and log line, LOG_FORMAT=json, access log without query strings; /ready added earlier - `phase5-pipeline-adapters`
 - [ ] **ENG-22** (Low) sdk/service.py is 3,118 lines and REST/MCP duplicate stage-run logic - split sdk/service.py (3.4k lines) along the seams in the plan
 - [ ] **SEC-16** (-) Historically leaked Google SA key: scrubbed from master, rotation in GCP IAM never confirmed — and still reach… - confirm/rotate the Google service-account key in GCP IAM (same action as SEC-22) _(owner action)_
@@ -634,7 +634,7 @@ Task list in §2.
 
 ### Phase 2 — Tenant context, auth & secrets (≈2–3 weeks)
 <!-- phase-status:2:start -->
-**Status: in progress** - 16 of 30 done, 10 partly done, 4 not done (item-by-item list in section 2).
+**Status: in progress** - 19 of 30 done, 8 partly done, 3 not done (item-by-item list in section 2).
 <!-- phase-status:2:end -->
 - `TenantContext`; remove import-time globals (TEN-02) and startup Brand DNA (PIPE-06); per-run agent construction.
 - Per-site hashed scoped keys; `_require_site` / `_load_article` choke points (SEC-03, ENG-08, ENG-09); tenancy test matrix.

@@ -651,3 +651,83 @@ def test_the_scheduled_pipeline_entry_point_applies_brand_dna():
     src = open("scripts/run_stage.py", encoding="utf-8").read()
     assert "apply_brand_dna_for_site([brief_agent, content_generator_agent, post_editor_agent])" in src
     assert src.index("apply_brand_dna_for_site") < src.index("asyncio.run(STAGE_HANDLERS[args.stage]())")
+
+
+# ------------------------------------------------------------------ ENG-18: stats without loading every article body
+def test_article_stats_counts_words_in_the_database_without_loading_bodies(svc):
+    from lib.db import Article, get_session
+    from sqlalchemy import event
+    ids = [svc.submit_article("s", keyword=f"stat {i}")["id"] for i in range(3)]
+    s = get_session()
+    try:
+        bodies = ["one two three four five", "# Title\n\npara one here.\n\npara two here too.", ""]
+        for aid, body in zip(ids, bodies):
+            a = s.get(Article, aid)
+            a.content_md, a.status = body, "published" if body else "briefed"
+        s.commit()
+    finally:
+        s.close()
+    statements = []
+    from lib.db import get_engine
+    event.listen(get_engine(), "before_cursor_execute", lambda c, cur, stmt, *a: statements.append(stmt))
+    out = svc.article_stats()
+    assert "error" not in out
+    assert out["by_status"]["published"] == 2 and out["by_status"]["briefed"] == 1
+    # 5 + 9 words (the heading counts as words); the SQL estimate may be a little high on double spaces, never wildly off
+    assert 14 <= out["words_total"] <= 16
+    selects = [q for q in statements if "FROM articles" in q and "SELECT" in q.upper() and "wc" in q]
+    assert selects, statements
+    assert all("articles.content_md AS articles_content_md" not in q for q in selects)   # the body column is not fetched
+
+
+def test_a_wordpress_draft_is_not_stamped_as_published_until_it_goes_live(svc, monkeypatch):
+    """ENG-20: cadence/decay/dateModified key off published_at, so a draft must not set it."""
+    from lib.db import Article, get_session
+    pushes = iter([{"ok": True, "post_id": 5, "url": "https://wp.test/a", "status": "draft"},
+                   {"ok": True, "deduplicated": True, "post_id": 5, "url": "https://wp.test/a"}])
+    monkeypatch.setattr(svc, "_wp_push", lambda art, meta, mode: next(pushes))
+    monkeypatch.setattr(svc, "_stage_images_for", lambda *a, **k: {})
+    monkeypatch.setattr("lib.indexing.submit_published", lambda *a, **k: {"ok": True})
+    aid = _wp_article(svc)
+    out = svc.publish_article(aid, mode="draft")
+    assert out["live"] is False
+    s = get_session()
+    try:
+        assert s.get(Article, aid).published_at is None
+    finally:
+        s.close()
+    out2 = svc.publish_article(aid, mode="auto")                     # later: push it live
+    assert out2["live"] is True
+    s = get_session()
+    try:
+        assert s.get(Article, aid).published_at is not None
+    finally:
+        s.close()
+
+
+# ------------------------------------------------------------------ ENG-10: nothing empty goes live
+def test_an_article_with_no_body_cannot_be_published_by_default(svc, monkeypatch):
+    monkeypatch.delenv("PUBLISH_REQUIRE_CONTENT", raising=False)
+    from lib.db import Article, get_session
+    aid = svc.submit_article("s", keyword="empty one")["id"]
+    s = get_session()
+    try:
+        s.get(Article, aid).status = "approved"          # however it got there
+        s.commit()
+    finally:
+        s.close()
+    out = svc.publish_article(aid)
+    assert "no content to publish" in out["error"]
+    assert svc.get_article(aid)["status"] == "approved"   # nothing flipped
+    monkeypatch.setenv("PUBLISH_REQUIRE_CONTENT", "0")
+    assert svc.publish_article(aid)["status"] == "published"
+
+
+def test_approving_an_empty_article_warns_and_can_be_made_a_hard_stop(monkeypatch):
+    from lib.quality_gate import assess
+    monkeypatch.delenv("QUALITY_GATE_REQUIRE_CONTENT", raising=False)
+    soft = assess(content_md="", meta={}, source_excerpts=[], check_links=False)
+    assert soft["pass"] is True and any("no content" in w for w in soft["warnings"])
+    monkeypatch.setenv("QUALITY_GATE_REQUIRE_CONTENT", "1")
+    hard = assess(content_md="  ", meta={}, source_excerpts=[], check_links=False)
+    assert hard["pass"] is False and any("no content" in b for b in hard["blocking"])

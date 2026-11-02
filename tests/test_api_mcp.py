@@ -19,6 +19,7 @@ def _isolated_db(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
     monkeypatch.delenv("SDK_MASTER_KEY", raising=False)
     monkeypatch.setenv("SDK_AUTO_CREATE_SITES", "1")   # these tests predate ENG-13 and submit to new slugs
+    monkeypatch.setenv("PUBLISH_REQUIRE_CONTENT", "0")   # lifecycle fixtures publish bodiless articles
     monkeypatch.delenv("WP_BASE_URL", raising=False)
     import lib.db as db
 

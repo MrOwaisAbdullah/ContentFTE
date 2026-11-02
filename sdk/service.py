@@ -30,7 +30,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from slugify import slugify
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
+from sqlalchemy.orm import defer
 
 from lib import custom_site
 from lib import generation
@@ -554,7 +555,16 @@ def article_stats(site_slug: str = "", since_days: int = 30) -> dict:
     try:
         since_days = max(1, int(since_days or 30))
         cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
-        stmt = select(Article)
+        # Every dashboard hit used to load EVERY article's full markdown just to count its words (ENG-18). The body
+        # is deferred and the word count is computed in the database: spaces + 1 over the whitespace-normalised
+        # text. That is an approximation (runs of spaces over-count slightly), which is fine for an aggregate; the
+        # exact per-article `word_count` still comes from `get_article`/`list_articles`.
+        flat = func.replace(func.trim(func.coalesce(ArticleModel.content_md, "")), "\n", " ")
+        words_sql = case(
+            (func.length(flat) == 0, 0),
+            else_=func.length(flat) - func.length(func.replace(flat, " ", "")) + 1,
+        )
+        stmt = select(ArticleModel, words_sql.label("wc")).options(defer(ArticleModel.content_md))
         scoped_site = None
         if (site_slug or "").strip():
             scoped_site = _site_by_slug(s, site_slug.strip())
@@ -562,7 +572,7 @@ def article_stats(site_slug: str = "", since_days: int = 30) -> dict:
                 return _err(f"site '{site_slug}' not found",
                             "run list_sites for valid slugs")
             stmt = stmt.where(Article.site_id == scoped_site.id)
-        rows = s.execute(stmt).scalars().all()
+        rows = s.execute(stmt).all()
         slug_by_id: dict[int, str] = ({scoped_site.id: scoped_site.slug}
                                       if scoped_site else {})
         by_status: dict[str, int] = {}
@@ -574,11 +584,10 @@ def article_stats(site_slug: str = "", since_days: int = 30) -> dict:
         in_range_published = 0
         per_day: dict[str, int] = {}
         per_site: dict[str, dict] = {}
-        for a in rows:
+        for a, wc_sql in rows:
             st = a.status or "unknown"
             by_status[st] = by_status.get(st, 0) + 1
-            md = (a.content_md or "").strip()
-            wc = len(md.split()) if md else 0
+            wc = int(wc_sql or 0)
             words_total += wc
             sc = article_scores(a)
             q = sc.get("quality")
@@ -1201,13 +1210,11 @@ def _content_checks(*, content: str, title: str, summary: str,
     failures report. The word floor is intent-aware (`word_floor_for` —
     compact buyer-intent pages floor at their template's 400-500, flagship
     informational at 900) with `GEN_MIN_WORDS` as an operator override."""
-    from lib.brief_templates import faq_min_for, word_floor_for
+    from lib.brief_templates import faq_min_for, word_floor_for_brief
     from lib.seo_keywords import check_keywords, parse_keywords
 
     words = len((content or "").split())
-    min_words = word_floor_for(
-        str(brief.get("template_intent") or brief.get("intent") or ""),
-        str(brief.get("keyword") or brief.get("primary_keyword") or ""))
+    min_words = word_floor_for_brief(brief)
     md_links = re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", content or "")
     site_base = str(brief.get("site_base_url") or "").rstrip("/")
     internal = [l for l in md_links if site_base and l.startswith(site_base)]
@@ -1830,6 +1837,7 @@ async def _generate_content_locked(article_id: int, *, generate_fn=None,
         # Real internal-link candidates for WordPress sites so even a
         # tool-skipping model can weave genuine links (checks enforce it).
         brief = _enrich_brief_with_links(art, brief, str(brief.get("keyword") or ""))
+        brief = apply_site_content_settings(brief, art.site)
 
         fn = generate_fn if generate_fn is not None else _default_generate
         revise_on = os.environ.get("CONTENTFTE_REVISE", "1").strip().lower() \
@@ -2088,6 +2096,25 @@ def _research_corpus(s, art: ArticleModel) -> list[str]:
     for key in ("research", "research_excerpts", "brief"):
         _add(meta.get(key))
     return [p for p in parts if p.strip()]
+
+
+def apply_site_content_settings(brief: dict, site) -> dict:
+    """Copy the site's Content settings (Settings > Content in the console) into the generation brief, so they
+    are READ instead of only saved (CON-05): `min_words` -> the word floor, `generate_faqs=false` -> FAQs optional,
+    `brand_voice_prompt` -> extra voice instructions. A value already on the brief wins (a per-article override)."""
+    content = ((getattr(site, "settings", None) or {}).get("content")) if site is not None else None
+    if not isinstance(content, dict):
+        return brief
+    out = dict(brief)
+    mw = _int_setting(content.get("min_words"), default=0, lo=0, hi=10000)
+    if mw and "min_words" not in out:
+        out["min_words"] = mw
+    if content.get("generate_faqs") is False and "faq_required" not in out:
+        out["faq_required"] = False
+    voice = str(content.get("brand_voice_prompt") or "").strip()
+    if voice and "brand_voice_prompt" not in out:
+        out["brand_voice_prompt"] = voice[:4000]
+    return out
 
 
 def _sibling_articles(s, art: ArticleModel, limit: int = 300) -> list[tuple]:
@@ -2893,9 +2920,13 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
             return _err(
                 f"article {article_id} is '{art.status}' — publish requires 'approved'",
                 "gate: overall >=90 and every sub-score >=80, then POST /sdk/v1/articles/{id}/approve")
+        if not (art.content_md or "").strip() and publish_requires_content():
+            # Never push an empty page to a live site, whatever state it reached 'approved' in (ENG-10).
+            return _err(f"article {article_id} has no content to publish",
+                        "generate the article (or write its body) first")
         art.status = "published"
-        if art.published_at is None:
-            art.published_at = datetime.now(timezone.utc)
+        # `published_at` is stamped below, once we know the page is actually LIVE: a WordPress draft is not a
+        # publication, and stamping it here made cadence, decay and dateModified treat a draft as published (ENG-20).
         # §5.10-6 finalize the per-post cost ledger at publish. Spend is read
         # back from the ledger on demand — no denormalized cost_usd copy.
         totals = finalize(s, art.id)
@@ -2941,7 +2972,10 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
                 meta["wp_url"] = wp_state.get("url") or ""
                 art.meta = dict(meta)
 
-        payload: dict[str, Any] = {"mode": mode, "via": via}
+        went_live = _is_live(wp_state, mode)
+        if went_live and art.published_at is None:
+            art.published_at = datetime.now(timezone.utc)
+        payload: dict[str, Any] = {"mode": mode, "via": via, "live": went_live}
         if wp_state is not None:
             payload["wp"] = wp_state
         if meta.get("image_staging"):
@@ -2949,7 +2983,7 @@ def _publish_article_locked(article_id: int, mode: str = "draft", via: str = "ap
         s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                        action="article.publish", payload=payload))
         s.commit()
-        out: dict[str, Any] = {"id": art.id, "status": art.status, "mode": mode,
+        out: dict[str, Any] = {"id": art.id, "status": art.status, "mode": mode, "live": went_live,
                                "cost_usd": totals["total_usd"], "event": "article.published"}
         if wp_state is not None:
             out["wp"] = wp_state
@@ -3383,6 +3417,12 @@ def get_site_settings_raw(slug: str) -> dict | None:
         return dict(row.settings or {}) if row else None
     finally:
         s.close()
+
+
+def publish_requires_content() -> bool:
+    """PUBLISH_REQUIRE_CONTENT=0 lets an article with an empty body be published (default: refused). Only
+    meant for test fixtures that exercise the status lifecycle without writing a body."""
+    return os.environ.get("PUBLISH_REQUIRE_CONTENT", "1").strip().lower() not in ("0", "off", "false", "no")
 
 
 def _int_setting(value: Any, *, default: int, lo: int, hi: int) -> int:

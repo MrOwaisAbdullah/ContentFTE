@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "@/lib/flash-redirect";
 import { engine, EngineError } from "@/lib/engine";
 import { requireOperator } from "@/lib/guard";
+import { parseId, parsePublishMode, parseReturnPath } from "@/lib/action-input.ts";
 
 function back(articlesId?: number, err?: string): string {
   const base = articlesId ? `/articles/${articlesId}` : "/articles";
@@ -16,18 +17,16 @@ function errorOf(e: unknown): string {
 
 /** Positive integer id from the form, else bounce back — never `/articles/NaN/...` (plan CON-10). */
 function idOf(formData: FormData, fallback = "/articles"): number {
-  const n = Number(formData.get("id"));
-  if (!Number.isInteger(n) || n <= 0) {
+  const n = parseId(formData.get("id"));
+  if (n === null) {
     redirect(`${fallback}?err=${encodeURIComponent("invalid id")}`);
   }
   return n;
 }
 
-const PUBLISH_MODES = new Set(["draft", "publish", "auto"]);
-
 /* Publishing from the Publish queue returns to the queue; anything else
    lands back on the article detail. Allowlist — never an open redirect. */
-const PUBLISH_RETURN = new Set(["/", "/approvals", "/publish"]);
+const PUBLISH_RETURN = { has: (v: string) => parseReturnPath(v) !== null };
 
 // "Add keyword" on the Keywords (ledger) tab — mirrors adding a row in the
 // sheet: POST /articles binds/creates the ledger row (§5.16 lineage) and the
@@ -118,8 +117,7 @@ export async function approveArticleAction(formData: FormData) {
 export async function publishArticleAction(formData: FormData) {
   await requireOperator(formData);
   const id = idOf(formData);
-  const rawMode = String(formData.get("mode") || "draft");
-  const mode = PUBLISH_MODES.has(rawMode) ? rawMode : "draft";
+  const mode = parsePublishMode(formData.get("mode"));
   const from = String(formData.get("from") || "");
   const queued = PUBLISH_RETURN.has(from);
   try {

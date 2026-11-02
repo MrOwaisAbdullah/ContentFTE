@@ -36,6 +36,13 @@ from lib.factcheck import extract_claims, verify_claims
 from lib.link_validator import UNVERIFIABLE_STATUSES as _UNVERIFIABLE_STATUSES
 
 
+def content_required() -> bool:
+    """QUALITY_GATE_REQUIRE_CONTENT=1: approving an article with an empty body is REFUSED (default: it is a
+    warning). Publishing an empty article is always refused (see service.publish_article), so this is about
+    catching it a step earlier."""
+    return os.environ.get("QUALITY_GATE_REQUIRE_CONTENT", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def eval_required() -> bool:
     """QUALITY_GATE_REQUIRE_EVAL=1: an ENGINE-GENERATED article must carry the evaluator's six sub-scores to be
     approved. Off by default (articles written by hand, or imported, have none); turn it on once your pipeline
@@ -82,6 +89,15 @@ def assess(
     blocking: list[str] = []
     warnings: list[str] = []
     checks: dict[str, Any] = {}
+
+    # 0) there must be something to approve (ENG-10): a brief with no body used to sail through every check
+    #    below, because each of them passes vacuously on empty text.
+    if not content_md.strip():
+        msg = "the article has no content yet (generate or write it before approving)"
+        (blocking if content_required() else warnings).append(msg)
+        checks["content"] = {"pass": False, "words": 0}
+    else:
+        checks["content"] = {"pass": True, "words": len(content_md.split())}
 
     # 1) deterministic draft checks recorded when the article was generated
     stored = (meta.get("generation") or {}).get("checks")

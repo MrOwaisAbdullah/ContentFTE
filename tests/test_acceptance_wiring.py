@@ -141,7 +141,7 @@ def test_publish_sets_cost_usd(temp_db):
     s = temp_db.get_session()
     try:
         site = store.get_or_create_site(s, "t")
-        art = Article(site_id=site.id, title="P", status="approved")
+        art = Article(site_id=site.id, title="P", status="approved", content_md="# P Body text.")
         s.add(art)
         s.commit()
         art_id = art.id

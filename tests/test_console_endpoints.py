@@ -17,6 +17,7 @@ def _isolated_db(monkeypatch):
     except OSError:
         pass
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("PUBLISH_REQUIRE_CONTENT", "0")   # lifecycle fixtures publish bodiless articles
     monkeypatch.delenv("SDK_MASTER_KEY", raising=False)
     monkeypatch.delenv("WP_BASE_URL", raising=False)
     import lib.db as db

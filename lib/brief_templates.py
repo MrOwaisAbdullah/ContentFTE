@@ -213,6 +213,23 @@ _TUTORIAL_RE = re.compile(
 TUTORIAL_FLOOR = 1500
 
 
+def word_floor_for_brief(brief: dict | None) -> int:
+    """The floor for THIS brief: an explicit `min_words` (copied from the site's Content settings, CON-05) wins over
+    the intent template; otherwise the intent/tutorial floor. `GEN_MIN_WORDS` (the operator's hard override) still
+    outranks both."""
+    brief = brief if isinstance(brief, dict) else {}
+    if (os.environ.get("GEN_MIN_WORDS") or "").strip():
+        return word_floor_for("", "")
+    try:
+        explicit = int(brief.get("min_words") or 0)
+    except (TypeError, ValueError):
+        explicit = 0
+    if explicit > 0:
+        return explicit
+    return word_floor_for(str(brief.get("template_intent") or brief.get("intent") or ""),
+                          str(brief.get("keyword") or brief.get("primary_keyword") or ""))
+
+
 def faq_min_for(brief: dict | None = None) -> int:
     """How many FAQs a draft must carry (SEO-20). Default 3.
 

@@ -14,7 +14,7 @@ import re
 from datetime import datetime, timezone
 
 from lib.brief_templates import (faq_min_for, secondary_keywords_block, template_for,
-                                 template_text, word_floor_for)
+                                 template_text, word_floor_for, word_floor_for_brief)
 from lib.run_result_utils import loads_lenient
 
 
@@ -204,7 +204,7 @@ def render_prompt(brief: dict) -> str:
     today = datetime.now(timezone.utc)
     year = today.year
     intent = str(brief.get("template_intent") or brief.get("intent") or "")
-    min_words = word_floor_for(intent, str(brief.get("keyword") or brief.get("primary_keyword") or ""))
+    min_words = word_floor_for_brief(brief)
     target = str(template_for(intent).get("word_target", "1500-2500"))
     internal_links = brief.get("internal_links") or []
     sources = brief.get("sources") or []
@@ -238,6 +238,8 @@ def render_prompt(brief: dict) -> str:
         + (f"{faq_min_for(brief)}+ FAQs" if faq_min_for(brief) else
            "FAQs only if real searchers ask those questions (otherwise none - do not pad)")
         + ", question-form H2s.",
+        *([f"- Site voice instructions (from this site's Content settings): {str(brief['brand_voice_prompt']).strip()[:2000]}"]
+          if str(brief.get("brand_voice_prompt") or "").strip() else []),
         "- Close with a `## Bottom Line` section (60-100 words) placed "
         "immediately BEFORE `## Sources`: a decisive verdict/answer that "
         "summarizes the takeaway and includes 1-2 of the internal links "

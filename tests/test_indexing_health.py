@@ -20,6 +20,7 @@ def _isolated_db(monkeypatch):
     os.makedirs(workdir, exist_ok=True)
     db_file = os.path.join(workdir, "idx.db")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("PUBLISH_REQUIRE_CONTENT", "0")   # lifecycle fixtures publish bodiless articles
     monkeypatch.setenv("SEO_DATA_PROVIDER", "off")
     monkeypatch.delenv("INDEXNOW_KEY", raising=False)
     monkeypatch.delenv("BING_WMT_API_KEY", raising=False)
