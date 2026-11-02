@@ -41,6 +41,7 @@ from lib.cost_ledger import finalize, record_cost, usage_cost
 from lib import quality_gate
 from lib.ledger import INTENT_VALUE, briefable_rows, set_status, upsert_keyword
 from lib.secrets_redact import merge_settings, redact_settings
+from lib import secretbox
 from lib.safe_fetch import safe_get
 from lib.store import article_scores
 from lib.taxonomy import derive_taxonomy
@@ -270,7 +271,7 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
                             "use lower-case letters, digits and hyphens (max 63 chars)")
             site = Site(slug=slug, name=name or slug.title(),
                         site_type=site_type or "custom", base_url=base_url,
-                        settings=settings or {})
+                        settings=secretbox.encrypt_settings(settings or {}))
             s.add(site)
             s.commit()
             s.refresh(site)
@@ -288,7 +289,7 @@ def upsert_site(slug: str, name: str = "", site_type: str = "",
             if settings is not None:
                 # Group-aware merge: a partial `wp` group no longer discards the
                 # stored password; blank secret = keep, None = remove (plan CON-04).
-                site.settings = merge_settings(site.settings, settings)
+                site.settings = secretbox.encrypt_settings(merge_settings(site.settings, settings))
                 updated = True
             if updated:
                 s.commit()
@@ -1299,7 +1300,7 @@ def _wp_config(site=None):
     if isinstance(wp, dict) and wp.get("base_url"):
         return WPConfig(base_url=str(wp.get("base_url") or "").rstrip("/"),
                         username=str(wp.get("username") or ""),
-                        app_password=str(wp.get("app_password") or ""))
+                        app_password=secretbox.secret_value(settings, "wp", "app_password"))
     if is_shared_mode():
         return WPConfig(base_url="", username="", app_password="")
     return WPConfig.from_env()
@@ -2989,7 +2990,9 @@ def _delivery_target(site) -> tuple[str, str]:
     URL would push every tenant's articles to one site, so it is not used."""
     group = ((getattr(site, "settings", None) or {}).get("delivery")) if site is not None else None
     group = group if isinstance(group, dict) else {}
-    url, secret = str(group.get("webhook_url") or "").strip(), str(group.get("secret") or "").strip()
+    settings = getattr(site, "settings", None) if site is not None else None
+    url = secretbox.secret_value(settings, "delivery", "webhook_url").strip()
+    secret = secretbox.secret_value(settings, "delivery", "secret").strip()
     if not url:
         from lib.site_env import is_shared_mode
         if not is_shared_mode():
@@ -3028,8 +3031,9 @@ def _indexing_keys(site) -> dict:
     """This site's own IndexNow / Bing keys (Site.settings["indexing"]) as submit_published kwargs."""
     group = ((getattr(site, "settings", None) or {}).get("indexing")) if site is not None else None
     group = group if isinstance(group, dict) else {}
-    return {"indexnow_key": str(group.get("indexnow_key") or ""),
-            "bing_key": str(group.get("bing_wmt_key") or "")}
+    settings = getattr(site, "settings", None) if site is not None else None
+    return {"indexnow_key": secretbox.secret_value(settings, "indexing", "indexnow_key"),
+            "bing_key": secretbox.secret_value(settings, "indexing", "bing_wmt_key")}
 
 
 def _is_live(wp_state: dict | None, mode: str) -> bool:

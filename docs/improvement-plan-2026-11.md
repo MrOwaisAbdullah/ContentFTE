@@ -60,7 +60,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | 1 | 8 | - | - | - | 10 | 15 |
-| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 11 | 17 |
+| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 12 | 16 |
 | 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 26 | 15 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 7 | 9 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
@@ -140,7 +140,7 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 
 _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant state, secrets out of plaintext, readiness and error contracts, observable requests.
 
-**Status: in progress** - 13 of 30 done, 10 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 14 of 30 done, 10 partly done, 6 not done (item-by-item list in section 2).
 
 - [x] **SEC-03** (High) No key→site binding - `phase2-site-api-keys`
 - [~] **ENG-04** (High) generate_content: no single-flight per article; token usage read from module-global LAST_USAGE (concurrent run… - single-flight done; LAST_USAGE module global and cost-in-finally still open - `phase4-remaining-hardening`
@@ -153,7 +153,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [ ] **TEN-02** (High) Import-time site identity and process-global provider config: SITE_BASE_URL/SITE_HOST/SITE_PREFIX frozen at im… - replace import-time site identity/provider globals with TenantContext lookups
 - [x] **SEC-09** (Medium) Console middleware only checks that a console_session cookie exists; requireSession() runs in the layout and 3… - `phase0-console-engine-hardening`
 - [x] **SEC-10** (Medium) Console login: no rate limit or lockout; error text names OPERATOR_PASSWORD; 7-day token with no revocation; n… - `phase0-console-engine-hardening`
-- [ ] **SEC-14** (Medium) Plaintext secrets at rest: Site.settings.wp.app_password in DB JSON; engine API keys in console/instances.json… - encrypt Site.settings secrets and console instances.json at rest (tenant_secrets table)
+- [x] **SEC-14** (Medium) Plaintext secrets at rest: Site.settings.wp.app_password in DB JSON; engine API keys in console/instances.json… - site secrets (WordPress app password, IndexNow/Bing keys, Discord webhook, delivery secret) are Fernet-encrypted in the database with SECRETS_KEY (rotation supported) and decrypted only where used; scripts/encrypt_site_secrets.py converts existing rows; the console encrypts instances.json API keys with INSTANCES_KEY. Both are off until you set a key - you must generate and store them. - `phase5-pipeline-adapters`
 - [x] **SEC-19** (Medium) Screenshot SSRF guard runs once, before navigation - `phase5-pipeline-adapters`
 - [~] **ENG-09** (Medium) list_logs / list_stages have no site filter; record_stage_run writes no site_id. - /logs is site-filtered; stage history/stage rows still have no site_id (platform-only) - `phase3-tenant-isolation`
 - [~] **ENG-10** (Medium) approve_article has no state guard (can regress published→approved, approve content-less briefs) and emits art… - approve no longer regresses a published article and the event is now article.approved (legacy_event keeps the old name for one release); a full transition table is still open - `phase5-pipeline-adapters`
@@ -634,7 +634,7 @@ Task list in §2.
 
 ### Phase 2 — Tenant context, auth & secrets (≈2–3 weeks)
 <!-- phase-status:2:start -->
-**Status: in progress** - 13 of 30 done, 10 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 14 of 30 done, 10 partly done, 6 not done (item-by-item list in section 2).
 <!-- phase-status:2:end -->
 - `TenantContext`; remove import-time globals (TEN-02) and startup Brand DNA (PIPE-06); per-run agent construction.
 - Per-site hashed scoped keys; `_require_site` / `_load_article` choke points (SEC-03, ENG-08, ENG-09); tenancy test matrix.

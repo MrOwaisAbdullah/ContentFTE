@@ -99,9 +99,10 @@
       "phase": "3"
     },
     "SEC-14": {
-      "status": "open",
-      "note": "encrypt Site.settings secrets and console instances.json at rest (tenant_secrets table)",
-      "phase": "2"
+      "status": "done",
+      "branch": "p5",
+      "phase": "2",
+      "note": "site secrets (WordPress app password, IndexNow/Bing keys, Discord webhook, delivery secret) are Fernet-encrypted in the database with SECRETS_KEY (rotation supported) and decrypted only where used; scripts/encrypt_site_secrets.py converts existing rows; the console encrypts instances.json API keys with INSTANCES_KEY. Both are off until you set a key - you must generate and store them."
     },
     "SEC-15": {
       "status": "partial",

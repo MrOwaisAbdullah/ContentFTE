@@ -3,6 +3,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { cookies } from "next/headers";
 import { engineApiKey, engineBaseUrl } from "./env";
+import { openSecret, sealSecret } from "./secret-box.ts";
+
+/** INSTANCES_KEY (optional): encrypts the API keys written to instances.json (SEC-14). */
+const instancesKey = () => (process.env.INSTANCES_KEY || "").trim() || undefined;
 
 /** One manageable engine instance (own process + own DB). */
 export interface ConsoleInstance {
@@ -32,7 +36,7 @@ async function fileInstances(): Promise<ConsoleInstance[]> {
         name: String((p as { name?: string }).name || "").trim(),
         baseUrl: String((p as { baseUrl?: string }).baseUrl || "").replace(/\/+$/, ""),
         apiKey: (p as { apiKey?: string }).apiKey
-          ? String((p as { apiKey?: string }).apiKey)
+          ? openSecret(String((p as { apiKey?: string }).apiKey), instancesKey())
           : "",
         origin: "file" as const,
       }))
@@ -45,7 +49,7 @@ async function fileInstances(): Promise<ConsoleInstance[]> {
 async function writeFileInstances(items: ConsoleInstance[]): Promise<void> {
   const slim = items
     .filter((x) => x.origin === "file")
-    .map(({ name, baseUrl, apiKey }) => ({ name, baseUrl, apiKey }));
+    .map(({ name, baseUrl, apiKey }) => ({ name, baseUrl, apiKey: sealSecret(apiKey, instancesKey()) }));
   await fs.writeFile(filePath(), `${JSON.stringify(slim, null, 2)}\n`, "utf8");
 }
 
