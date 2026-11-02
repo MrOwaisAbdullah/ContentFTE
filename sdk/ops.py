@@ -24,9 +24,9 @@ def _alert(severity: str, code: str, site: str, message: str) -> Dict[str, Any]:
 
 
 def collect_alerts(now: datetime | None = None) -> List[Dict[str, Any]]:
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
-    from lib.db import Article, Site, get_session, init_db
+    from lib.db import Article, ShareOfVoice, Site, get_session, init_db
     from sdk import service
     from sdk.health import readiness
 
@@ -67,6 +67,16 @@ def collect_alerts(now: datetime | None = None) -> List[Dict[str, Any]]:
                 elif b.get("cap_usd") and b["mtd_usd"] >= BUDGET_WARN_AT * b["cap_usd"]:
                     alerts.append(_alert("warning", "budget_warning", site.slug,
                                          f"spent ${b['mtd_usd']} of the ${b['cap_usd']} monthly cap"))
+                # share-of-voice is monthly; a site that has been measured before and has gone quiet for 45+ days is
+                # no longer being tracked (SEO-18: "scheduling")
+                last_sov = s.execute(select(func.max(ShareOfVoice.created_at)).where(
+                    ShareOfVoice.site_id == site.id)).scalar()
+                if last_sov is not None:
+                    last_sov = last_sov.replace(tzinfo=timezone.utc) if last_sov.tzinfo is None else last_sov
+                    if (now - last_sov).days > 45:
+                        alerts.append(_alert("warning", "sov_stale", site.slug,
+                                             f"AI share-of-voice was last measured {(now - last_sov).days} days ago "
+                                             "(it is a monthly metric)"))
                 cad = service.get_site_cadence_status(s, site)
                 interval = service.CADENCE_INTERVALS.get(str(cad.get("frequency") or ""))
                 if interval is not None:

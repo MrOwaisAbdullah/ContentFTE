@@ -27,6 +27,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
     create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
@@ -133,7 +134,14 @@ class Article(Base):
     cost_usd duplicated the cost_ledger sum — both gone."""
 
     __tablename__ = "articles"
-    __table_args__ = (Index("ix_articles_site_status", "site_id", "status"),)
+    __table_args__ = (
+        Index("ix_articles_site_status", "site_id", "status"),
+        # One article per (site, keyword): two concurrent submits of the same keyword both passed the
+        # check-then-insert and created duplicates (ENG-12). Partial, because articles without a keyword
+        # (hand-written, imported) are allowed in any number. Existing databases get it from migration 0002.
+        Index("uq_articles_site_keyword", "site_id", "keyword_id", unique=True,
+              sqlite_where=text("keyword_id IS NOT NULL"), postgresql_where=text("keyword_id IS NOT NULL")),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)

@@ -731,3 +731,44 @@ def test_approving_an_empty_article_warns_and_can_be_made_a_hard_stop(monkeypatc
     monkeypatch.setenv("QUALITY_GATE_REQUIRE_CONTENT", "1")
     hard = assess(content_md="  ", meta={}, source_excerpts=[], check_links=False)
     assert hard["pass"] is False and any("no content" in b for b in hard["blocking"])
+
+
+# ------------------------------------------------------------------ ENG-12: one article per (site, keyword), even under a race
+def test_concurrent_submits_of_one_keyword_create_exactly_one_article(svc):
+    from lib.db import Article, get_session
+    results, errors = [], []
+
+    def worker():
+        try:
+            results.append(svc.submit_article("s", keyword="raced keyword"))
+        except Exception as e:
+            errors.append(e)
+
+    ts = [threading.Thread(target=worker) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errors, errors
+    assert len({r["id"] for r in results}) == 1
+    s = get_session()
+    try:
+        assert s.query(Article).filter(Article.title.like("raced%")).count() == 1
+    finally:
+        s.close()
+
+
+def test_the_database_itself_refuses_a_second_article_for_the_same_site_and_keyword(svc):
+    from sqlalchemy.exc import IntegrityError
+    from lib.db import Article, get_session
+    first = svc.submit_article("s", keyword="unique kw")
+    s = get_session()
+    try:
+        a = s.get(Article, first["id"])
+        s.add(Article(site_id=a.site_id, keyword_id=a.keyword_id, title="dupe", status="briefed"))
+        with pytest.raises(IntegrityError):
+            s.commit()
+        s.rollback()
+        # articles with NO keyword are not constrained
+        s.add_all([Article(site_id=a.site_id, keyword_id=None, title=f"hand {i}", status="drafted") for i in range(3)])
+        s.commit()
+    finally:
+        s.close()

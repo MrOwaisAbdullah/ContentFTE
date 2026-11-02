@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lib.db import Article, AuditLog, KeywordLedger, get_session, init_db
@@ -106,6 +107,21 @@ def upsert_keyword(
             research_snapshot=research_snapshot or {},
         )
         session.add(row)
+        try:
+            session.commit()
+            session.refresh(row)
+            return row
+        except IntegrityError:
+            # (site_id, keyword) is UNIQUE: a concurrent caller inserted it between our SELECT and INSERT. The row
+            # exists, so use it - update with whatever this caller passed - instead of failing (ENG-12).
+            session.rollback()
+            row = session.execute(select(KeywordLedger).where(
+                KeywordLedger.site_id == site_id, KeywordLedger.keyword == keyword)).scalar_one()
+            if intent is not None or volume is not None or difficulty is not None or research_snapshot:
+                return upsert_keyword(session, site_id, keyword, intent=intent, volume=volume,
+                                      difficulty=difficulty, winnability=winnability,
+                                      research_snapshot=research_snapshot)
+            return row
     else:
         if intent is not None:
             row.intent = intent

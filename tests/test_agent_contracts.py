@@ -99,3 +99,57 @@ def test_the_contract_check_actually_detects_a_mismatch():
     available = {t.name for t in ghost.tools}
     named = set(_CALLED_TOOL_RE.findall(ghost.instructions))
     assert named - available == {"missing_tool"}
+
+
+def _nested_any_of(node, path="", depth=0):
+    """Paths where an `anyOf` sits inside another `anyOf`/array/object parameter - the shape Gemini's schema
+    converter chokes on (PIPE-10)."""
+    out = []
+    if isinstance(node, dict):
+        if "anyOf" in node:
+            for i, alt in enumerate(node["anyOf"]):
+                if isinstance(alt, dict) and ("anyOf" in alt or (alt.get("type") == "array" and
+                                              isinstance(alt.get("items"), dict) and
+                                              ("anyOf" in alt["items"] or alt["items"].get("type") == "array"))):
+                    out.append(f"{path or '<root>'}.anyOf[{i}]")
+        for k, v in node.items():
+            out += _nested_any_of(v, f"{path}.{k}" if path else k, depth + 1)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            out += _nested_any_of(v, f"{path}[{i}]", depth + 1)
+    return out
+
+
+def test_no_tool_parameter_is_a_union_of_unions_or_a_union_containing_a_nested_array(agents):
+    bad, seen = [], set()
+    for agent in agents.values():
+        for tool in agent.tools:
+            if id(tool) in seen:
+                continue
+            seen.add(id(tool))
+            bad += [f"{tool.name}: {p}" for p in _nested_any_of(getattr(tool, "params_json_schema", None) or {})]
+    assert not bad, "nested unions in a tool schema (rejected by Gemini):\n" + "\n".join(bad)
+
+
+def test_the_full_sheet_tool_takes_plain_text_data_and_hides_retry_knobs_from_the_model():
+    from tools.sheet_tool import manage_sheet_data_tool
+    props = manage_sheet_data_tool.params_json_schema["properties"]
+    assert props["data"].get("type") == "string" or any(a.get("type") == "string" for a in props["data"].get("anyOf", []))
+    assert "retries" not in props and "delay" not in props
+
+
+def test_update_cells_data_arrives_as_json_text_and_reaches_the_sheet_as_rows(monkeypatch):
+    import tools.sheet_tool as st
+    seen = {}
+    monkeypatch.setattr(st, "manage_sheet_data", lambda **kw: seen.update(kw) or {"status": "success"})
+    fn = st.manage_sheet_data_tool.on_invoke_tool
+    import asyncio, json
+    from agents.tool_context import ToolContext
+    args = json.dumps({"worksheet_name": "research_data", "action": "update_cells", "cell_range": "A1:B2",
+                       "data": '[["a","b"],["c","d"]]'})
+    asyncio.run(fn(ToolContext(None, tool_name="manage_sheet_data_tool", tool_call_id="t", tool_arguments=args), args))
+    assert seen["data"] == [["a", "b"], ["c", "d"]]
+    seen.clear()
+    args = json.dumps({"worksheet_name": "generated_posts", "action": "update_cell", "row_index": 2, "col_index": 5, "data": "Yes"})
+    asyncio.run(fn(ToolContext(None, tool_name="manage_sheet_data_tool", tool_call_id="t", tool_arguments=args), args))
+    assert seen["data"] == "Yes"

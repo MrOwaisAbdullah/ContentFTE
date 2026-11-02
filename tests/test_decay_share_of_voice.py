@@ -463,3 +463,43 @@ def test_the_decay_job_skips_seasonal_pages_only_when_yoy_is_enabled(tmp_path, m
         db._engine.dispose()
         db._engine = None
         db._SessionLocal = None
+
+
+# ---- SEO-18: share-of-voice is a sample, so say how good the sample is ------------------------------------------------
+def test_wilson_interval_and_confidence_grow_tighter_with_more_runs():
+    from lib.share_of_voice import confidence_label, wilson_interval
+    assert wilson_interval(0, 0) == (0.0, 0.0)
+    lo, hi = wilson_interval(2, 7)                     # 7 runs: "29%" could be anywhere from ~8% to ~64%
+    assert lo < 29 < hi and hi - lo > 40
+    lo2, hi2 = wilson_interval(60, 210)                # same rate, 30x the evidence
+    assert hi2 - lo2 < 15
+    assert wilson_interval(10, 10)[1] == 100.0 and wilson_interval(0, 10)[0] == 0.0
+    assert [confidence_label(n) for n in (7, 40, 120)] == ["low", "medium", "high"]
+
+
+def test_summary_reports_interval_stability_prompts_and_competitors():
+    from lib.share_of_voice import summarize
+    recs = []
+    for i in range(3):                                   # one prompt sampled 3 times: cited, cited, not cited
+        recs.append({"month": "2026-10", "platform": "chatgpt", "prompt": "best crm", "cited": i < 2,
+                     "competitors": ["hubspot.com", "Salesforce.com"]})
+    recs.append({"month": "2026-10", "platform": "gemini", "prompt": "crm tools", "cited": False,
+                 "competitors": ["hubspot.com"]})
+    recs.append({"month": "2026-10", "platform": "gemini", "prompt": "crm tools", "cited": False,
+                 "competitors": ["hubspot.com"]})
+    out = summarize(recs)
+    assert out["runs"] == 5 and out["overall_pct"] == 40.0 and out["confidence"] == "low"
+    assert out["ci95"][0] < 40 < out["ci95"][1]
+    assert out["prompts"] == 2 and out["repeated_prompts"] == 2
+    assert out["stable_repeated_pct"] == 50.0           # crm tools agreed with itself; best crm did not
+    assert out["competitors"][0] == {"name": "hubspot.com", "cited_in": 5, "pct": 100.0}
+    assert "ci95" in out["by_month"]["2026-10"]
+    assert summarize([])["overall_pct"] == 0.0
+
+
+def test_prompts_come_from_real_queries_with_questions_first():
+    from lib.share_of_voice import prompts_from_queries
+    qs = ["crm pricing", "how to choose a crm", "crm pricing", "x", "best crm for agencies", "salesforce login"]
+    out = prompts_from_queries(qs, limit=4)
+    assert out == ["how to choose a crm", "best crm for agencies", "crm pricing", "salesforce login"]
+    assert prompts_from_queries([], "crm", limit=3)[0] == "best crm tools"      # falls back to the scripted set

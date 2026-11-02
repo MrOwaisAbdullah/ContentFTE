@@ -1709,7 +1709,7 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
         "update_cell", "update_cells", "delete_row", "clear_sheet",
         "find_row_by_key"
     ],
-    data: Optional[Union[List[List[str]], str]] = None,
+    data: Optional[str] = None,
     row_values: Optional[List[str]] = None,
     row_index: Optional[int] = None,
     col_values: Optional[List[str]] = None,
@@ -1718,8 +1718,6 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
     value_input_option: str = "USER_ENTERED",
     key_column: Optional[str] = None,
     key_value: Optional[str] = None,
-    retries: int = 3,
-    delay: float = 1.0
 ) -> BaseResult:
     """A generic tool to manage data in a Google Sheet worksheet.
     
@@ -1730,7 +1728,9 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
                       'get_range', 'append_row', 'insert_row', 'update_row',
                       'update_cell', 'update_cells', 'delete_row', 'clear_sheet',
                       'find_row_by_key'.
-        data (List[List[str]], optional): Data for batch write/update actions (e.g., update_cells).
+        data (str, optional): The value for update_cell (plain text, e.g. "Yes"), or for update_cells a JSON
+                      array of rows as TEXT, e.g. '[["a","b"],["c","d"]]'. (A plain string keeps the tool schema
+                      free of nested unions, which Gemini rejects.)
         row_values (List[str], optional): Values for a single row (append/insert).
         row_index (int, optional): 1-based row index for read/update/delete.
         col_values (List[str], optional): Values for a single column (update).
@@ -1739,8 +1739,6 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
         value_input_option (str): How to interpret values ('RAW', 'USER_ENTERED').
         key_column (str, optional): Header name of the column to use as a lookup key (for find_row_by_key).
         key_value (str, optional): Value in the key column to find the matching row (for find_row_by_key).
-        retries (int): Number of times to retry the operation on failure.
-        delay (float): Delay in seconds between retries.
 
     Returns:
         BaseResult: A dictionary containing the result. The exact structure depends on the action.
@@ -1751,11 +1749,20 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
                     - data (varies), row_index (int), col_index (int), range (str), found (bool), count (int),
                       worksheet_title (str), row_count (int), col_count (int).
     """
-    # Delegate to the main implementation
+    # Batch updates arrive as JSON text (see the docstring); everything else is a plain cell value.
+    parsed = data
+    if action == "update_cells" and isinstance(data, str):
+        try:
+            candidate = json.loads(data)
+            if isinstance(candidate, list):
+                parsed = candidate
+        except ValueError:
+            pass
+    # retries/delay are NOT model-controlled: they are infrastructure policy, not something the agent should tune.
     return manage_sheet_data(
         worksheet_name=worksheet_name,
         action=action,
-        data=data,
+        data=parsed,
         row_values=row_values,
         row_index=row_index,
         col_values=col_values,
@@ -1764,8 +1771,6 @@ def manage_sheet_data_tool( # Wrapper function for the decorator if needed, or a
         value_input_option=value_input_option,
         key_column=key_column,
         key_value=key_value,
-        retries=retries,
-        delay=delay
     )
 
 def manage_sheet_data_restricted(
@@ -1775,7 +1780,7 @@ def manage_sheet_data_restricted(
         "get_range", "append_row", "insert_row", "update_row",
         "update_cell", "update_cells", "find_row_by_key"
     ],
-    data: Optional[List[List[str]]] = None,
+    data: Optional[str] = None,
     row_values: Optional[List[str]] = None,
     row_index: Optional[int] = None,
     col_values: Optional[List[str]] = None,
@@ -1794,7 +1799,8 @@ def manage_sheet_data_restricted(
         worksheet_name (str): Name of the worksheet.
         action (str): get_worksheet | get_all_records | get_row | get_column | get_range | append_row |
                       insert_row | update_row | update_cell | update_cells | find_row_by_key.
-        data (List[List[str]], optional): Rows for batch updates.
+        data (str, optional): The value for update_cell (plain text), or for update_cells a JSON array of rows
+                      as TEXT, e.g. '[["a","b"],["c","d"]]'.
         row_values (List[str], optional): Values for a single row (append/insert/update).
         row_index (int, optional): 1-based row index.
         col_values (List[str], optional): Values for a column update.
@@ -1811,8 +1817,16 @@ def manage_sheet_data_restricted(
     refusal = check_agent_write(worksheet_name, action)
     if refusal:
         return {"status": "error", "message": refusal}
+    parsed = data
+    if action == "update_cells" and isinstance(data, str):
+        try:
+            candidate = json.loads(data)
+            if isinstance(candidate, list):
+                parsed = candidate
+        except ValueError:
+            pass
     return manage_sheet_data(
-        worksheet_name=worksheet_name, action=action, data=data, row_values=row_values,
+        worksheet_name=worksheet_name, action=action, data=parsed, row_values=row_values,
         row_index=row_index, col_values=col_values, col_index=col_index, cell_range=cell_range,
         # RAW: a model-supplied "=IMPORTDATA(...)" must be stored as text, not executed by Sheets.
         value_input_option="RAW", key_column=key_column, key_value=key_value,

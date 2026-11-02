@@ -61,8 +61,8 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | - | 7 | - | - | - | 15 | 11 |
 | 2 - Tenant context, auth and secrets | 4 | - | 1 | 2 | 4 | 16 | 11 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 11 |
-| 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
+| 3 - Scheduler, workers, quotas, adapters | - | 1 | - | - | 6 | 30 | 10 |
+| 4 - Fleet console and operations | 6 | - | - | - | - | 9 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
 <!-- delivery-map:end -->
@@ -157,7 +157,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [x] **SEC-19** (Medium) Screenshot SSRF guard runs once, before navigation - `phase5-pipeline-adapters`
 - [~] **ENG-09** (Medium) list_logs / list_stages have no site filter; record_stage_run writes no site_id. - /logs is site-filtered; stage history/stage rows still have no site_id (platform-only) - `phase3-tenant-isolation`
 - [x] **ENG-10** (Medium) approve_article has no state guard (can regress published→approved, approve content-less briefs) and emits art… - approve no longer regresses a published article; the event is article.approved (legacy_event for one release); an empty article cannot be published (PUBLISH_REQUIRE_CONTENT) and approving one warns (QUALITY_GATE_REQUIRE_CONTENT=1 makes it a hard stop) - `phase5-pipeline-adapters`
-- [~] **ENG-12** (Medium) Check-then-insert races (submit_article, upsert_site, get_or_create_site, upsert_keyword); no unique (site_id,… - atomic Tavily meter, concurrent site creation safe; unique (site_id, keyword_id) on articles and a unique finalize row need a migration, so they wait for Alembic (OPS-01) - `phase5-pipeline-adapters`
+- [~] **ENG-12** (Medium) Check-then-insert races (submit_article, upsert_site, get_or_create_site, upsert_keyword); no unique (site_id,… - atomic Tavily meter; concurrent site creation, keyword insert and article submit are race-safe; the database refuses a second article per (site, keyword) (migration 0002 for existing databases - run alembic upgrade head); cost_ledger finalize still tolerates duplicate total rows by reading the first - `phase5-pipeline-adapters`
 - [~] **ENG-13** (Medium) Read paths have write side effects: get_or_create_site on reads and submit_article auto-create a site from any… - REST/MCP submit refuses unknown sites unless SDK_AUTO_CREATE_SITES=1 or it is the default site; new slugs are validated; read paths in lib/store.py still auto-create - `phase5-pipeline-adapters`
 - [~] **ENG-15** (Medium) init_db() runs create_all on every service call (extra round-trips on Neon); no Alembic, so column changes nev… - create_all once per engine; SQLite busy timeout (WAL opt-in); Alembic baseline added (existing databases: alembic stamp 0001); a UTC TypeDecorator for timestamps is still open - `phase5-pipeline-adapters`
 - [x] **ENG-16** (Medium) Error envelope: every service error → 404; publish picks codes by substring; MCP keeps a next hint REST drops. - classified statuses + machine-readable code and next on REST errors; both clients expose them - `phase5-pipeline-adapters`
@@ -177,7 +177,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 31 of 42 done, 6 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 32 of 42 done, 5 partly done, 5 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
@@ -194,7 +194,7 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [x] **SEC-13** (Medium) Webhooks: custom-site push has no HMAC, timestamp, delivery id or retry; Sanity revalidate webhook accepts the… - custom-site pushes are HMAC-signed with timestamp and delivery id, retried, per-site URL/secret; revalidate webhook compares in constant time, drops the body/query secret by default and uses after() for IndexNow - `phase5-pipeline-adapters`
 - [x] **ENG-14** (Medium) Idempotency cache is an in-process dict (no TTL despite the docstring, no cap, per-worker under --workers 2, r… - Idempotency-Key responses are stored in the database for 24h and replayed by any worker - `phase5-pipeline-adapters`
 - [x] **PIPE-09** (Medium) Brief prompt names manage_sheet_tool; the tool is manage_sheet_data_tool - `phase1-quality-gates`
-- [~] **PIPE-10** (Medium) Gemini tool-schema risk: manage_sheet_data_tool.data: Optional[Union[List[List[str]], str]] (nested anyOf), $d… - arrays-have-items contract test; Optional/union params and retries/delay on the full sheet tool remain - `phase1-quality-gates`
+- [x] **PIPE-10** (Medium) Gemini tool-schema risk: manage_sheet_data_tool.data: Optional[Union[List[List[str]], str]] (nested anyOf), $d… - no tool schema has a nested union or array-of-array parameter (contract test); the sheet tools take plain-text data (JSON text for batch updates) and the model can no longer tune retries/delay - `phase5-pipeline-adapters`
 - [ ] **PIPE-11** (Medium) Brief stage writes inside the agent loop; MaxTurnsExceeded re-runs the agent on the next model and replays wri…
 - [ ] **PIPE-12** (Medium) Screenshot QA is scored by a text-only agent that can't see pixels; VLM QA fails open (passed=True on outage);…
 - [~] **PIPE-13** (Medium) ~7 FallbackAgentRunner instances each re-seed quota from the Sheets usage log (local date, not Pacific) and di… - one FallbackAgentRunner per process (one set of quota books); making the router the sole quota owner is still open - `phase5-pipeline-adapters`
@@ -226,12 +226,12 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 
 _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, provisioning API, error tracking, backups, alerting, SEO monitoring upgrades.
 
-**Status: in progress** - 9 of 17 done, 5 partly done, 3 not done (item-by-item list in section 2).
+**Status: in progress** - 9 of 17 done, 6 partly done, 2 not done (item-by-item list in section 2).
 
 - [x] **CON-02** (High) Secrets as client props + export (see SEC-04). - `phase0-console-engine-hardening`
 - [~] **SEO-15** (Medium) DataForSEO provider returns no SERP; difficulty scale 0–1 vs OpenSEO 0–100 (skews priority_score ~100×); inten… - difficulty normalized to 0-100 across providers; a SERP endpoint and a real intent classifier are still open - `phase5-pipeline-adapters`
 - [~] **SEO-17** (Medium) SERP drift flags only when overlap < 40% (comment says 40% churn); baseline overwritten after cache expiry; tr… - the SERP baseline lives in its own row, written once and moved only deliberately (after a reported drift), so cache expiry cannot shift it; threshold wording fixed earlier; SERP-feature tracking needs a provider that returns features - `phase5-pipeline-adapters`
-- [ ] **SEO-18** (Medium) Share-of-voice is a single-sample citation flag over 7 generic prompts, no competitor baseline, manual runs. - share-of-voice: multiple samples, competitors, confidence, scheduling
+- [~] **SEO-18** (Medium) Share-of-voice is a single-sample citation flag over 7 generic prompts, no competitor baseline, manual runs. - 95% confidence intervals, confidence label, prompt stability, competitor ranking, prompts built from real Search Console queries, and a stale-tracking alert are in; the prompts are still run by an operator (no automated multi-sample fan-out against the AI engines) and competitors are not persisted (that needs a column + migration) - `phase5-pipeline-adapters`
 - [x] **CON-07** (Medium) No error.tsx, loading.tsx or global-error.tsx anywhere. - `phase0-console-engine-hardening`
 - [x] **CON-08** (Medium) Layout waterfall (/articles?limit=100 for the palette after Promise.all); registry fs.readFile on every engine… - `phase0-console-engine-hardening`
 - [x] **CON-09** (Medium) Count-by-fetching-all: site detail fetches 500 articles to count statuses; media fetches 500 + one detail call… - `phase0-console-engine-hardening`
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 31 of 42 done, 6 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 32 of 42 done, 5 partly done, 5 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).
@@ -659,7 +659,7 @@ Task list in §2.
 
 ### Phase 4 — Fleet console & operations (ongoing)
 <!-- phase-status:4:start -->
-**Status: in progress** - 9 of 17 done, 5 partly done, 3 not done (item-by-item list in section 2).
+**Status: in progress** - 9 of 17 done, 6 partly done, 2 not done (item-by-item list in section 2).
 <!-- phase-status:4:end -->
 - Fleet home (per-instance health, version, last run, queue depth, approvals waiting, 28-day cost), cross-instance approvals inbox, cross-instance search, bulk actions with dry-run summaries.
 - Users + roles + audit-trail page (CON-13, OPS-01 actor).

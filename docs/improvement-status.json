@@ -224,8 +224,8 @@
     "ENG-12": {
       "status": "partial",
       "branch": "p5",
-      "note": "atomic Tavily meter, concurrent site creation safe; unique (site_id, keyword_id) on articles and a unique finalize row need a migration, so they wait for Alembic (OPS-01)",
-      "phase": "2"
+      "phase": "2",
+      "note": "atomic Tavily meter; concurrent site creation, keyword insert and article submit are race-safe; the database refuses a second article per (site, keyword) (migration 0002 for existing databases - run alembic upgrade head); cost_ledger finalize still tolerates duplicate total rows by reading the first"
     },
     "ENG-13": {
       "status": "partial",
@@ -334,10 +334,10 @@
       "phase": "3"
     },
     "PIPE-10": {
-      "status": "partial",
-      "branch": "p1",
-      "note": "arrays-have-items contract test; Optional/union params and retries/delay on the full sheet tool remain",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "no tool schema has a nested union or array-of-array parameter (contract test); the sheet tools take plain-text data (JSON text for batch updates) and the model can no longer tune retries/delay"
     },
     "PIPE-11": {
       "status": "open",
@@ -590,9 +590,10 @@
       "note": "the SERP baseline lives in its own row, written once and moved only deliberately (after a reported drift), so cache expiry cannot shift it; threshold wording fixed earlier; SERP-feature tracking needs a provider that returns features"
     },
     "SEO-18": {
-      "status": "open",
-      "note": "share-of-voice: multiple samples, competitors, confidence, scheduling",
-      "phase": "4"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "4",
+      "note": "95% confidence intervals, confidence label, prompt stability, competitor ranking, prompts built from real Search Console queries, and a stale-tracking alert are in; the prompts are still run by an operator (no automated multi-sample fan-out against the AI engines) and competitors are not persisted (that needs a column + migration)"
     },
     "SEO-19": {
       "status": "done",

@@ -156,3 +156,21 @@ def test_the_alert_script_posts_once_and_never_leaks_the_webhook(svc, monkeypatc
 def test_the_audit_actor_is_blank_for_a_cli_job_outside_a_request(svc):
     from lib.actor import current_actor
     assert current_actor() == ""
+
+
+def test_a_site_whose_share_of_voice_tracking_went_quiet_gets_an_alert(svc):
+    from lib.db import ShareOfVoice, Site, get_session
+    from sdk.ops import collect_alerts
+    svc.upsert_site("sovsite", "S", "custom", "https://s.test", {"posting_frequency": "manual"})
+    s = get_session()
+    try:
+        site = s.query(Site).filter_by(slug="sovsite").one()
+        assert "sov_stale" not in {a["code"] for a in collect_alerts() if a["site"] == "sovsite"}     # never measured: silent
+        row = ShareOfVoice(site_id=site.id, month="2026-08", platform="chatgpt", prompt="p", cited=True)
+        s.add(row)
+        s.commit()
+        row.created_at = datetime.now(timezone.utc) - timedelta(days=60)
+        s.commit()
+    finally:
+        s.close()
+    assert "sov_stale" in {a["code"] for a in collect_alerts() if a["site"] == "sovsite"}

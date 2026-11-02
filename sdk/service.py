@@ -31,6 +31,7 @@ from typing import Any
 
 from slugify import slugify
 from sqlalchemy import case, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 
 from lib import custom_site
@@ -1142,11 +1143,22 @@ def submit_article(site_slug: str, keyword: str = "", brief: dict | None = None,
                            status="briefed",
                            meta={"brief": brief or {}, "keyword": keyword})
         s.add(art)
-        s.flush()
-        s.add(AuditLog(article_id=art.id, site_id=site.id, action="article.submit",
-                       payload={"keyword": keyword, "title": title,
-                                "keyword_id": keyword_id}))
-        s.commit()
+        try:
+            s.flush()
+            s.add(AuditLog(article_id=art.id, site_id=site.id, action="article.submit",
+                           payload={"keyword": keyword, "title": title,
+                                    "keyword_id": keyword_id}))
+            s.commit()
+        except IntegrityError:
+            # A concurrent submit of the same (site, keyword) won the race and the unique index refused ours:
+            # that is a duplicate submit, not an error - return the winner (ENG-12).
+            s.rollback()
+            winner = s.execute(
+                select(ArticleModel).where(ArticleModel.site_id == site.id,
+                                           ArticleModel.keyword_id == keyword_id)).scalars().first()
+            if winner is None:
+                raise
+            return {"id": winner.id, "status": winner.status, "deduplicated": True, "event": "article.ready"}
         s.refresh(art)
         return {"id": art.id, "status": art.status, "event": "article.ready",
                 "keyword_id": keyword_id}
