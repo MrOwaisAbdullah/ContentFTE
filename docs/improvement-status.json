@@ -579,15 +579,15 @@
     },
     "SEO-16": {
       "status": "partial",
-      "branch": "p0",
-      "note": "minimum-prior-clicks floor done; seasonality/year-over-year and cause split open",
-      "phase": "1"
+      "branch": "p5",
+      "phase": "1",
+      "note": "minimum-prior-clicks floor, year-over-year seasonality (DECAY_USE_YOY=1) and a rank/demand/CTR cause diagnosis are in; GSC pagination and URL-variant (slash/www) matching are still open"
     },
     "SEO-17": {
       "status": "partial",
       "branch": "p5",
-      "note": "threshold wording corrected (overlap < 40% = churn > 60%); persisted baselines and SERP-feature tracking still open",
-      "phase": "4"
+      "phase": "4",
+      "note": "the SERP baseline lives in its own row, written once and moved only deliberately (after a reported drift), so cache expiry cannot shift it; threshold wording fixed earlier; SERP-feature tracking needs a provider that returns features"
     },
     "SEO-18": {
       "status": "open",
@@ -623,15 +623,16 @@
       "note": "stock photos narrower than 1200px are skipped (the caller falls back to an AI image) and big ones use a 1600px rendition; alt text describes the picture; width/height on WordPress <img> is not added because it would invalidate Gutenberg block markup"
     },
     "SEO-24": {
-      "status": "partial",
-      "branch": "p1",
-      "note": "AEO lint done; one-off re-run of legacy posts through the gates still open",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "scripts/audit_articles.py re-runs every existing article through today's gate, read-only, and lists what would be refused and why (run it, then decide what to rewrite)"
     },
     "SEO-25": {
-      "status": "open",
-      "note": "llms.txt descriptions/llms-full.txt (low value per current guidance)",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "llms.txt entries carry a one-line description; llms-full.txt (index + full markdown, size-capped) via ?full=true"
     },
     "SEO-26": {
       "status": "done",

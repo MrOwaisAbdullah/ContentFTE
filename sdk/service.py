@@ -3656,14 +3656,14 @@ def sitemap_xml(site_slug: str) -> dict:
         s.close()
 
 
-def llms_txt(site_slug: str) -> dict:
+def llms_txt(site_slug: str, full: bool = False) -> dict:
     """Generate the site's `llms.txt` (§5.8 GEO) from its PUBLISHED articles —
     the agent-facing index a custom site serves at `/llms.txt`.
 
     Companion to the per-article `markdown_alternate` (the `.md` alternate):
     the site owns the URL, the engine composes the content.
     """
-    from lib.geo import generate_llms_txt
+    from lib.geo import generate_llms_full_txt, generate_llms_txt
 
     init_db()
     s = get_session()
@@ -3680,9 +3680,17 @@ def llms_txt(site_slug: str) -> dict:
             pages.append({
                 "title": a.get("title", ""),
                 "url": f"{base}/{slug}" if base else slug,
+                "description": a.get("summary", ""),
             })
         text = generate_llms_txt(site_name, base or site.slug, pages)
-        return {"site": site.slug, "count": len(pages), "llms_txt": text}
+        out = {"site": site.slug, "count": len(pages), "llms_txt": text}
+        if full:
+            bodies = {a["id"]: (s.get(ArticleModel, a["id"]).content_md or "")
+                      for a in listings.get("articles", []) if s.get(ArticleModel, a["id"]) is not None}
+            full_pages = [{**p, "markdown": bodies.get(a["id"], "")}
+                          for p, a in zip(pages, listings.get("articles", []))]
+            out["llms_full_txt"] = generate_llms_full_txt(site_name, base or site.slug, full_pages)
+        return out
     finally:
         s.close()
 

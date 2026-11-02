@@ -395,3 +395,71 @@ def test_in_place_policy_changes_the_brief_the_operator_sees(monkeypatch):
     briefs = decay.plan_refresh_briefs(pages)
     assert len(briefs) == 1 and briefs[0]["mode"] == decay.MINOR          # 95% decay, but in place
     assert "Re-publish under a NEW URL" not in " ".join(briefs[0]["actions"])
+
+
+# ---- SEO-16: seasonality and cause --------------------------------------------------------------------------------
+def test_a_drop_that_repeats_last_years_is_seasonal_but_a_new_one_is_not():
+    from lib.decay import is_seasonal
+    # 100 -> 60 this year (-40%); the same two windows last year: 120 -> 74 (-38%) => seasonal
+    assert is_seasonal(60, 100, 74, 120) is True
+    # last year was flat: this drop is new
+    assert is_seasonal(60, 100, 118, 120) is False
+    # last year had too little data to say anything: never hide a real decline
+    assert is_seasonal(60, 100, 3, 5) is False
+    assert is_seasonal(60, 100, None, None) is False
+    assert is_seasonal(100, 100, 80, 120) is False                # no drop this year at all
+
+
+def test_cause_diagnosis_separates_rank_demand_and_click_through():
+    from lib.decay import diagnose_cause
+    base = dict(clicks_prior=100, impressions_prior=2000, position_prior=4.0)
+    assert diagnose_cause(clicks_cur=50, impressions_cur=1900, position_cur=7.5, **base) == "rank"
+    assert diagnose_cause(clicks_cur=50, impressions_cur=1000, position_cur=4.2, **base) == "demand"
+    assert diagnose_cause(clicks_cur=50, impressions_cur=1950, position_cur=4.1, **base) == "ctr"
+    assert diagnose_cause(clicks_cur=100, impressions_cur=2000, position_cur=4.0, **base) == "unknown"
+    assert diagnose_cause(clicks_cur=1, impressions_cur=1, clicks_prior=0, impressions_prior=0) == "unknown"
+    assert diagnose_cause(clicks_cur="x", impressions_cur=1, **base) == "unknown"
+
+
+def test_the_decay_job_skips_seasonal_pages_only_when_yoy_is_enabled(tmp_path, monkeypatch):
+    import importlib
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'y.db'}")
+    monkeypatch.setenv("DECAY_USE_YOY", "1")
+    monkeypatch.setenv("DECAY_MIN_PRIOR_CLICKS", "10")
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+    from scripts import decay_job
+    importlib.reload(decay_job)
+    db.init_db()
+    s = db.get_session()
+    try:
+        site = db.Site(slug="y", name="Y", base_url="https://y.test")
+        s.add(site)
+        s.commit()
+        art = db.Article(site_id=site.id, title="T", status="published", slug="t",
+                         meta={"url": "https://y.test/t"})
+        s.add(art)
+        s.commit()
+        windows = decay_job._windows()
+        year_ago_cur = windows[1] - __import__("datetime").timedelta(days=365)
+
+        def clicks(url, start, end):
+            # this year: 60 now vs 100 before; last year the same fall: 74 vs 120
+            if end > year_ago_cur + __import__("datetime").timedelta(days=200):
+                return 60 if end == windows[1] else 100
+            return 74 if end == windows[1] - __import__("datetime").timedelta(days=365) else 120
+
+        skipped = []
+        pages = decay_job.collect_pages(s, site, clicks, skipped)
+        assert pages == [] and "seasonal" in skipped[0]["reason"]
+        monkeypatch.setattr(decay_job, "USE_YOY", False)
+        pages = decay_job.collect_pages(s, site, clicks, [])
+        assert len(pages) == 1
+    finally:
+        s.close()
+        db._engine.dispose()
+        db._engine = None
+        db._SessionLocal = None

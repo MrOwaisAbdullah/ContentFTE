@@ -499,14 +499,14 @@ def site_health(site_slug: str, x_site_key: str | None = Header(default=None)) -
 
 
 @router.get("/sites/{site_slug}/llms.txt")
-def llms_txt(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
+def llms_txt(site_slug: str, full: bool = False, x_site_key: str | None = Header(default=None)) -> dict:
     """Compose the site's llms.txt (§5.8 GEO) from its published articles.
 
-    Returns JSON {"site", "count", "llms_txt"} — the site serves the text at
+    Returns JSON {"site", "count", "llms_txt"} (+ "llms_full_txt" with ?full=true) — the site serves the text at
     its own /llms.txt URL. Companion to the per-article markdown_alternate.
     """
     _check_site_key(x_site_key)
-    return _resolve(service.llms_txt(site_slug))
+    return _resolve(service.llms_txt(site_slug, full=full))
 
 
 @router.get("/sites/{site_slug}/sitemap.xml")

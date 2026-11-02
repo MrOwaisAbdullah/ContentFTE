@@ -77,6 +77,65 @@ def click_decay(current_clicks: Optional[float], prior_clicks: Optional[float]) 
     return (prior - current) / prior
 
 
+def is_seasonal(
+    current_clicks: Optional[float],
+    prior_clicks: Optional[float],
+    last_year_current: Optional[float],
+    last_year_prior: Optional[float],
+    *,
+    tolerance: float = 0.15,
+    min_last_year_clicks: int = 10,
+) -> bool:
+    """True when this drop merely repeats LAST YEAR'S: the same two windows, a year earlier, fell by about the same
+    fraction (within `tolerance`). A page whose traffic dips every winter is not decaying (SEO-16); refreshing it
+    would burn effort and, worse, reset its URL history for a pattern the calendar explains.
+
+    Needs a usable baseline last year (>= `min_last_year_clicks` in the earlier window); with none it says False -
+    "unknown" must not hide a real decline."""
+    this_year = click_decay(current_clicks, prior_clicks)
+    last_year = click_decay(last_year_current, last_year_prior)
+    if this_year is None or last_year is None:
+        return False
+    try:
+        if float(last_year_prior or 0) < min_last_year_clicks:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return this_year > 0 and last_year > 0 and abs(this_year - last_year) <= tolerance
+
+
+def diagnose_cause(
+    *,
+    clicks_cur: float, clicks_prior: float,
+    impressions_cur: float, impressions_prior: float,
+    position_cur: Optional[float] = None, position_prior: Optional[float] = None,
+) -> str:
+    """Why did clicks fall? One of: rank | demand | ctr | mixed | unknown (SEO-16).
+
+    * rank   - average position got worse by >= 1.5 places (a ranking loss: refresh content / links)
+    * demand - impressions fell >= 25% with position steady (fewer searches: do not rewrite for it)
+    * ctr    - impressions steady, position steady, but clicks/impression fell >= 25% (the SERP changed: an AI
+               answer or feature took the click - a new title/meta or format, not a rewrite)
+    The old job saw only 'clicks down' and prescribed the same refresh for all three."""
+    try:
+        imp_c, imp_p = float(impressions_cur), float(impressions_prior)
+        if imp_p <= 0 or float(clicks_prior) <= 0:
+            return "unknown"
+        pos_worse = (position_cur is not None and position_prior is not None
+                     and float(position_cur) - float(position_prior) >= 1.5)
+        imp_drop = (imp_p - imp_c) / imp_p
+        ctr_c = float(clicks_cur) / imp_c if imp_c > 0 else 0.0
+        ctr_p = float(clicks_prior) / imp_p
+        ctr_drop = (ctr_p - ctr_c) / ctr_p if ctr_p > 0 else 0.0
+    except (TypeError, ValueError):
+        return "unknown"
+    causes = [c for c, hit in (("rank", pos_worse), ("demand", imp_drop >= 0.25 and not pos_worse),
+                               ("ctr", ctr_drop >= 0.25 and imp_drop < 0.25 and not pos_worse)) if hit]
+    if len(causes) == 1:
+        return causes[0]
+    return "mixed" if causes else "unknown"
+
+
 def detect_decay(
     current_clicks: Optional[float],
     prior_clicks: Optional[float],

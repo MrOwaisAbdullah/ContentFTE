@@ -300,13 +300,40 @@ def markdown_alternate(title: str, markdown_body: str, meta: dict | None = None)
 
 
 def generate_llms_txt(site_name: str, site_url: str, key_pages: list[dict], policies: str = "") -> str:
+    """llms.txt (llmstxt.org): H1, a blockquote summary, then link lists - each link `- [title](url): what it
+    covers`. The one-line description is what lets an agent choose a page without fetching all of them, so it
+    comes from each page's `description` (the article summary) when present (SEO-25)."""
     lines = [f"# {site_name}", "", f"> {site_url}", ""]
     lines.append("## Key pages")
     for page in key_pages:
-        lines.append(f"- [{page.get('title', '')}]({page.get('url', '')})")
+        desc = " ".join(str(page.get("description") or "").split())
+        suffix = f": {desc[:220]}" if desc else ""
+        lines.append(f"- [{page.get('title', '')}]({page.get('url', '')}){suffix}")
     if policies:
         lines += ["", "## Content policies", "", policies]
     return "\n".join(lines) + "\n"
+
+
+def generate_llms_full_txt(site_name: str, site_url: str, pages: list[dict], max_chars: int = 400_000) -> str:
+    """llms-full.txt: the same index followed by each page's full markdown, so an agent can ingest the site in ONE
+    fetch. Capped (`max_chars`) so a large site cannot produce an unbounded file; pages beyond the cap are listed
+    but their bodies are omitted, and the file says so."""
+    out = [generate_llms_txt(site_name, site_url, pages).rstrip("\n"), ""]
+    used = sum(len(x) for x in out)
+    omitted = 0
+    for page in pages:
+        body = str(page.get("markdown") or "").strip()
+        if not body:
+            continue
+        block = f"\n---\n\n# {page.get('title', '')}\nURL: {page.get('url', '')}\n\n{body}\n"
+        if used + len(block) > max_chars:
+            omitted += 1
+            continue
+        out.append(block)
+        used += len(block)
+    if omitted:
+        out.append(f"\n(Omitted the full text of {omitted} page(s) to stay under the size cap; see the links above.)\n")
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 def indexnow_payload(host: str, key: str, urls: list[str]) -> dict:

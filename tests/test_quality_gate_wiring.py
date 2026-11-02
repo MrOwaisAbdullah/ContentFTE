@@ -164,3 +164,18 @@ def test_approval_is_refused_for_a_copy_of_another_article_on_the_same_site(svc)
         s.close()
     assert not any("near-duplicate" in b for b in svc.check_article_gate(other)["blocking"])
     assert original != copy
+
+
+def test_the_audit_script_reports_legacy_articles_without_changing_anything(svc):
+    """SEO-24: re-run existing posts through today's gate, read-only."""
+    from scripts import audit_articles
+    good = _article(svc, "Plain, clean prose without figures. " * 40, keyword="audit good")
+    bad = _article(svc, "Costs fell 73% after the switch.", keyword="audit bad")
+    before = {a: svc.get_article(a)["status"] for a in (good, bad)}
+    rep = audit_articles.audit(site_slug="gate-site")
+    assert rep["checked"] == 2 and rep["would_be_refused"] == 1
+    refused = [r for r in rep["articles"] if not r["pass"]]
+    assert refused[0]["id"] == bad and any("73%" in b for b in refused[0]["blocking"])
+    assert {a: svc.get_article(a)["status"] for a in (good, bad)} == before        # nothing changed
+    assert "would be refused" in audit_articles.render(rep) and "#%d" % bad in audit_articles.render(rep)
+    assert "error" in audit_articles.audit(site_slug="nope")

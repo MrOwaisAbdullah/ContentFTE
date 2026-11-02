@@ -47,6 +47,41 @@ def split_cache_key(key: str) -> tuple[int | None, str]:
     return (int(m.group(1)), m.group(2)) if m else (None, key or "")
 
 
+BASELINE_PREFIX = "base:"
+
+
+def baseline_key(ckey: str) -> str:
+    """The cache row that holds a keyword's SERP BASELINE (SEO-17).
+
+    The 30-day cache row is overwritten every time it expires, and the drift job compared "fresh" against whatever
+    that row held - so after an expiry the baseline had silently moved forward and a real change in the results was
+    never seen. The baseline now lives in its own row, written once (the first SERP seen for the keyword) and moved
+    only deliberately, by `set_baseline`."""
+    return BASELINE_PREFIX + ckey
+
+
+def get_baseline(session: Session, provider: str, ckey: str) -> dict | None:
+    row = session.execute(
+        select(SeoCache).where(SeoCache.provider == provider, SeoCache.keyword == baseline_key(ckey))
+    ).scalar_one_or_none()
+    return dict(row.data or {}) if row is not None else None
+
+
+def set_baseline(session: Session, provider: str, ckey: str, data: dict) -> None:
+    """Write (or deliberately replace) the baseline snapshot for a keyword."""
+    key = baseline_key(ckey)
+    row = session.execute(
+        select(SeoCache).where(SeoCache.provider == provider, SeoCache.keyword == key)
+    ).scalar_one_or_none()
+    snapshot = {k: data.get(k) for k in ("serp", "serp_gaps", "volume", "difficulty", "intent") if k in data}
+    if row is None:
+        session.add(SeoCache(provider=provider, keyword=key, data=snapshot))
+    else:
+        row.data = snapshot
+        row.fetched_at = datetime.now(timezone.utc)
+    session.commit()
+
+
 def _cache_get(session: Session, provider: str, keyword: str) -> dict | None:
     row = session.execute(
         select(SeoCache).where(SeoCache.provider == provider, SeoCache.keyword == keyword)
@@ -199,4 +234,6 @@ def get_keyword_data(session: Session, keyword: str, manual: dict | None = None,
         raise ValueError(f"unknown SEO_DATA_PROVIDER: {provider}")
     data["cache_hit"] = False
     _cache_set(session, provider, ckey, data)
+    if data.get("serp") and get_baseline(session, provider, ckey) is None:
+        set_baseline(session, provider, ckey, data)        # first SERP we ever saw for this keyword = the baseline
     return data

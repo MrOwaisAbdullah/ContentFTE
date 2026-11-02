@@ -823,3 +823,77 @@ def test_a_spent_budget_propagates_out_of_run_with_fallback(monkeypatch):
     with pytest.raises(cr.RunBudgetExceeded):
         asyncio.run(r.run_with_fallback(agent, "go", max_retries=1))
     assert stats == []                                        # the model was not blamed
+
+
+# ---- SEO-25: llms.txt entries describe the page; llms-full.txt carries the bodies -----------------------------------
+def test_llms_txt_entries_carry_a_description_and_full_text_is_capped():
+    from lib.geo import generate_llms_full_txt, generate_llms_txt
+    pages = [{"title": "A", "url": "https://s.test/a", "description": "  How   A works\nin brief ", "markdown": "# A\n\nbody a"},
+             {"title": "B", "url": "https://s.test/b", "description": "", "markdown": "x" * 500}]
+    txt = generate_llms_txt("Site", "https://s.test", pages)
+    assert "- [A](https://s.test/a): How A works in brief" in txt and "- [B](https://s.test/b)\n" in txt
+    full = generate_llms_full_txt("Site", "https://s.test", pages)
+    assert "body a" in full and "URL: https://s.test/a" in full
+    capped = generate_llms_full_txt("Site", "https://s.test", pages, max_chars=200)
+    assert "Omitted the full text of" in capped and "x" * 500 not in capped
+    assert generate_llms_full_txt("S", "u", []).startswith("# S")
+
+
+def test_the_service_llms_txt_includes_summaries_and_optionally_the_full_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'llms.db'}")
+    monkeypatch.setenv("PUBLISH_REQUIRE_CONTENT", "0")
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+    from sdk import service
+    from lib.db import Article, get_session
+    service.init()
+    service.upsert_site("l", "L", "custom", "https://l.test", {})
+    aid = service.submit_article("l", keyword="llms kw")["id"]
+    s = get_session()
+    try:
+        a = s.get(Article, aid)
+        a.status, a.title, a.content_md = "published", "Llms Post", "# Llms Post\n\nfull body here"
+        a.meta = {"summary": "A short summary."}
+        s.commit()
+    finally:
+        s.close()
+    out = service.llms_txt("l")
+    assert ": A short summary." in out["llms_txt"] and "llms_full_txt" not in out
+    assert "full body here" in service.llms_txt("l", full=True)["llms_full_txt"]
+    db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+
+
+# ---- SEO-17: the SERP baseline outlives cache expiry ---------------------------------------------------------------
+def test_the_serp_baseline_is_written_once_and_survives_a_cache_refresh(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'base.db'}")
+    monkeypatch.setenv("SEO_DATA_PROVIDER", "openseo")
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+    import lib.seo_provider as sp
+    serps = iter([["https://a/"], ["https://b/"], ["https://c/"]])
+    monkeypatch.setattr(sp, "_openseo_fetch", lambda kw: {"provider": "openseo", "keyword": kw, "volume": 1,
+                                                          "difficulty": 1.0, "intent": "x", "serp": next(serps), "serp_gaps": []})
+    db.init_db()
+    s = db.get_session()
+    try:
+        sp.get_keyword_data(s, "kw", site_id=1)
+        assert sp.get_baseline(s, "openseo", sp.cache_key("kw", 1))["serp"] == ["https://a/"]
+        sp.get_keyword_data(s, "kw", site_id=1, force_refresh=True)          # the 30-day cache refreshes ...
+        assert sp.get_baseline(s, "openseo", sp.cache_key("kw", 1))["serp"] == ["https://a/"]   # ... the baseline does not
+        sp.set_baseline(s, "openseo", sp.cache_key("kw", 1), {"serp": ["https://c/"]})            # only a deliberate move
+        assert sp.get_baseline(s, "openseo", sp.cache_key("kw", 1))["serp"] == ["https://c/"]
+        from scripts import serp_drift_job
+        assert serp_drift_job._baseline_urls(s, "openseo", sp.cache_key("kw", 1)) == ["https://c/"]
+    finally:
+        s.close()
+        db._engine.dispose()
+        db._engine = None
+        db._SessionLocal = None

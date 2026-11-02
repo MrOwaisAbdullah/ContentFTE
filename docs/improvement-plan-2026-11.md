@@ -59,7 +59,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | Phase | `phase0-console-engine-hardening` | `phase1-quality-gates` | `phase2-site-api-keys` | `phase3-tenant-isolation` | `phase4-remaining-hardening` | `phase5-pipeline-adapters` | Not fully done |
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
-| 1 - Make the quality gates real | 1 | 8 | - | - | - | 12 | 13 |
+| 1 - Make the quality gates real | - | 7 | - | - | - | 15 | 11 |
 | 2 - Tenant context, auth and secrets | 4 | - | 1 | 2 | 4 | 16 | 11 |
 | 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 12 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
@@ -107,7 +107,7 @@ _Goal:_ Close the open doors: unauthenticated /mcp and REST, secrets in response
 
 _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO gates run on every path to approved; honest structured data and dates; cadence and duplicate controls.
 
-**Status: in progress** - 13 of 26 done, 8 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 15 of 26 done, 7 partly done, 4 not done (item-by-item list in section 2).
 
 - [x] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft … - the writer prompt no longer lets a high Jev score replace the evaluator (at least one evaluation per draft); QUALITY_GATE_REQUIRE_EVAL=1 makes recorded evaluator sub-scores mandatory for engine-generated articles at approval - `phase5-pipeline-adapters`
 - [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish…
@@ -126,14 +126,14 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 - [x] **SEO-12** (Medium) Link validator: HEAD with redirects treats 200–399 as valid (a hallucinated deep link redirecting to a homepag… - `phase5-pipeline-adapters`
 - [~] **SEO-13** (Medium) Linkguard: substring orphan counts (/blog/ai credited by /blog/ai-agents); page_depths assigns depth 2 to orph… - exact-path inbound counts, an explicit find_orphans(), and the internal-link minimum scales to the posts that exist; depth/role checks are still not wired into the flow - `phase5-pipeline-adapters`
 - [x] **SEO-14** (Medium) Stale-year check hard-codes 20(1\d\|2[0-5]) — next year it stops catching "in 2026". - `phase1-quality-gates`
-- [~] **SEO-16** (Medium) Decay statistics: no minimum-volume floor (3→2 clicks = 33% decay), no seasonality/YoY, no rank-vs-CTR-vs-dema… - minimum-prior-clicks floor done; seasonality/year-over-year and cause split open - `phase0-console-engine-hardening`
+- [~] **SEO-16** (Medium) Decay statistics: no minimum-volume floor (3→2 clicks = 33% decay), no seasonality/YoY, no rank-vs-CTR-vs-dema… - minimum-prior-clicks floor, year-over-year seasonality (DECAY_USE_YOY=1) and a rank/demand/CTR cause diagnosis are in; GSC pagination and URL-variant (slash/www) matching are still open - `phase5-pipeline-adapters`
 - [x] **SEO-19** (Medium) MINOR refresh actions bump dateModified unconditionally (fake freshness). - `phase1-quality-gates`
 - [x] **SEO-20** (Medium) FAQ forced on every post (≥3 hard gate) and duplicated on live pages (in-body H3s + a separate FAQ section) - FAQ minimum is per-brief (faq_required/faq_min) and per-instance (FAQ_MIN, 0 = optional); the writer is told not to pad; FAQPage schema is emitted only when FAQs exist - `phase5-pipeline-adapters`
 - [x] **SEO-21** (Medium) Draft hard-fails if any secondary keyword appears < 2 times — contrary to Google's "no need to rewrite for phr… - `phase5-pipeline-adapters`
 - [~] **SEO-22** (Medium) Taxonomy auto-creates a category from the keyword when nothing matches and adds up to 5 tags per post → many t… - derived tags capped (DERIVED_TAGS_MAX, default 3); a minimum article count before a new term is created and noindex on thin archives are still open - `phase5-pipeline-adapters`
 - [~] **SEO-23** (Medium) Images: A1 hero is a 525×350 stock image upscaled to 1200×630 for OG; alt defaults to "{keyword} stock image";… - stock photos narrower than 1200px are skipped (the caller falls back to an AI image) and big ones use a 1600px rendition; alt text describes the picture; width/height on WordPress <img> is not added because it would invalidate Gutenberg block markup - `phase5-pipeline-adapters`
-- [~] **SEO-24** (Medium) AEO structure isn't checked deterministically (TL;DR length, question-H2 ratio, comparison table present, FAQ … - AEO lint done; one-off re-run of legacy posts through the gates still open - `phase1-quality-gates`
-- [ ] **SEO-25** (Low) llms.txt generator emits bare links, no descriptions, no llms-full.txt; markdown alternates have no canonical … - llms.txt descriptions/llms-full.txt (low value per current guidance)
+- [x] **SEO-24** (Medium) AEO structure isn't checked deterministically (TL;DR length, question-H2 ratio, comparison table present, FAQ … - scripts/audit_articles.py re-runs every existing article through today's gate, read-only, and lists what would be refused and why (run it, then decide what to rewrite) - `phase5-pipeline-adapters`
+- [x] **SEO-25** (Low) llms.txt generator emits bare links, no descriptions, no llms-full.txt; markdown alternates have no canonical … - llms.txt entries carry a one-line description; llms-full.txt (index + full markdown, size-capped) via ?full=true - `phase5-pipeline-adapters`
 - [x] **SEO-26** (Low) Brief floor 900 words is below competitor depth for tutorial queries. - how-to/tutorial queries get a 1500-word floor (TUTORIAL_WORD_FLOOR); compact transactional pages keep theirs - `phase5-pipeline-adapters`
 
 #### Phase 2 - Tenant context, auth and secrets (about 2-3 weeks)
@@ -230,7 +230,7 @@ _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, pr
 
 - [x] **CON-02** (High) Secrets as client props + export (see SEC-04). - `phase0-console-engine-hardening`
 - [~] **SEO-15** (Medium) DataForSEO provider returns no SERP; difficulty scale 0–1 vs OpenSEO 0–100 (skews priority_score ~100×); inten… - difficulty normalized to 0-100 across providers; a SERP endpoint and a real intent classifier are still open - `phase5-pipeline-adapters`
-- [~] **SEO-17** (Medium) SERP drift flags only when overlap < 40% (comment says 40% churn); baseline overwritten after cache expiry; tr… - threshold wording corrected (overlap < 40% = churn > 60%); persisted baselines and SERP-feature tracking still open - `phase5-pipeline-adapters`
+- [~] **SEO-17** (Medium) SERP drift flags only when overlap < 40% (comment says 40% churn); baseline overwritten after cache expiry; tr… - the SERP baseline lives in its own row, written once and moved only deliberately (after a reported drift), so cache expiry cannot shift it; threshold wording fixed earlier; SERP-feature tracking needs a provider that returns features - `phase5-pipeline-adapters`
 - [ ] **SEO-18** (Medium) Share-of-voice is a single-sample citation flag over 7 generic prompts, no competitor baseline, manual runs. - share-of-voice: multiple samples, competitors, confidence, scheduling
 - [x] **CON-07** (Medium) No error.tsx, loading.tsx or global-error.tsx anywhere. - `phase0-console-engine-hardening`
 - [x] **CON-08** (Medium) Layout waterfall (/articles?limit=100 for the palette after Promise.all); registry fs.readFile on every engine… - `phase0-console-engine-hardening`
@@ -617,7 +617,7 @@ Task list in §2.
 
 ### Phase 1 — Make the quality gates real (≈2 weeks)
 <!-- phase-status:1:start -->
-**Status: in progress** - 13 of 26 done, 8 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 15 of 26 done, 7 partly done, 4 not done (item-by-item list in section 2).
 <!-- phase-status:1:end -->
 - SEO-01/SEO-02/PIPE-01: `check_gate` + fixed fact-check + link validation enforced in code on every path to `approved`; audit rows persisted.
 - SEO-09: overall score computed in code; accuracy + experience sub-scores; code-snippet verifier (AST/import check + context7 docs lookup for library APIs).

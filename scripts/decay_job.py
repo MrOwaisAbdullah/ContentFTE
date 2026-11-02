@@ -67,6 +67,11 @@ def _clicks_between(page_url: str, start: date, end: date,
     return int(rows[0].get("clicks", 0)) if rows else 0
 
 
+# DECAY_USE_YOY=1 compares each window with the same one a year earlier and skips drops that repeat (seasonality,
+# SEO-16). Off by default: it doubles the Search Console queries per page.
+USE_YOY = (os.environ.get("DECAY_USE_YOY") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _windows():
     """(cur_start, cur_end, prior_start, prior_end) — two adjacent equal windows."""
     cur_end = date.today() - timedelta(days=_GSC_LAG_DAYS)
@@ -128,6 +133,20 @@ def collect_pages(session: Session, site: Site,
                     "reason": f"prior window has {prior_clicks} clicks "
                               f"(< {MIN_PRIOR_CLICKS}); too little data to call decay",
                 })
+            continue
+        seasonal = False
+        if USE_YOY:
+            try:
+                year = timedelta(days=365)
+                ly_cur = clicks_fn(url, cs - year, ce - year)
+                ly_prior = clicks_fn(url, ps - year, pe - year)
+                from lib.decay import is_seasonal
+                seasonal = is_seasonal(current_clicks, prior_clicks, ly_cur, ly_prior)
+            except Exception as exc:  # noqa: BLE001 - no history is "unknown", not "seasonal"
+                logger.info("decay: no year-over-year data for %s: %s", url, exc)
+        if seasonal:
+            if skipped is not None:
+                skipped.append({"url": url, "reason": "seasonal: the same drop happened in the same period last year"})
             continue
         pages.append({
             "url": url,

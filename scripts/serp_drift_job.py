@@ -33,7 +33,8 @@ from sqlalchemy.orm import Session
 
 from lib.db import (AuditLog, KeywordLedger, SeoCache, Site, explain_missing_site,
                     get_session, init_db)
-from lib.seo_provider import get_keyword_data, provider_name, split_cache_key
+from lib.seo_provider import (BASELINE_PREFIX, get_baseline, get_keyword_data, provider_name,
+                              set_baseline, split_cache_key)
 from lib.serp_drift import detect_drift, serp_urls
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,10 @@ DEFAULT_LIMIT = 50
 def _baseline_urls(session: Session, provider: str, keyword: str) -> list[str]:
     """Brief-time top-N from the raw cache row — deliberately ignores the
     30-day cache age: the baseline is a snapshot, not a live read."""
-    row = session.execute(
+    base = get_baseline(session, provider, keyword)          # the dedicated baseline row (SEO-17) ...
+    if base is not None:
+        return serp_urls(base.get("serp"))
+    row = session.execute(                                    # ... or, for keywords seen before it existed, the cache row
         select(SeoCache).where(SeoCache.provider == provider,
                                SeoCache.keyword == keyword)
     ).scalar_one_or_none()
@@ -93,6 +97,8 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
         drifted: list[dict] = []
         now = datetime.now(timezone.utc)
         for row in rows:
+            if row.keyword.startswith(BASELINE_PREFIX):
+                continue                       # baseline snapshots are read through their keyword's cache row
             # Baselines are per site (TEN-07): a row belongs to the site named in its key; a legacy row (no site
             # in the key) belongs to the instance's first site. Another tenant's baseline is never compared.
             row_site, plain_kw = split_cache_key(row.keyword)
@@ -128,6 +134,12 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
             drifted.append(report)
             if dry_run:
                 continue
+            # The results moved: the new SERP becomes the baseline for the NEXT comparison, so one shift is
+            # reported once instead of every month forever.
+            try:
+                set_baseline(session, provider, row.keyword, fresh_data if isinstance(fresh_data, dict) else {})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("serp_drift: could not move the baseline for %r: %s", plain_kw, exc)
             ledger = session.execute(
                 select(KeywordLedger)
                 .where(KeywordLedger.site_id == site.id,
