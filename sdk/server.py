@@ -151,6 +151,7 @@ class ElementorSave(BaseModel):
     elements: list[dict[str, Any]]
     page_settings: dict[str, Any] | None = None
     post_type: str = "posts"  # posts | pages (whitelisted in the service)
+    site_slug: str = ""       # whose WordPress credentials to use (required on a multi-site engine)
 
 
 class ElementorBuild(BaseModel):
@@ -698,28 +699,29 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
 
 
 @router.get("/wp/posts/{post_id}")
-def wp_post(post_id: int, x_site_key: str | None = Header(default=None)) -> dict:
+def wp_post(post_id: int, site_slug: str = "", x_site_key: str | None = Header(default=None)) -> dict:
     """Read a WordPress post back (raw content + registered SEO meta) — the
-    refresh/decay read path."""
+    refresh/decay read path. `site_slug` selects the site whose WordPress credentials are used
+    (required on a multi-site engine)."""
     _check_site_key(x_site_key)
-    return _resolve(service.wp_post(post_id))
+    return _resolve(service.wp_post(post_id, site_slug=site_slug))
 
 
 # --- Elementor (§5.11/§5.13 — native REST target) ---
 
 
 @router.get("/elementor/available")
-def elementor_available(x_site_key: str | None = Header(default=None)) -> dict:
+def elementor_available(site_slug: str = "", x_site_key: str | None = Header(default=None)) -> dict:
     """Preflight: 200 always — the body carries available/flag or error+next."""
     _check_site_key(x_site_key)
-    return service.elementor_available()
+    return service.elementor_available(site_slug=site_slug)
 
 
 @router.get("/elementor/posts/{post_id}")
-def elementor_document(post_id: int, post_type: str = "posts",
+def elementor_document(post_id: int, post_type: str = "posts", site_slug: str = "",
                        x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
-    return _resolve(service.elementor_document(post_id, post_type=post_type))
+    return _resolve(service.elementor_document(post_id, post_type=post_type, site_slug=site_slug))
 
 
 @router.post("/elementor/posts/{post_id}")
@@ -728,7 +730,8 @@ def elementor_save(post_id: int, body: ElementorSave,
     _check_site_key(x_site_key)
     return _resolve(service.elementor_save(post_id, body.elements,
                                            post_type=body.post_type,
-                                           page_settings=body.page_settings))
+                                           page_settings=body.page_settings,
+                                           site_slug=body.site_slug))
 
 
 @router.post("/elementor/articles/{article_id}/build")

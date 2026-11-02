@@ -644,3 +644,61 @@ def test_undersized_stock_photos_are_skipped_and_big_ones_get_a_1600px_rendition
     assert got[0]["width"] == 4000 and got[0]["alt_text"].startswith("Laptop on a desk")
     monkeypatch.setenv("STOCK_MIN_WIDTH", "0")
     assert {c["photo_id"] for c in t._fetch_stock_candidates("laptop", count=5)} == {1, 2}
+
+
+# ---- TEN-07: the SEO cache / SERP baseline is per site ---------------------------------------------------------
+def test_cache_keys_carry_the_site_and_round_trip():
+    from lib.seo_provider import cache_key, split_cache_key
+    assert cache_key("crm", 7) == "s7:crm" and cache_key("crm") == "crm" and cache_key("crm", None) == "crm"
+    assert split_cache_key("s7:crm: pricing") == (7, "crm: pricing")
+    assert split_cache_key("crm") == (None, "crm") and split_cache_key("s:oops") == (None, "s:oops")
+
+
+def test_two_sites_do_not_share_a_cached_serp_baseline(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'seo.db'}")
+    monkeypatch.setenv("SEO_DATA_PROVIDER", "openseo")
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+    import lib.seo_provider as sp
+    calls = []
+
+    def fake_fetch(keyword):
+        calls.append(keyword)
+        return {"provider": "openseo", "keyword": keyword, "volume": len(calls), "difficulty": 1.0,
+                "intent": "informational", "serp": [f"https://r{len(calls)}.example/"], "serp_gaps": []}
+
+    monkeypatch.setattr(sp, "_openseo_fetch", fake_fetch)
+    db.init_db()
+    s = db.get_session()
+    try:
+        a1 = sp.get_keyword_data(s, "crm", site_id=1)
+        b1 = sp.get_keyword_data(s, "crm", site_id=2)            # same keyword, other tenant: its own fetch
+        a2 = sp.get_keyword_data(s, "crm", site_id=1)
+        assert calls == ["crm", "crm"] and a2["cache_hit"] is True and a1["serp"] != b1["serp"]
+        assert a2["serp"] == a1["serp"]                           # A's baseline untouched by B's refresh
+        sp.get_keyword_data(s, "crm", site_id=2, force_refresh=True)
+        assert sp.get_keyword_data(s, "crm", site_id=1)["serp"] == a1["serp"]
+    finally:
+        s.close()
+        db._engine.dispose()
+        db._engine = None
+        db._SessionLocal = None
+
+
+def test_staged_images_live_in_a_per_database_folder(monkeypatch, tmp_path):
+    """TEN-07: article ids restart at 1 in every database, so one shared folder let instances overwrite each other."""
+    from sdk import service
+    monkeypatch.delenv("IMAGE_STAGING_DIR", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///a.db")
+    a = service.default_staging_dir()
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///b.db")
+    b = service.default_staging_dir()
+    assert a != b and a.rsplit(__import__("os").sep, 1)[0] == b.rsplit(__import__("os").sep, 1)[0]
+    monkeypatch.setenv("IMAGE_STAGING_DIR", str(tmp_path))
+    src = tmp_path / "x.png"
+    src.write_bytes(b"png")
+    out = service._stage_copy(str(src), 1, "featured")
+    assert out and out.startswith(str(tmp_path)) and out.endswith("article1_featured.png")

@@ -246,3 +246,59 @@ def test_publish_injects_images_schema_and_meta(monkeypatch):
     assert recorded["payload"]["status"] == "publish"
     assert recorded["payload"]["meta"]["_yoast_wpseo_title"] == "My Post"
     assert result["status"] == "publish"
+
+
+# ---- ADP-08: only registered SEO meta is sent; JSON-LD lives in a core/html block ---------------------------------
+def _conn_with_registered(registered):
+    conn = WordPressConnector(WPConfig(base_url="https://x", username="u", app_password="p"))
+    conn._registered_meta = registered
+    return conn
+
+
+def test_meta_payload_sends_only_the_keys_the_site_stores():
+    post = PreparedPost(title="T", html="<p>x</p>", meta_title="MT", meta_description="MD",
+                        focus_keyphrase="kw", canonical="https://x/c")
+    conn = _conn_with_registered({"rank_math_title", "rank_math_description", "other"})
+    assert set(conn._meta_payload(post, conn.registered_meta_keys())["meta"]) == {"rank_math_title", "rank_math_description"}
+    assert "_seopress_titles_title" in conn._meta_payload(post)["meta"]                     # unprobed = all candidates
+
+
+def test_seo_meta_report_names_the_active_plugin_and_warns_when_nothing_is_writable():
+    conn = _conn_with_registered(None)
+    assert conn.seo_meta_report(None) == {"probed": False}
+    rep = conn.seo_meta_report({"_yoast_wpseo_title", "_yoast_wpseo_metadesc", "unrelated"})
+    assert rep["plugins"] == ["yoast"] and "warning" not in rep
+    none = conn.seo_meta_report({"unrelated"})
+    assert none["plugins"] == [] and "NOT saved" in none["warning"]
+
+
+def test_the_registered_meta_probe_reads_options_once_and_fails_soft():
+    calls = []
+
+    class _R:
+        def __init__(self, ok=True):
+            self.ok = ok
+
+        def raise_for_status(self):
+            if not self.ok:
+                raise RuntimeError("403")
+
+        def json(self):
+            return {"schema": {"meta": {"properties": {"_yoast_wpseo_title": {}}}}}
+
+    conn = WordPressConnector(WPConfig(base_url="https://x", username="u", app_password="p"))
+    conn.session.options = lambda url, **k: calls.append(url) or _R()
+    assert conn.registered_meta_keys() == {"_yoast_wpseo_title"} and conn.registered_meta_keys()
+    assert len(calls) == 1
+    other = WordPressConnector(WPConfig(base_url="https://x", username="u", app_password="p"))
+    other.session.options = lambda url, **k: _R(ok=False)
+    assert other.registered_meta_keys() is None
+
+
+def test_jsonld_in_block_mode_is_wrapped_so_gutenberg_does_not_make_a_classic_block():
+    from lib import wp_render
+    plain = wp_render.jsonld_script({"@type": "Article"})
+    wrapped = wp_render.jsonld_script({"@type": "Article"}, blocks=True)
+    assert plain.startswith("<script") and not plain.startswith("<!--")
+    assert wrapped.startswith("<!-- wp:html -->") and wrapped.rstrip().endswith("<!-- /wp:html -->") and plain in wrapped
+    assert wp_render.jsonld_script(None, blocks=True) == ""

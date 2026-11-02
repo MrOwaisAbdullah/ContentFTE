@@ -1413,13 +1413,24 @@ def _enrich_brief_with_links(art: ArticleModel, brief: dict, keyword: str) -> di
         return brief
 
 
+def default_staging_dir() -> str:
+    """Where staged images live when IMAGE_STAGING_DIR is not set: a per-DATABASE folder under the temp dir.
+
+    The old shared `contentfte_images/` folder named files `article<id>_<slot>`, and article ids restart at 1 in
+    every database, so two instances on one machine (or a dev DB and a test DB) overwrote each other's images
+    (TEN-07). The folder is keyed by a hash of the database URL, so each database gets its own."""
+    import hashlib
+    from lib.db import database_url
+    tag = hashlib.sha256(database_url().encode("utf-8")).hexdigest()[:10]
+    return os.path.join(tempfile.gettempdir(), "contentfte_images", tag)
+
+
 def _stage_copy(src: str, art_id: int, slot: str, n: int = 0) -> str | None:
     """Copy a generated image to a stable staging path so the file survives
     past the NamedTemporaryFile that produced it (publish/refresh re-upload
     from meta.images later)."""
     try:
-        d = os.environ.get("IMAGE_STAGING_DIR") or os.path.join(
-            tempfile.gettempdir(), "contentfte_images")
+        d = os.environ.get("IMAGE_STAGING_DIR") or default_staging_dir()
         os.makedirs(d, exist_ok=True)
         ext = os.path.splitext(src)[1] or ".jpg"
         suffix = f"_{n}" if n else ""
@@ -2783,6 +2794,8 @@ def _wp_push(art: ArticleModel, meta: dict, mode: str) -> dict:
                            "tags": list(post.tags),
                            "category_source": tax.get("category_source", ""),
                            "render_target": "blocks"}
+    if result.get("seo_meta"):
+        out["seo_meta"] = result["seo_meta"]      # which SEO plugin's fields were writable (ADP-08)
     if result.get("featured_media"):
         out["featured_media"] = result["featured_media"]
     return out
@@ -3049,10 +3062,11 @@ def _render_wp_body(conn, post) -> str:
         if src:
             uploaded.append({"url": src, "alt": img.get("alt", ""),
                              "after_h2": img.get("after_h2")})
+    in_blocks = getattr(post, "render_target", "blocks") == "blocks"
     body = wp_render.inject_inpost_images(post.html, uploaded)
-    body += "\n" + wp_render.jsonld_script(post.article_schema)
+    body += "\n" + wp_render.jsonld_script(post.article_schema, blocks=in_blocks)
     if post.faq_schema:
-        body += "\n" + wp_render.jsonld_script(post.faq_schema)
+        body += "\n" + wp_render.jsonld_script(post.faq_schema, blocks=in_blocks)
     return body
 
 
@@ -3180,17 +3194,43 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
         s.close()
 
 
-def wp_post(post_id: int) -> dict:
+def _config_for_site(site_slug: str = ""):
+    """(WPConfig, error) for a post-id operation, resolved from the NAMED site's own credentials (TEN-06).
+
+    These routes take a bare WordPress post id, so there is no article to infer the tenant from. They used to
+    read the process WP_* env - on a shared engine that is "whichever WordPress this process happens to name",
+    and an operator could read or overwrite another tenant's post by id. Now: a site_slug selects that site's
+    credentials; in shared mode it is mandatory; an isolated instance may still omit it (its env WP)."""
+    from lib.site_env import is_shared_mode
+    slug = (site_slug or "").strip()
+    if not slug:
+        if is_shared_mode():
+            return None, _err("site_slug is required", "pass ?site_slug=<slug> - this engine serves several sites")
+        return _wp_config(None), None
+    init_db()
+    s = get_session()
+    try:
+        site = _site_by_slug(s, slug)
+        if site is None:
+            return None, _err(f"site '{slug}' not found", "run list_sites for valid slugs")
+        return _wp_config(site), None
+    finally:
+        s.close()
+
+
+def wp_post(post_id: int, site_slug: str = "") -> dict:
     """Read a WordPress post back — raw content + registered SEO meta
     (Yoast/RankMath/AIOSEO) — for the refresh/decay path (verify an update,
     read before rewriting, or feed decay analysis). WordPress must be
     configured (WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD)."""
-    from lib.wordpress import WPConfig, WordPressConnector
+    from lib.wordpress import WordPressConnector
 
-    cfg = WPConfig.from_env()
+    cfg, problem = _config_for_site(site_slug)
+    if problem:
+        return problem
     if not (cfg.base_url and cfg.username and cfg.app_password):
         return _err("WordPress not configured",
-                    "set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
+                    "set the site's WordPress settings (or WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD)")
     try:
         return WordPressConnector(cfg).get_post(int(post_id))
     except Exception as exc:  # noqa: BLE001 — service never raises
@@ -3608,12 +3648,13 @@ def llms_txt(site_slug: str) -> dict:
 # ride the same WP application-password connection — no MCP dependency.
 
 
-def _elementor_client():
-    """ElementorClient bound to WPConfig.from_env(). Raises when unconfigured
-    (callers wrap into _err)."""
+def _elementor_client(site_slug: str = ""):
+    """ElementorClient bound to the named site's WordPress credentials (env only for an isolated instance with
+    no slug). Raises when unconfigured (callers wrap into _err)."""
     from lib.elementor import ElementorClient
-    from lib.wordpress import WPConfig
-    cfg = WPConfig.from_env()
+    cfg, problem = _config_for_site(site_slug)
+    if problem:
+        raise ValueError(problem["error"])
     if not (cfg.base_url and cfg.username and cfg.app_password):
         raise ValueError(
             "WordPress not configured — set WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD")
@@ -3627,30 +3668,30 @@ def _check_post_type(post_type: str) -> dict | None:
     return None
 
 
-def elementor_available() -> dict:
+def elementor_available(site_slug: str = "") -> dict:
     """Preflight: does the site expose _elementor_data over REST? (OPTIONS probe)"""
     try:
-        return _elementor_client().available()
+        return _elementor_client(site_slug).available()
     except Exception as exc:  # noqa: BLE001 — service never raises
         return _err(f"elementor probe failed: {type(exc).__name__}: {exc}",
                     "set WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD (Administrator app "
                     "password) and confirm Elementor >= 3.27 is active")
 
 
-def elementor_document(post_id: int, post_type: str = "posts") -> dict:
+def elementor_document(post_id: int, post_type: str = "posts", site_slug: str = "") -> dict:
     """Read the current Elementor document (root elements + page settings)."""
     bad = _check_post_type(post_type)
     if bad:
         return bad
     try:
-        return _elementor_client().get_document(post_id, post_type=post_type)
+        return _elementor_client(site_slug).get_document(post_id, post_type=post_type)
     except Exception as exc:  # noqa: BLE001
         return _err(f"elementor document read failed: {type(exc).__name__}: {exc}",
                     "check the post id and that Elementor >= 3.27 is active on the site")
 
 
 def elementor_save(post_id: int, elements: list, post_type: str = "posts",
-                   page_settings: dict | None = None) -> dict:
+                   page_settings: dict | None = None, site_slug: str = "") -> dict:
     """Replace a post's Elementor document (full-document write). Audited."""
     bad = _check_post_type(post_type)
     if bad:
@@ -3660,7 +3701,7 @@ def elementor_save(post_id: int, elements: list, post_type: str = "posts",
                     'fetch GET /sdk/v1/elementor/posts/{post_id} for the current shape, '
                     'or pass [{"id","elType","settings","elements"}]')
     try:
-        result = _elementor_client().save_document(
+        result = _elementor_client(site_slug).save_document(
             post_id, elements, post_type=post_type, page_settings=page_settings)
     except Exception as exc:  # noqa: BLE001
         return _err(f"elementor save failed: {type(exc).__name__}: {exc}",

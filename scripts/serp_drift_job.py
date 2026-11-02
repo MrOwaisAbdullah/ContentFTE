@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from lib.db import (AuditLog, KeywordLedger, SeoCache, Site, explain_missing_site,
                     get_session, init_db)
-from lib.seo_provider import get_keyword_data, provider_name
+from lib.seo_provider import get_keyword_data, provider_name, split_cache_key
 from lib.serp_drift import detect_drift, serp_urls
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,7 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
             .order_by(SeoCache.id.asc()).limit(max(1, int(limit)))
         ).scalars().all()
 
+        first_site_id = session.execute(select(Site.id).order_by(Site.id.asc())).scalars().first()
         checked = 0
         no_baseline = 0
         fetch_errors = 0
@@ -92,6 +93,11 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
         drifted: list[dict] = []
         now = datetime.now(timezone.utc)
         for row in rows:
+            # Baselines are per site (TEN-07): a row belongs to the site named in its key; a legacy row (no site
+            # in the key) belongs to the instance's first site. Another tenant's baseline is never compared.
+            row_site, plain_kw = split_cache_key(row.keyword)
+            if (row_site if row_site is not None else first_site_id) != site.id:
+                continue
             baseline = _baseline_urls(session, provider, row.keyword)
             if not baseline:
                 no_baseline += 1
@@ -99,14 +105,14 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
             checked += 1
             try:
                 if fetch_fn is not None:
-                    fresh_data = fetch_fn(row.keyword)
+                    fresh_data = fetch_fn(plain_kw)
                 else:
                     fresh_data = get_keyword_data(
-                        session, row.keyword, force_refresh=True)
+                        session, plain_kw, force_refresh=True, site_id=row_site)
             except Exception as exc:  # provider outage: per-keyword, fail-open
                 fetch_errors += 1
                 logger.warning("serp_drift: fetch failed for %r: %s",
-                               row.keyword, exc)
+                               plain_kw, exc)
                 continue
             fresh = serp_urls(
                 (fresh_data or {}).get("serp")
@@ -115,7 +121,7 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
                 no_fresh += 1
                 continue
             report = detect_drift(baseline, fresh)
-            report["keyword"] = row.keyword
+            report["keyword"] = plain_kw
             report["provider"] = provider
             if not report["drifted"]:
                 continue
@@ -125,7 +131,7 @@ def run(dry_run: bool = False, site_slug: str = "", limit: int = DEFAULT_LIMIT,
             ledger = session.execute(
                 select(KeywordLedger)
                 .where(KeywordLedger.site_id == site.id,
-                       KeywordLedger.keyword == row.keyword)
+                       KeywordLedger.keyword == plain_kw)
             ).scalars().first()
             if ledger is not None:
                 # review queue (lib.ledger due-review query) picks it up.

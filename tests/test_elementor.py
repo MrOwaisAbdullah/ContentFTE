@@ -452,18 +452,18 @@ def test_rest_elementor_routes(monkeypatch):
 
     # probe: always 200 — body carries status or error+next
     monkeypatch.setattr(svc, "elementor_available",
-                        lambda: {"available": False, "meta_keys": [], "hint": "old elementor"})
+                        lambda site_slug="": {"available": False, "meta_keys": [], "hint": "old elementor"})
     got = client.get("/sdk/v1/elementor/available")
     assert got.status_code == 200 and got.json()["available"] is False
 
     monkeypatch.setattr(svc, "elementor_document",
-                        lambda post_id, post_type="posts": {"id": post_id, "elements": []})
+                        lambda post_id, post_type="posts", site_slug="": {"id": post_id, "elements": []})
     doc = client.get("/sdk/v1/elementor/posts/7")
     assert doc.status_code == 200 and doc.json()["id"] == 7
 
     saved = {}
 
-    def fake_save(post_id, elements, post_type="posts", page_settings=None):
+    def fake_save(post_id, elements, post_type="posts", page_settings=None, site_slug=""):
         saved.update(post_id=post_id, n=len(elements), page_settings=page_settings)
         return {"ok": True, "id": post_id}
 

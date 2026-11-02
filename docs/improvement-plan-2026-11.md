@@ -61,7 +61,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | 1 | 8 | - | - | - | 10 | 15 |
 | 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 11 | 17 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 23 | 18 |
+| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 26 | 15 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 7 | 9 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -177,7 +177,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 24 of 42 done, 7 partly done, 11 not done (item-by-item list in section 2).
+**Status: in progress** - 27 of 42 done, 7 partly done, 8 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
@@ -190,7 +190,7 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [x] **TEN-03** (High) Spend control: search tools call meter() without a site → in shared mode get_or_create_site("") raises and the… - per-site monthly USD cap and a per-site Tavily budget - `phase5-pipeline-adapters`
 - [ ] **TEN-04** (High) Scheduler = single-site Actions pipeline: fixed crons, run_stage.py has no --site, one concurrency group, ~15 … - DB job queue + scheduler honouring cadence; retire the single-site Actions cron
 - [~] **TEN-05** (High) Discord bot isn't tenant-aware (one store behind a channel allow-list) - user allow-list done; one bot serving many sites (guild -> site routing) still open - `phase4-remaining-hardening`
-- [ ] **TEN-06** (High) Post-id WP/Elementor routes resolve creds from env only - route WP/Elementor post-id operations by site + article, with per-site credentials
+- [x] **TEN-06** (High) Post-id WP/Elementor routes resolve creds from env only - post-id WordPress/Elementor operations (REST and MCP) take site_slug and use that site's credentials; mandatory on a multi-site engine, never the process env WordPress - `phase5-pipeline-adapters`
 - [x] **SEC-13** (Medium) Webhooks: custom-site push has no HMAC, timestamp, delivery id or retry; Sanity revalidate webhook accepts the… - custom-site pushes are HMAC-signed with timestamp and delivery id, retried, per-site URL/secret; revalidate webhook compares in constant time, drops the body/query secret by default and uses after() for IndexNow - `phase5-pipeline-adapters`
 - [x] **ENG-14** (Medium) Idempotency cache is an in-process dict (no TTL despite the docstring, no cap, per-worker under --workers 2, r… - Idempotency-Key responses are stored in the database for 24h and replayed by any worker - `phase5-pipeline-adapters`
 - [x] **PIPE-09** (Medium) Brief prompt names manage_sheet_tool; the tool is manage_sheet_data_tool - `phase1-quality-gates`
@@ -206,12 +206,12 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [~] **ADP-05** (Medium) markdown_parser (Portable Text): table placeholder replaced inside code fences; ==/~~ rewrites inline code; mu… - relative links, quotes, html blocks, tables in fences, ==/~~ in code, links in table cells fixed; horizontal rules stay literal (the Studio schema has no divider type) and list-image ordering is open - `phase5-pipeline-adapters`
 - [x] **ADP-06** (Medium) Sanity HTTP: retries only on exceptions (never 429/5xx), max_retries=1; update_post_content patches without if… - `phase5-pipeline-adapters`
 - [x] **ADP-07** (Medium) Custom payload has no featured image, canonical, OG, or meta_title (always the article title); image staging r… - payload v2: meta_title, canonical, featured image, OG block; SDK buildMetadata() for Next.js - `phase5-pipeline-adapters`
-- [ ] **ADP-08** (Medium) WP SEO meta: only Yoast verified (AIOSEO key isn't a real v4 field; SEOPress/Rank Math unverified); no OG/Twit… - probe registered SEO meta keys; wrap JSON-LD in wp:html; Rank Math/SEOPress/AIOSEO
+- [x] **ADP-08** (Medium) WP SEO meta: only Yoast verified (AIOSEO key isn't a real v4 field; SEOPress/Rank Math unverified); no OG/Twit… - SEO meta is probed against the site's registered REST meta (Yoast, Rank Math, SEOPress, AIOSEO) and only storable keys are sent; the result reports the active plugin or a clear warning; JSON-LD is wrapped in a core/html block - `phase5-pipeline-adapters`
 - [x] **ADP-09** (Medium) refresh_article rewrites content but not _elementor_data → Elementor pages stay stale. - refresh rewrites _elementor_data for pages built with the Elementor target - `phase5-pipeline-adapters`
 - [x] **ADP-10** (Medium) fetch_internal_links builds base/{slug} (wrong unless permalinks are %postname%; use p["link"]); existing_slug… - `phase4-remaining-hardening`
 - [x] **ADP-11** (Medium) slugify_taxonomy strips all non-ASCII → Urdu/Arabic/Chinese categories become uncategorized-N; Sanity path use… - `phase4-remaining-hardening`
 - [x] **ADP-12** (Medium) WP media: unquoted Content-Disposition; MIME from extension (ignores image_format.sniff_mime, built for JPEG-i… - Content-Disposition, sniffed MIME, checked alt-text write; dedupe of media on retry still open - `phase4-remaining-hardening`
-- [ ] **TEN-07** (Medium) SeoCache, _keyword_claim, IMAGE_STAGING_DIR have no site dimension - SeoCache, _keyword_claim and IMAGE_STAGING_DIR need a site dimension
+- [x] **TEN-07** (Medium) SeoCache, _keyword_claim, IMAGE_STAGING_DIR have no site dimension - SERP baseline / SEO cache is namespaced per site (the drift job compares only its own site's rows); staged images live in a per-database folder; the Sheets keyword claim is per process by design - `phase5-pipeline-adapters`
 - [ ] **TEN-09** (Medium) Spec design relies on new free-tier accounts per instance (Gemini, OpenRouter, Cloudflare, Tavily) — multiplie… - decide: pooled paid provider keys with per-tenant caps vs a free-tier account per site _(needs your decision)_
 - [x] **OPS-02** (Medium) Stage single-flight and idempotency are in-process while the image runs --workers 2. - stage runs, publish and generate are single-flight across worker processes via expiring database leases; Idempotency-Key replay is stored in the database - `phase5-pipeline-adapters`
 - [x] **PIPE-19** (Low) router.yaml disables gemma-4-26b/31b but LLM_MODELS still lists them → wrong per-model accounting. - runner fleet drops every model router.yaml disables - `phase5-pipeline-adapters`
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 24 of 42 done, 7 partly done, 11 not done (item-by-item list in section 2).
+**Status: in progress** - 27 of 42 done, 7 partly done, 8 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

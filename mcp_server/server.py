@@ -150,6 +150,8 @@ class WpPostInput(BaseModel):
     post_id: int = Field(..., ge=1,
                          description="WordPress post/page ID to read back "
                                      "(from publish's wp.post_id or meta.wp_post_id)")
+    site_slug: str = Field(default="", description="Site whose WordPress credentials to use "
+                                                    "(required when this engine serves several sites)")
 
 
 class PublishArticleInput(BaseModel):
@@ -160,11 +162,19 @@ class PublishArticleInput(BaseModel):
         description="'draft' = create as WP draft (default for new sites); 'auto' = publish live")
 
 
+class ElementorAvailableInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    site_slug: str = Field(default="", description="Site whose WordPress credentials to use "
+                                                    "(required when this engine serves several sites)")
+
+
 class ElementorPostInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     post_id: int = Field(..., ge=1, description="WordPress post/page ID to read the Elementor document from")
     post_type: Literal["posts", "pages"] = Field(
         default="posts", description="WP REST resource type ('posts' default, or 'pages')")
+    site_slug: str = Field(default="", description="Site whose WordPress credentials to use "
+                                                    "(required when this engine serves several sites)")
 
 
 class ElementorSaveInput(BaseModel):
@@ -172,6 +182,8 @@ class ElementorSaveInput(BaseModel):
     post_id: int = Field(..., ge=1, description="WordPress post/page ID to write the document to")
     post_type: Literal["posts", "pages"] = Field(
         default="posts", description="WP REST resource type ('posts' default, or 'pages')")
+    site_slug: str = Field(default="", description="Site whose WordPress credentials to use "
+                                                    "(required when this engine serves several sites)")
     elements_json: str = Field(
         ..., min_length=2,
         description='JSON array string of root elements, e.g. '
@@ -543,7 +555,7 @@ async def wp_post(params: WpPostInput) -> str:
         "url", "modified", "featured_media", "categories", "tags", "meta"}
         or {"error", "next"}.
     """
-    return _out(await service.wp_post(params.post_id))
+    return _out(await service.wp_post(params.post_id, site_slug=params.site_slug))
 
 
 @mcp.tool(
@@ -610,7 +622,7 @@ async def sitemap_xml(params: SiteSlugInput) -> str:
     annotations={"title": "Probe Elementor REST Meta", "readOnlyHint": True,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
-async def elementor_available() -> str:
+async def elementor_available(params: ElementorAvailableInput | None = None) -> str:
     """Probe the connected WordPress for Elementor document meta (Elementor
     >= 3.27 registers _elementor_data with show_in_rest).
 
@@ -619,7 +631,7 @@ async def elementor_available() -> str:
         — hint explains why availability is false (e.g. Elementor too old).
         Config problems come back as {"error", "next"}.
     """
-    return _out(await service.elementor_available())
+    return _out(await service.elementor_available(site_slug=params.site_slug if params else ""))
 
 
 @mcp.tool(
@@ -643,7 +655,8 @@ async def elementor_document(params: ElementorPostInput) -> str:
         "parse_error" when _elementor_data could not be decoded.
         Errors: {"error", "next"}.
     """
-    return _out(await service.elementor_document(params.post_id, post_type=params.post_type))
+    return _out(await service.elementor_document(params.post_id, post_type=params.post_type,
+                                                 site_slug=params.site_slug))
 
 
 @mcp.tool(
@@ -691,7 +704,8 @@ async def elementor_save(params: ElementorSaveInput) -> str:
                          "next": 'e.g. {"hide_title":"yes"}'})
     return _out(await service.elementor_save(params.post_id, elements,
                                        post_type=params.post_type,
-                                       page_settings=page_settings))
+                                       page_settings=page_settings,
+                                       site_slug=params.site_slug))
 
 
 @mcp.tool(

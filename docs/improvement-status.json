@@ -436,9 +436,10 @@
       "note": "payload v2: meta_title, canonical, featured image, OG block; SDK buildMetadata() for Next.js"
     },
     "ADP-08": {
-      "status": "open",
-      "note": "probe registered SEO meta keys; wrap JSON-LD in wp:html; Rank Math/SEOPress/AIOSEO",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "SEO meta is probed against the site's registered REST meta (Yoast, Rank Math, SEOPress, AIOSEO) and only storable keys are sent; the result reports the active plugin or a clear warning; JSON-LD is wrapped in a core/html block"
     },
     "ADP-09": {
       "status": "done",
@@ -772,14 +773,16 @@
       "phase": "3"
     },
     "TEN-06": {
-      "status": "open",
-      "note": "route WP/Elementor post-id operations by site + article, with per-site credentials",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "post-id WordPress/Elementor operations (REST and MCP) take site_slug and use that site's credentials; mandatory on a multi-site engine, never the process env WordPress"
     },
     "TEN-07": {
-      "status": "open",
-      "note": "SeoCache, _keyword_claim and IMAGE_STAGING_DIR need a site dimension",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "SERP baseline / SEO cache is namespaced per site (the drift job compares only its own site's rows); staged images live in a per-database folder; the Sheets keyword claim is per process by design"
     },
     "TEN-08": {
       "status": "done",

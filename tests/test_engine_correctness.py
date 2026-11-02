@@ -547,3 +547,36 @@ def test_a_site_key_cannot_provision(svc):
         assert ok.status_code == 200 and ok.json()["key"]["key"].startswith("cfte_")
     finally:
         os.environ.pop("SDK_MASTER_KEY", None)
+
+
+# ------------------------------------------------------------------ TEN-06: post-id WordPress ops use the named site
+def test_post_id_wordpress_ops_use_the_named_sites_credentials_not_the_process_env(svc, monkeypatch):
+    seen = []
+
+    class FakeConn:
+        def __init__(self, cfg):
+            seen.append(cfg)
+
+        def get_post(self, post_id):
+            return {"id": post_id}
+
+    monkeypatch.setattr("lib.wordpress.WordPressConnector", FakeConn)
+    monkeypatch.setenv("WP_BASE_URL", "https://env-wp.test")
+    monkeypatch.setenv("WP_USERNAME", "env-user")
+    monkeypatch.setenv("WP_APP_PASSWORD", "env-pass")
+    svc.upsert_site("wpa", "A", "wordpress", "https://a.test",
+                    {"wp": {"base_url": "https://a-wp.test", "username": "a-user", "app_password": "a-pass"}})
+    assert svc.wp_post(7, site_slug="wpa") == {"id": 7}
+    assert seen[-1].base_url == "https://a-wp.test" and seen[-1].username == "a-user"
+    assert "error" in svc.wp_post(7, site_slug="nope")
+
+
+def test_in_shared_mode_a_post_id_op_without_a_site_is_refused_not_sent_to_the_env_wordpress(svc, monkeypatch):
+    monkeypatch.setenv("TENANCY_MODE", "shared")
+    monkeypatch.setenv("WP_BASE_URL", "https://env-wp.test")
+    monkeypatch.setenv("WP_USERNAME", "u")
+    monkeypatch.setenv("WP_APP_PASSWORD", "p")
+    out = svc.wp_post(7)
+    assert "site_slug is required" in out["error"]
+    assert "site_slug is required" in svc.elementor_available()["error"]
+    assert "site_slug is required" in svc.elementor_document(7)["error"]

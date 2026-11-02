@@ -12,6 +12,7 @@ No LLM calls — safe to use without touching the model router.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -25,6 +26,25 @@ CACHE_DAYS = 30
 
 def provider_name() -> str:
     return (os.environ.get("SEO_DATA_PROVIDER") or "off").strip().lower()
+
+
+_SITE_KEY = re.compile(r"^s(\d+):(.*)$", re.S)
+
+
+def cache_key(keyword: str, site_id: int | None = None) -> str:
+    """The `seo_cache.keyword` value for a keyword on a site (TEN-07).
+
+    The cache row also holds the SERP snapshot the monthly drift job compares against, so two tenants sharing
+    a keyword shared ONE baseline - tenant B's refresh silently replaced tenant A's, and each saw the other's
+    drift. The site goes into the key itself (no schema change: a new column would not reach an existing
+    database without a migration). Rows written before this, and calls with no site, keep the bare keyword."""
+    return f"s{int(site_id)}:{keyword}" if site_id else keyword
+
+
+def split_cache_key(key: str) -> tuple[int | None, str]:
+    """Inverse of `cache_key`: (site_id | None, keyword)."""
+    m = _SITE_KEY.match(key or "")
+    return (int(m.group(1)), m.group(2)) if m else (None, key or "")
 
 
 def _cache_get(session: Session, provider: str, keyword: str) -> dict | None:
@@ -150,7 +170,7 @@ def _dataforseo_fetch(keyword: str) -> dict:
 
 
 def get_keyword_data(session: Session, keyword: str, manual: dict | None = None,
-                     force_refresh: bool = False) -> dict:
+                     force_refresh: bool = False, site_id: int | None = None) -> dict:
     """Main entry. `manual` supplies the off-mode fields when provider=off.
 
     `force_refresh=True` (§5.16 SERP drift job) bypasses the read cache but
@@ -167,7 +187,8 @@ def get_keyword_data(session: Session, keyword: str, manual: dict | None = None,
             intent=str(m.get("intent", "informational")),
             serp_notes=str(m.get("serp_notes", "")),
         )
-    cached = None if force_refresh else _cache_get(session, provider, keyword)
+    ckey = cache_key(keyword, site_id)
+    cached = None if force_refresh else _cache_get(session, provider, ckey)
     if cached is not None:
         return {**cached, "cache_hit": True}
     if provider == "openseo":
@@ -177,5 +198,5 @@ def get_keyword_data(session: Session, keyword: str, manual: dict | None = None,
     else:
         raise ValueError(f"unknown SEO_DATA_PROVIDER: {provider}")
     data["cache_hit"] = False
-    _cache_set(session, provider, keyword, data)
+    _cache_set(session, provider, ckey, data)
     return data

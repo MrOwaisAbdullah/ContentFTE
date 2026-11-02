@@ -357,23 +357,67 @@ class WordPressConnector:
             "invalid": validation["invalid_internal"] + validation["invalid_external"],
         }
 
-    def _meta_payload(self, post: PreparedPost) -> dict:
-        """Yoast / Rank Math / AIOSEO fields + canonical. JSON-LD is injected
-        into the body (see publish) since WP REST won't render a schema meta)."""
-        return {
-            "meta": {
-                "_yoast_wpseo_title": post.meta_title,
-                "_yoast_wpseo_metadesc": post.meta_description,
-                "_yoast_wpseo_focuskw": post.focus_keyphrase,
-                "_yoast_wpseo_canonical": post.canonical,
-                "rank_math_title": post.meta_title,
-                "rank_math_description": post.meta_description,
-                "rank_math_focus_keyword": post.focus_keyphrase,
-                "rank_math_canonical_url": post.canonical,
-                "_aioseo_title": post.meta_title,
-                "_aioseo_description": post.meta_description,
-            }
+    _SEO_PLUGIN_KEYS = {
+        "yoast": ("_yoast_wpseo_title", "_yoast_wpseo_metadesc", "_yoast_wpseo_focuskw", "_yoast_wpseo_canonical"),
+        "rank_math": ("rank_math_title", "rank_math_description", "rank_math_focus_keyword", "rank_math_canonical_url"),
+        "seopress": ("_seopress_titles_title", "_seopress_titles_desc", "_seopress_analysis_target_kw",
+                     "_seopress_robots_canonical"),
+        "aioseo": ("_aioseo_title", "_aioseo_description"),   # AIOSEO v4 keeps its data in its own table
+    }
+
+    def registered_meta_keys(self) -> set | None:
+        """Post-meta keys this site exposes to the REST API (`OPTIONS /posts` -> schema.meta.properties), or
+        None if the probe fails. WordPress silently DROPS a `meta` key that is not registered with
+        show_in_rest, so without this the connector reported success while no SEO title or description was
+        saved (ADP-08). Cached for the life of the connector."""
+        if not hasattr(self, "_registered_meta"):
+            try:
+                resp = self.session.options(self._url("/posts"), timeout=self.cfg.timeout)
+                resp.raise_for_status()
+                props = ((resp.json().get("schema") or {}).get("meta") or {}).get("properties") or {}
+                self._registered_meta = set(props)
+            except Exception:  # noqa: BLE001 - the probe is advisory
+                self._registered_meta = None
+        return self._registered_meta
+
+    def seo_meta_report(self, registered: set | None) -> dict:
+        """What the SEO-plugin meta write will (not) do on this site - shown to the operator."""
+        if registered is None:
+            return {"probed": False}
+        plugins = {name: [k for k in keys if k in registered] for name, keys in self._SEO_PLUGIN_KEYS.items()}
+        active = sorted(n for n, ks in plugins.items() if ks)
+        report: dict = {"probed": True, "plugins": active}
+        if not active:
+            report["warning"] = ("no SEO plugin's fields are writable over the REST API on this site, so the "
+                                 "meta title/description/focus keyword were NOT saved; register them with "
+                                 "show_in_rest (a small mu-plugin) or set them in the plugin by hand")
+        return report
+
+    def _meta_payload(self, post: PreparedPost, registered: set | None = None) -> dict:
+        """Yoast / Rank Math / SEOPress / AIOSEO fields + canonical.
+
+        With `registered` (from `registered_meta_keys`) only keys the site will actually store are sent;
+        without it, all candidates are sent (the old behaviour). JSON-LD is injected into the body (see
+        publish) since WP REST won't render a schema meta."""
+        values = {
+            "_yoast_wpseo_title": post.meta_title,
+            "_yoast_wpseo_metadesc": post.meta_description,
+            "_yoast_wpseo_focuskw": post.focus_keyphrase,
+            "_yoast_wpseo_canonical": post.canonical,
+            "rank_math_title": post.meta_title,
+            "rank_math_description": post.meta_description,
+            "rank_math_focus_keyword": post.focus_keyphrase,
+            "rank_math_canonical_url": post.canonical,
+            "_seopress_titles_title": post.meta_title,
+            "_seopress_titles_desc": post.meta_description,
+            "_seopress_analysis_target_kw": post.focus_keyphrase,
+            "_seopress_robots_canonical": post.canonical,
+            "_aioseo_title": post.meta_title,
+            "_aioseo_description": post.meta_description,
         }
+        if registered is not None:
+            values = {k: v for k, v in values.items() if k in registered}
+        return {"meta": values}
 
     # --- publish ---
 
@@ -402,9 +446,10 @@ class WordPressConnector:
                     "url": src, "alt": img.get("alt", ""), "after_h2": img.get("after_h2"),
                 })
         base = wp_render.inject_inpost_images(body, uploaded_inpost)
-        ld = wp_render.jsonld_script(post.article_schema)
+        in_blocks = post.render_target == "blocks"
+        ld = wp_render.jsonld_script(post.article_schema, blocks=in_blocks)
         if post.faq_schema:
-            ld += "\n" + wp_render.jsonld_script(post.faq_schema)
+            ld += "\n" + wp_render.jsonld_script(post.faq_schema, blocks=in_blocks)
         # elementor: the FAQ accordion rides as a native widget — keep it out
         # of the html widget, but leave a plain-<details> section in the
         # fallback post content so the page still has FAQs without Elementor.
@@ -416,6 +461,7 @@ class WordPressConnector:
         cat_ids = [self._ensure_term("categories", c) for c in post.categories]
         tag_ids = [self._ensure_term("tags", t) for t in post.tags]
 
+        registered = self.registered_meta_keys()
         payload = {
             "title": post.title,
             "content": body,
@@ -424,14 +470,15 @@ class WordPressConnector:
             "status": "publish" if is_live_mode(mode) else "draft",
             "categories": cat_ids,
             "tags": tag_ids,
-            **self._meta_payload(post),
+            **self._meta_payload(post, registered),
         }
         if featured_id:
             payload["featured_media"] = featured_id
         resp = self.session.post(self._url("/posts"), json=payload, timeout=self.cfg.timeout)
         resp.raise_for_status()
         doc = resp.json()
-        result = {"id": doc["id"], "url": doc.get("link", ""), "slug": post.slug, "status": payload["status"]}
+        result = {"id": doc["id"], "url": doc.get("link", ""), "slug": post.slug, "status": payload["status"],
+                  "seo_meta": self.seo_meta_report(registered)}
         if featured_id:
             result["featured_media"] = featured_id
         if post.render_target == "elementor":
@@ -483,8 +530,9 @@ class WordPressConnector:
         assembled body with in-post images + JSON-LD already injected).
         """
         body = body_html if body_html is not None else post.html
+        registered = self.registered_meta_keys()
         payload: dict = {"content": body, "excerpt": post.excerpt,
-                         **self._meta_payload(post)}
+                         **self._meta_payload(post, registered)}
         if post.categories:
             payload["categories"] = [self._ensure_term("categories", c)
                                      for c in post.categories]
@@ -498,7 +546,8 @@ class WordPressConnector:
         resp.raise_for_status()
         doc = resp.json()
         return {"id": doc["id"], "url": doc.get("link", ""),
-                "status": doc.get("status", ""), "slug": doc.get("slug", "")}
+                "status": doc.get("status", ""), "slug": doc.get("slug", ""),
+                "seo_meta": self.seo_meta_report(registered)}
 
     def get_post(self, post_id: int, context: str = "edit") -> dict:
         """Read one post back (the WP equivalent of SanityAdapter

@@ -424,9 +424,19 @@ def inject_inpost_images(html_body: str, images: List[Dict[str, Any]]) -> str:
     return body
 
 
-def jsonld_script(schema: Optional[dict]) -> str:
+def jsonld_script(schema: Optional[dict], blocks: bool = False) -> str:
+    """`<script type="application/ld+json">` for one schema object.
+
+    `blocks=True` wraps it in a `core/html` block. A bare <script> after the last Gutenberg block is parsed by
+    the editor as a stray "Classic" block, which makes the whole post look half-converted and gets the tag
+    stripped when a role without `unfiltered_html` saves it (ADP-08)."""
     if not schema:
         return ""
+    script = _jsonld_tag(schema)
+    return _block("html", script) if blocks else script
+
+
+def _jsonld_tag(schema: dict) -> str:
     # json.dumps leaves "<" intact, so a "</script>" inside a title/FAQ answer would
     # close the tag and let the rest run as markup (stored XSS). The \uXXXX escapes
     # below are still valid JSON, so crawlers read the identical structured data.
