@@ -60,9 +60,9 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | 1 | 8 | - | - | - | 10 | 15 |
-| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 12 | 16 |
+| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 13 | 15 |
 | 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 26 | 15 |
-| 4 - Fleet console and operations | 6 | - | - | - | - | 7 | 9 |
+| 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
 <!-- delivery-map:end -->
@@ -140,7 +140,7 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 
 _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant state, secrets out of plaintext, readiness and error contracts, observable requests.
 
-**Status: in progress** - 14 of 30 done, 10 partly done, 6 not done (item-by-item list in section 2).
+**Status: in progress** - 15 of 30 done, 10 partly done, 5 not done (item-by-item list in section 2).
 
 - [x] **SEC-03** (High) No key→site binding - `phase2-site-api-keys`
 - [~] **ENG-04** (High) generate_content: no single-flight per article; token usage read from module-global LAST_USAGE (concurrent run… - single-flight done; LAST_USAGE module global and cost-in-finally still open - `phase4-remaining-hardening`
@@ -159,7 +159,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [~] **ENG-10** (Medium) approve_article has no state guard (can regress published→approved, approve content-less briefs) and emits art… - approve no longer regresses a published article and the event is now article.approved (legacy_event keeps the old name for one release); a full transition table is still open - `phase5-pipeline-adapters`
 - [~] **ENG-12** (Medium) Check-then-insert races (submit_article, upsert_site, get_or_create_site, upsert_keyword); no unique (site_id,… - atomic Tavily meter, concurrent site creation safe; unique (site_id, keyword_id) on articles and a unique finalize row need a migration, so they wait for Alembic (OPS-01) - `phase5-pipeline-adapters`
 - [~] **ENG-13** (Medium) Read paths have write side effects: get_or_create_site on reads and submit_article auto-create a site from any… - REST/MCP submit refuses unknown sites unless SDK_AUTO_CREATE_SITES=1 or it is the default site; new slugs are validated; read paths in lib/store.py still auto-create - `phase5-pipeline-adapters`
-- [~] **ENG-15** (Medium) init_db() runs create_all on every service call (extra round-trips on Neon); no Alembic, so column changes nev… - create_all once per engine; SQLite busy timeout (WAL opt-in via SQLITE_WAL=1); Alembic and a UTC TypeDecorator still open - `phase5-pipeline-adapters`
+- [~] **ENG-15** (Medium) init_db() runs create_all on every service call (extra round-trips on Neon); no Alembic, so column changes nev… - create_all once per engine; SQLite busy timeout (WAL opt-in); Alembic baseline added (existing databases: alembic stamp 0001); a UTC TypeDecorator for timestamps is still open - `phase5-pipeline-adapters`
 - [x] **ENG-16** (Medium) Error envelope: every service error → 404; publish picks codes by substring; MCP keeps a next hint REST drops. - classified statuses + machine-readable code and next on REST errors; both clients expose them - `phase5-pipeline-adapters`
 - [x] **ENG-17** (Medium) Input hygiene: untyped patch_meta(body: dict); unclamped limit (negative = unlimited on SQLite, 500 on PG); no… - `phase5-pipeline-adapters`
 - [ ] **ENG-18** (Medium) article_stats (every dashboard hit) loads every article's content_md + meta and aggregates in Python; same for… - article_stats: SQL aggregates instead of loading every article's markdown
@@ -167,7 +167,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [x] **CON-06** (Medium) No fetch timeout; the layout awaits 3 engine calls on every request → one hung engine freezes every page. - `phase0-console-engine-hardening`
 - [~] **SEC-15** (Low) Hardening: no security headers in next.config.ts; engine CORS defaults to  (and omits DELETE/PUT); OpenAPI doc… - security headers, media proxy, /docs gated (ENGINE_DOCS), shared-mode CORS default deny; a nonce-based CSP for the console is still open - `phase5-pipeline-adapters`
 - [~] **SEC-20** (Low) Model-chosen fetch URLs enable data exfiltration - model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment - `phase5-pipeline-adapters`
-- [ ] **SEC-21** (Low) Second-order injection via brain/ - stop re-feeding log_coverage summaries to the generator as instructions; site-scope brain reads (partly done in p3)
+- [x] **SEC-21** (Low) Second-order injection via brain/ - get_brain_notes_tool returns first-hand voice notes in full but only the titles/tags of LLM-drafted coverage records, as data under a different key - `phase5-pipeline-adapters`
 - [~] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open - `phase5-pipeline-adapters`
 - [x] **ENG-21** (Low) Observability: /health always OK (no DB check), no readiness probe, no request id, print() in places. - X-Request-ID on every response and log line, LOG_FORMAT=json, access log without query strings; /ready added earlier - `phase5-pipeline-adapters`
 - [ ] **ENG-22** (Low) sdk/service.py is 3,118 lines and REST/MCP duplicate stage-run logic - split sdk/service.py (3.4k lines) along the seams in the plan
@@ -226,7 +226,7 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 
 _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, provisioning API, error tracking, backups, alerting, SEO monitoring upgrades.
 
-**Status: in progress** - 8 of 17 done, 5 partly done, 4 not done (item-by-item list in section 2).
+**Status: in progress** - 9 of 17 done, 5 partly done, 3 not done (item-by-item list in section 2).
 
 - [x] **CON-02** (High) Secrets as client props + export (see SEC-04). - `phase0-console-engine-hardening`
 - [~] **SEO-15** (Medium) DataForSEO provider returns no SERP; difficulty scale 0–1 vs OpenSEO 0–100 (skews priority_score ~100×); inten… - difficulty normalized to 0-100 across providers; a SERP endpoint and a real intent classifier are still open - `phase5-pipeline-adapters`
@@ -240,7 +240,7 @@ _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, pr
 - [ ] **CON-12** (Medium) Very large components: articles/[id]/page.tsx 1,001 lines (7 inline tabs), site-cadence-settings.tsx 899 lines… - split articles/[id]/page.tsx, site-cadence-settings.tsx and lib/shell.tsx (needs browser verification)
 - [ ] **CON-13** (Medium) One shared operator password; no user identity, roles, or actor on mutations — the engine can't record who app… - decide whether you need separate logins/roles (owner/reviewer/client) before building accounts and an actor on mutations _(needs your decision)_
 - [x] **TEN-08** (Medium) Provisioning: onboarding site #N takes ~21 manual steps (≈12 external accounts, ≥5 file edits/redeploys); the … - POST /sdk/v1/provision (platform key): site + scoped one-time key + health check + a list of what a human still has to do; idempotent; python client provision_site() - `phase5-pipeline-adapters`
-- [ ] **OPS-01** (Medium) No migrations chain, backups/PITR, error tracking, uptime probe or alerting beyond Discord pings from run_stag… - Alembic, backups/PITR, Sentry, uptime probe, alerting, audit actor
+- [x] **OPS-01** (Medium) No migrations chain, backups/PITR, error tracking, uptime probe or alerting beyond Discord pings from run_stag… - audit rows record the acting key; Sentry (scrubbed, optional extra); scripts/backup_db.py with retention; sdk/ops.py + scripts/alerts_check.py (budget, cadence, readiness) posting to Discord; uptime probe workflow; Alembic baseline; docs/operations-runbook.md. Turning on Sentry, the uptime secrets, scheduling the backup/alerts, and Neon PITR are settings only you can make. - `phase5-pipeline-adapters`
 - [~] **CON-14** (Low) a11y: custom select lacks listbox/combobox roles/keyboard; toasts need aria-live. - site-select is now a keyboard-operable listbox (roles, arrow keys, focus return); toasts already announce; the rest of the console has not been audited with a screen reader and this is not browser-verified - `phase5-pipeline-adapters`
 - [~] **CON-15** (Low) 9 any holes; tests cover only pure functions (no session, safeNext, registry precedence or action tests). - tests for session, redirect-safety, secrets, instance guard, limiter; server-action tests open - `phase0-console-engine-hardening`
 - [x] **CON-16** (Low) ?ok=/?err= flash text is rendered verbatim → spoofable "Article published" toasts via crafted links. - flash messages are HMAC-signed by the server action's redirect and verified in middleware; a crafted or stale link shows nothing. (An earlier version of this fix accepted only fixed codes and would have silenced every real toast; caught and replaced before release.) - `phase5-pipeline-adapters`
@@ -634,7 +634,7 @@ Task list in §2.
 
 ### Phase 2 — Tenant context, auth & secrets (≈2–3 weeks)
 <!-- phase-status:2:start -->
-**Status: in progress** - 14 of 30 done, 10 partly done, 6 not done (item-by-item list in section 2).
+**Status: in progress** - 15 of 30 done, 10 partly done, 5 not done (item-by-item list in section 2).
 <!-- phase-status:2:end -->
 - `TenantContext`; remove import-time globals (TEN-02) and startup Brand DNA (PIPE-06); per-run agent construction.
 - Per-site hashed scoped keys; `_require_site` / `_load_article` choke points (SEC-03, ENG-08, ENG-09); tenancy test matrix.
@@ -659,7 +659,7 @@ Task list in §2.
 
 ### Phase 4 — Fleet console & operations (ongoing)
 <!-- phase-status:4:start -->
-**Status: in progress** - 8 of 17 done, 5 partly done, 4 not done (item-by-item list in section 2).
+**Status: in progress** - 9 of 17 done, 5 partly done, 3 not done (item-by-item list in section 2).
 <!-- phase-status:4:end -->
 - Fleet home (per-instance health, version, last run, queue depth, approvals waiting, 28-day cost), cross-instance approvals inbox, cross-instance search, bulk actions with dry-run summaries.
 - Users + roles + audit-trail page (CON-13, OPS-01 actor).

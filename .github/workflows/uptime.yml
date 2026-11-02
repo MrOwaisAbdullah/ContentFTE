@@ -1,0 +1,40 @@
+name: Uptime probe
+
+# "Is the engine answering at all?" - the one thing the engine cannot report about itself (OPS-01).
+# Every 15 minutes: GET <ENGINE_BASE_URL>/ready. A non-200 (not ready, or no answer) pings Discord.
+# /ready returns only readiness booleans - no secrets, no tenant data - so it is safe to probe unauthenticated.
+#
+# Needs repository secrets:  ENGINE_BASE_URL (e.g. https://engine.example.com)   DISCORD_WEBHOOK_URL (optional)
+# Does nothing (and passes) until ENGINE_BASE_URL is set, so forks and fresh clones stay green.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: uptime-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe /ready
+        env:
+          ENGINE_BASE_URL: ${{ secrets.ENGINE_BASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$ENGINE_BASE_URL" ]; then echo "ENGINE_BASE_URL not set - skipping"; exit 0; fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 --retry 2 --retry-delay 5 "${ENGINE_BASE_URL%/}/ready" || echo 000)
+          echo "GET /ready -> $code"
+          if [ "$code" != "200" ]; then
+            if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+              curl -s --max-time 15 -H 'Content-Type: application/json' \
+                -d "{\"content\":\"🔴 ContentFTE engine probe failed: /ready returned $code\"}" "$DISCORD_WEBHOOK_URL" >/dev/null || true
+            fi
+            exit 1
+          fi

@@ -139,9 +139,10 @@
       "note": "model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment"
     },
     "SEC-21": {
-      "status": "open",
-      "note": "stop re-feeding log_coverage summaries to the generator as instructions; site-scope brain reads (partly done in p3)",
-      "phase": "2"
+      "status": "done",
+      "branch": "p5",
+      "phase": "2",
+      "note": "get_brain_notes_tool returns first-hand voice notes in full but only the titles/tags of LLM-drafted coverage records, as data under a different key"
     },
     "SEC-22": {
       "status": "owner",
@@ -241,8 +242,8 @@
     "ENG-15": {
       "status": "partial",
       "branch": "p5",
-      "note": "create_all once per engine; SQLite busy timeout (WAL opt-in via SQLITE_WAL=1); Alembic and a UTC TypeDecorator still open",
-      "phase": "2"
+      "phase": "2",
+      "note": "create_all once per engine; SQLite busy timeout (WAL opt-in); Alembic baseline added (existing databases: alembic stamp 0001); a UTC TypeDecorator for timestamps is still open"
     },
     "ENG-16": {
       "status": "done",
@@ -797,9 +798,10 @@
       "phase": "3"
     },
     "OPS-01": {
-      "status": "open",
-      "note": "Alembic, backups/PITR, Sentry, uptime probe, alerting, audit actor",
-      "phase": "4"
+      "status": "done",
+      "branch": "p5",
+      "phase": "4",
+      "note": "audit rows record the acting key; Sentry (scrubbed, optional extra); scripts/backup_db.py with retention; sdk/ops.py + scripts/alerts_check.py (budget, cadence, readiness) posting to Discord; uptime probe workflow; Alembic baseline; docs/operations-runbook.md. Turning on Sentry, the uptime secrets, scheduling the backup/alerts, and Neon PITR are settings only you can make."
     },
     "OPS-02": {
       "status": "done",

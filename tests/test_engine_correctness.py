@@ -580,3 +580,44 @@ def test_in_shared_mode_a_post_id_op_without_a_site_is_refused_not_sent_to_the_e
     assert "site_slug is required" in out["error"]
     assert "site_slug is required" in svc.elementor_available()["error"]
     assert "site_slug is required" in svc.elementor_document(7)["error"]
+
+
+# ------------------------------------------------------------------ OPS-01: the audit trail names the actor
+def test_audit_rows_record_which_key_acted(svc):
+    from lib.actor import set_actor
+    from lib.db import AuditLog, get_session
+    aid = svc.submit_article("s", keyword="who did it")["id"]
+    token = set_actor("site:s/prod-key")
+    try:
+        svc.approve_article(aid, False, note="needs work", via="sdk")
+    finally:
+        set_actor("")
+    svc.approve_article(aid, False, note="again", via="cli")           # outside a request: no actor
+    s = get_session()
+    try:
+        rows = s.query(AuditLog).filter_by(article_id=aid, action="article.needs_review").order_by(AuditLog.id).all()
+        assert rows[0].payload["actor"] == "site:s/prod-key" and rows[0].payload["note"] == "needs work"
+        assert "actor" not in rows[1].payload
+    finally:
+        s.close()
+
+
+def test_the_rest_layer_publishes_the_caller_to_the_audit_layer(svc, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from lib.db import AuditLog, get_session
+    from sdk.server import router
+    key = svc.provision_site("audited", check_health=False, key_scopes=["read", "write", "approve"])["key"]["key"]
+    monkeypatch.setenv("SDK_MASTER_KEY", "platform-key")
+    app = FastAPI()
+    app.include_router(router)
+    c = TestClient(app)
+    aid = svc.submit_article("audited", keyword="audit me")["id"]
+    assert c.post(f"/sdk/v1/articles/{aid}/approve", json={"approved": False, "note": "n"},
+                  headers={"X-Site-Key": key}).status_code == 200
+    s = get_session()
+    try:
+        row = s.query(AuditLog).filter_by(article_id=aid, action="article.needs_review").one()
+        assert row.payload["actor"].startswith("site:audited/")
+    finally:
+        s.close()

@@ -28,6 +28,7 @@ from sdk.server import router as sdk_router
 from sdk.auth import KeyAuthMiddleware, keys_equal
 from sdk import service as sdk_service
 from sdk.observability import RequestIdMiddleware, configure_logging
+from sdk.monitoring import init_sentry
 from sdk.errors import install as install_error_handler
 # Phase 1 MCP (§5.13) — thin consumer of the same service, mounted on this
 # FastAPI app (single-server architecture; API first, MCP second).
@@ -89,6 +90,7 @@ def _docs_enabled() -> bool:
 
 
 configure_logging()
+init_sentry()          # no-op unless SENTRY_DSN is set and sentry-sdk is installed
 _docs = _docs_enabled()
 app = FastAPI(lifespan=lifespan,
               docs_url="/docs" if _docs else None,

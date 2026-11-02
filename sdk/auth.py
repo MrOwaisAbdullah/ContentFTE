@@ -111,6 +111,10 @@ _current: ContextVar[Optional[AuthContext]] = ContextVar("sdk_auth_context", def
 
 
 def set_current(ctx: Optional[AuthContext]):
+    # also publish who is acting to the audit layer (lib/actor.py -> stamped on every audit_log row)
+    from lib.actor import set_actor
+    set_actor("" if ctx is None else (
+        "platform" if ctx.is_platform else f"site:{ctx.site_slug}/{ctx.label or ctx.key_id or 'key'}"))
     return _current.set(ctx)
 
 

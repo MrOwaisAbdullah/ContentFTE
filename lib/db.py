@@ -433,6 +433,24 @@ def init_db() -> None:
     eng._cfte_schema_ready = True
 
 
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+
+@_sa_event.listens_for(AuditLog, "before_insert")
+def _stamp_actor(_mapper, _connection, target) -> None:
+    """Every audit row records WHO did it (the API key that made the request) without each of the ~40 call
+    sites having to remember to (OPS-01). A row that already names an actor keeps it; outside a request there
+    is no actor and the payload is left alone."""
+    from lib.actor import current_actor
+    actor = current_actor()
+    if not actor:
+        return
+    payload = dict(target.payload) if isinstance(target.payload, dict) else {}
+    if "actor" not in payload:
+        payload["actor"] = actor
+        target.payload = payload
+
+
 def explain_missing_site(session, site_slug: str = "") -> str:
     """Say WHY a job found no site. An empty database (typically a CI job whose
     DATABASE_URL secret is unset or points elsewhere) reads very differently
