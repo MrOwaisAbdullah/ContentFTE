@@ -6,7 +6,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "@/lib/toast";
-import { FLASH_PARAMS, resolveFlash } from "@/lib/flash";
+import { FLASH_PARAMS, FLASH_SIG, FLASH_TS, flashFor } from "@/lib/flash.ts";
 
 export function FlashToaster() {
   const params = useSearchParams();
@@ -19,10 +19,9 @@ export function FlashToaster() {
     for (const key of FLASH_PARAMS) {
       const val = params.get(key);
       if (!val) continue;
-      // The param is a short CODE looked up in lib/flash.ts. Free text in a URL is never shown (CON-16).
-      // A bare ?created=1 / ?saved=true style value falls back to the key's own code.
-      const code = resolveFlash(val) ? val : key;
-      const flash = resolveFlash(code);
+      // middleware.ts only lets a flash through when a server action signed it (CON-16), so this text came
+      // from the console's own server; it is still rendered as plain text and length-capped (flashFor).
+      const flash = flashFor(key, val);
       url.delete(key);
       changed = true;
       if (!flash || last.current === `${key}:${val}`) continue;
@@ -30,6 +29,8 @@ export function FlashToaster() {
       toast(flash.text, flash.tone);
     }
     if (changed) {
+      url.delete(FLASH_TS);
+      url.delete(FLASH_SIG);
       const qs = url.toString();
       router.replace(window.location.pathname + (qs ? `?${qs}` : ""), { scroll: false });
     }

@@ -115,3 +115,41 @@ def test_get_brief_template_tool_serves_new_intents():
         assert out["status"] == "ok"
         assert out["template"]["word_floor"] > 0
         assert out["template_text"]
+
+
+def test_tutorial_queries_get_a_higher_floor_but_compact_pages_do_not(monkeypatch):
+    """SEO-26: 900 words is below what wins how-to queries."""
+    from lib.brief_templates import word_floor_for
+    monkeypatch.delenv("GEN_MIN_WORDS", raising=False)
+    monkeypatch.delenv("TUTORIAL_WORD_FLOOR", raising=False)
+    assert word_floor_for("informational", "how to build an agent with mcp") == 1500
+    assert word_floor_for("commercial", "step-by-step crm setup") == 1500
+    assert word_floor_for("informational", "what is an ai agent") == 900          # not a tutorial query
+    assert word_floor_for("transactional", "how to buy x") == 400                  # compact pages stay compact
+    monkeypatch.setenv("TUTORIAL_WORD_FLOOR", "1800")
+    assert word_floor_for("informational", "tutorial: rag pipeline") == 1800
+    monkeypatch.setenv("GEN_MIN_WORDS", "700")                                     # operator override still wins
+    assert word_floor_for("informational", "how to build an agent") == 700
+
+
+def test_faq_requirement_is_configurable_per_brief_and_per_instance(monkeypatch):
+    """SEO-20: a FAQ block on every post is a template footprint."""
+    from lib.brief_templates import faq_min_for
+    monkeypatch.delenv("FAQ_MIN", raising=False)
+    assert faq_min_for({}) == 3 and faq_min_for(None) == 3
+    assert faq_min_for({"faq_required": False}) == 0
+    assert faq_min_for({"faq_min": 5}) == 5 and faq_min_for({"faq_min": 99}) == 10
+    monkeypatch.setenv("FAQ_MIN", "0")
+    assert faq_min_for({}) == 0
+    assert faq_min_for({"faq_min": 4}) == 4                      # the brief beats the instance default
+
+
+def test_zero_faqs_passes_the_draft_check_only_when_faqs_are_optional(monkeypatch):
+    from sdk import service
+    monkeypatch.delenv("FAQ_MIN", raising=False)
+    body = "# T\n\n> **TL;DR** x\n\n" + ("word " * 1000) + "\n\n## Sources\n- s\n"
+    strict = service._content_checks(content=body, title="T", summary="s" * 40, faqs=[], brief={"keyword": "k"})
+    assert strict["faqs"]["pass"] is False
+    relaxed = service._content_checks(content=body, title="T", summary="s" * 40, faqs=[],
+                                      brief={"keyword": "k", "faq_required": False})
+    assert relaxed["faqs"]["pass"] is True and relaxed["faqs"]["need"] == 0

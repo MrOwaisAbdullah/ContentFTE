@@ -59,10 +59,10 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | Phase | `phase0-console-engine-hardening` | `phase1-quality-gates` | `phase2-site-api-keys` | `phase3-tenant-isolation` | `phase4-remaining-hardening` | `phase5-pipeline-adapters` | Not fully done |
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
-| 1 - Make the quality gates real | 1 | 9 | - | - | - | 6 | 17 |
+| 1 - Make the quality gates real | 1 | 8 | - | - | - | 10 | 15 |
 | 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 11 | 17 |
 | 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 23 | 18 |
-| 4 - Fleet console and operations | 7 | - | - | - | - | 6 | 9 |
+| 4 - Fleet console and operations | 6 | - | - | - | - | 7 | 9 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
 <!-- delivery-map:end -->
@@ -107,7 +107,7 @@ _Goal:_ Close the open doors: unauthenticated /mcp and REST, secrets in response
 
 _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO gates run on every path to approved; honest structured data and dates; cadence and duplicate controls.
 
-**Status: in progress** - 9 of 26 done, 7 partly done, 10 not done (item-by-item list in section 2).
+**Status: in progress** - 11 of 26 done, 8 partly done, 7 not done (item-by-item list in section 2).
 
 - [ ] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft …
 - [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish…
@@ -117,24 +117,24 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 - [x] **SEO-02** (High) SDK/MCP path _content_checks has no fact-check or link validation; external-link check only counts links (and … - SDK/approve path; the Sheets path still relies on the prompt - `phase1-quality-gates`
 - [ ] **SEO-04** (High) MAJOR refresh = new URL + 301 whenever decay ≥ 50% or the page is > 365 days old — resets URL history, and cli… - REFRESH_POLICY switch is built (escalate|in_place); you choose — recommended in_place _(needs your decision)_
 - [~] **SEO-05** (High) Scaled-content controls are thin: max_posts_per_cadence read but never enforced ✅; no near-duplicate check (de… - cadence cap + same-site near-duplicate check at approval (word-shingle similarity, blocks above 50%); cross-tenant duplicate detection is deliberately not done (another tenant's content is not ours to read) - `phase5-pipeline-adapters`
-- [ ] **SEO-06** (High) seo-pack tactics that now conflict with Google guidance: PAA atomization builds one ~120-word page per questio… - make PAA atomization opt-in with a unique-data minimum and per-site cap; prune gray-policy tactics
+- [~] **SEO-06** (High) seo-pack tactics that now conflict with Google guidance: PAA atomization builds one ~120-word page per questio… - PAA atomization is OFF unless PAA_ATOMIZATION=on, needs a stated unique_data, and is capped per site (PAA_MAX_PAGES/30 days); the gray-policy reference text in the seo-pack skill is not edited - `phase5-pipeline-adapters`
 - [x] **SEO-07** (High) article_schema emits a bare Article (headline, url, dates, about) — no author Person+sameAs, publisher, ImageO… - `phase1-quality-gates`
 - [x] **SEO-08** (High) dateModified always equals datePublished on the live site; the engine passes published_at as date_modified, an… - `phase1-quality-gates`
 - [~] **SEO-09** (High) Quality score is inflated and self-reported - overall is capped at mean(sub-scores)+EVAL_OVERALL_TOLERANCE; verifying code snippets against current docs is still open - `phase5-pipeline-adapters`
 - [ ] **SEO-10** (High) brain/ has 21 auto-logged coverage files and 0 real voice notes, so drafts have no first-hand experience; a ne… - requires real brain/ voice notes first; you must write entries before a gate can demand them _(needs your decision)_
 - [x] **SEO-11** (Medium) Cannibalization guard: one-sided token overlap (short candidates match everything), no stemming, excludes won … - `phase1-quality-gates`
 - [x] **SEO-12** (Medium) Link validator: HEAD with redirects treats 200–399 as valid (a hallucinated deep link redirecting to a homepag… - `phase5-pipeline-adapters`
-- [~] **SEO-13** (Medium) Linkguard: substring orphan counts (/blog/ai credited by /blog/ai-agents); page_depths assigns depth 2 to orph… - exact-path inbound counts; explicit orphan list and small-site minimums still open - `phase5-pipeline-adapters`
+- [~] **SEO-13** (Medium) Linkguard: substring orphan counts (/blog/ai credited by /blog/ai-agents); page_depths assigns depth 2 to orph… - exact-path inbound counts, an explicit find_orphans(), and the internal-link minimum scales to the posts that exist; depth/role checks are still not wired into the flow - `phase5-pipeline-adapters`
 - [x] **SEO-14** (Medium) Stale-year check hard-codes 20(1\d\|2[0-5]) — next year it stops catching "in 2026". - `phase1-quality-gates`
 - [~] **SEO-16** (Medium) Decay statistics: no minimum-volume floor (3→2 clicks = 33% decay), no seasonality/YoY, no rank-vs-CTR-vs-dema… - minimum-prior-clicks floor done; seasonality/year-over-year and cause split open - `phase0-console-engine-hardening`
 - [x] **SEO-19** (Medium) MINOR refresh actions bump dateModified unconditionally (fake freshness). - `phase1-quality-gates`
-- [~] **SEO-20** (Medium) FAQ forced on every post (≥3 hard gate) and duplicated on live pages (in-body H3s + a separate FAQ section) - duplicate-FAQ lint added; FAQ optional-by-intent (and emitted once) still open - `phase1-quality-gates`
+- [x] **SEO-20** (Medium) FAQ forced on every post (≥3 hard gate) and duplicated on live pages (in-body H3s + a separate FAQ section) - FAQ minimum is per-brief (faq_required/faq_min) and per-instance (FAQ_MIN, 0 = optional); the writer is told not to pad; FAQPage schema is emitted only when FAQs exist - `phase5-pipeline-adapters`
 - [x] **SEO-21** (Medium) Draft hard-fails if any secondary keyword appears < 2 times — contrary to Google's "no need to rewrite for phr… - `phase5-pipeline-adapters`
 - [~] **SEO-22** (Medium) Taxonomy auto-creates a category from the keyword when nothing matches and adds up to 5 tags per post → many t… - derived tags capped (DERIVED_TAGS_MAX, default 3); a minimum article count before a new term is created and noindex on thin archives are still open - `phase5-pipeline-adapters`
-- [ ] **SEO-23** (Medium) Images: A1 hero is a 525×350 stock image upscaled to 1200×630 for OG; alt defaults to "{keyword} stock image";… - images: >=1200px minimum, descriptive alt, width/height
+- [~] **SEO-23** (Medium) Images: A1 hero is a 525×350 stock image upscaled to 1200×630 for OG; alt defaults to "{keyword} stock image";… - stock photos narrower than 1200px are skipped (the caller falls back to an AI image) and big ones use a 1600px rendition; alt text describes the picture; width/height on WordPress <img> is not added because it would invalidate Gutenberg block markup - `phase5-pipeline-adapters`
 - [~] **SEO-24** (Medium) AEO structure isn't checked deterministically (TL;DR length, question-H2 ratio, comparison table present, FAQ … - AEO lint done; one-off re-run of legacy posts through the gates still open - `phase1-quality-gates`
 - [ ] **SEO-25** (Low) llms.txt generator emits bare links, no descriptions, no llms-full.txt; markdown alternates have no canonical … - llms.txt descriptions/llms-full.txt (low value per current guidance)
-- [ ] **SEO-26** (Low) Brief floor 900 words is below competitor depth for tutorial queries. - raise the tutorial word floor; 'what top results cover that we don't'
+- [x] **SEO-26** (Low) Brief floor 900 words is below competitor depth for tutorial queries. - how-to/tutorial queries get a 1500-word floor (TUTORIAL_WORD_FLOOR); compact transactional pages keep theirs - `phase5-pipeline-adapters`
 
 #### Phase 2 - Tenant context, auth and secrets (about 2-3 weeks)
 
@@ -235,7 +235,7 @@ _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, pr
 - [x] **CON-07** (Medium) No error.tsx, loading.tsx or global-error.tsx anywhere. - `phase0-console-engine-hardening`
 - [x] **CON-08** (Medium) Layout waterfall (/articles?limit=100 for the palette after Promise.all); registry fs.readFile on every engine… - `phase0-console-engine-hardening`
 - [x] **CON-09** (Medium) Count-by-fetching-all: site detail fetches 500 articles to count statuses; media fetches 500 + one detail call… - `phase0-console-engine-hardening`
-- [~] **CON-10** (Medium) Form input not validated (Number(...) → NaN ids; unbounded numbers; enums not allow-listed). - article/keyword ids, publish mode, site slug/URL and settings numbers validated; remaining actions not yet - `phase0-console-engine-hardening`
+- [~] **CON-10** (Medium) Form input not validated (Number(...) → NaN ids; unbounded numbers; enums not allow-listed). - ids, modes, slugs and settings numbers validated; free-text length limits are enforced by the engine (typed meta patch) rather than duplicated in each action - `phase5-pipeline-adapters`
 - [x] **CON-11** (Medium) Hydration-mismatch risk from toLocaleString() in client components rendered on the server. - `phase0-console-engine-hardening`
 - [ ] **CON-12** (Medium) Very large components: articles/[id]/page.tsx 1,001 lines (7 inline tabs), site-cadence-settings.tsx 899 lines… - split articles/[id]/page.tsx, site-cadence-settings.tsx and lib/shell.tsx (needs browser verification)
 - [ ] **CON-13** (Medium) One shared operator password; no user identity, roles, or actor on mutations — the engine can't record who app… - decide whether you need separate logins/roles (owner/reviewer/client) before building accounts and an actor on mutations _(needs your decision)_
@@ -243,7 +243,7 @@ _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, pr
 - [ ] **OPS-01** (Medium) No migrations chain, backups/PITR, error tracking, uptime probe or alerting beyond Discord pings from run_stag… - Alembic, backups/PITR, Sentry, uptime probe, alerting, audit actor
 - [~] **CON-14** (Low) a11y: custom select lacks listbox/combobox roles/keyboard; toasts need aria-live. - site-select is now a keyboard-operable listbox (roles, arrow keys, focus return); toasts already announce; the rest of the console has not been audited with a screen reader and this is not browser-verified - `phase5-pipeline-adapters`
 - [~] **CON-15** (Low) 9 any holes; tests cover only pure functions (no session, safeNext, registry precedence or action tests). - tests for session, redirect-safety, secrets, instance guard, limiter; server-action tests open - `phase0-console-engine-hardening`
-- [x] **CON-16** (Low) ?ok=/?err= flash text is rendered verbatim → spoofable "Article published" toasts via crafted links. - `phase5-pipeline-adapters`
+- [x] **CON-16** (Low) ?ok=/?err= flash text is rendered verbatim → spoofable "Article published" toasts via crafted links. - flash messages are HMAC-signed by the server action's redirect and verified in middleware; a crafted or stale link shows nothing. (An earlier version of this fix accepted only fixed codes and would have silenced every real toast; caught and replaced before release.) - `phase5-pipeline-adapters`
 - [x] **OPS-03** (Low) Root Dockerfile is the stale HF target (uv:latest, no lock copy, no --frozen, no healthcheck); bot image has n… - Dockerfile installs from uv.lock (--frozen --no-dev), pins uv, has a HEALTHCHECK - `phase5-pipeline-adapters`
 
 #### Frontend - Live website frontend (separate repository) (other repo)
@@ -617,7 +617,7 @@ Task list in §2.
 
 ### Phase 1 — Make the quality gates real (≈2 weeks)
 <!-- phase-status:1:start -->
-**Status: in progress** - 9 of 26 done, 7 partly done, 10 not done (item-by-item list in section 2).
+**Status: in progress** - 11 of 26 done, 8 partly done, 7 not done (item-by-item list in section 2).
 <!-- phase-status:1:end -->
 - SEO-01/SEO-02/PIPE-01: `check_gate` + fixed fact-check + link validation enforced in code on every path to `approved`; audit rows persisted.
 - SEO-09: overall score computed in code; accuracy + experience sub-scores; code-snippet verifier (AST/import check + context7 docs lookup for library APIs).

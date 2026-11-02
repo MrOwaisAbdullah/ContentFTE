@@ -6,6 +6,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { validSessionToken } from "./lib/edge-session";
+import { FLASH_SIG, FLASH_TS, canonicalFlash, hasFlash, withoutFlash } from "./lib/flash.ts";
+import { validFlash } from "./lib/flash-verify.ts";
 
 const COOKIE = "console_session";
 
@@ -16,6 +18,18 @@ export async function middleware(req: NextRequest) {
   // /api/* is excluded here and MUST authenticate inside each handler
   // (the media proxy does — see app/api/media). Any new route needs the same.
   if (pathname.startsWith("/api")) return NextResponse.next();
+
+  // Flash messages (?ok=, ?err=, ...) are shown as toasts only if a server action signed them (CON-16).
+  // A crafted or stale link has them stripped: the page loads normally, with no message.
+  const sp = req.nextUrl.searchParams;
+  if (hasFlash(sp)) {
+    const ok = await validFlash(canonicalFlash(sp), sp.get(FLASH_TS), sp.get(FLASH_SIG), process.env.SESSION_SECRET);
+    if (!ok) {
+      const clean = req.nextUrl.clone();
+      clean.search = withoutFlash(sp).toString();
+      return NextResponse.redirect(clean);
+    }
+  }
 
   if (await validSessionToken(req.cookies.get(COOKIE)?.value, process.env.SESSION_SECRET)) {
     return NextResponse.next();

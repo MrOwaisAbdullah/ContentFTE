@@ -123,11 +123,41 @@ def test_get_skill_pack_tool():
     assert out2["reference"].endswith("references/eval-gates.md")
 
 
-def test_build_paa_page_tool_requires_question():
+def _fresh_db():
+    import lib.db as db
+    if db._engine is not None:
+        db._engine.dispose()
+    db._engine = None
+    db._SessionLocal = None
+
+
+UNIQUE = "Our own benchmark of 40 sites: median time-to-rank was 11 weeks (raw data in the appendix)."
+
+
+def test_build_paa_page_tool_requires_question(monkeypatch, tmp_path):
+    _fresh_db()
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'paa.db'}")
+    monkeypatch.setenv("PAA_ATOMIZATION", "on")
     assert tactics_tool.build_paa_page("", "kw")["status"] == "error"
-    ok = tactics_tool.build_paa_page("What is X?", "kw")
+    ok = tactics_tool.build_paa_page("What is X?", "kw", unique_data=UNIQUE)
     assert ok["status"] == "ok"
-    assert ok["spec"]["page_type"] == "paa"
+    assert ok["spec"]["page_type"] == "paa" and ok["spec"]["unique_data"] == UNIQUE
+
+
+def test_paa_atomization_is_opt_in_needs_unique_data_and_is_capped(monkeypatch, tmp_path):
+    _fresh_db()
+    """SEO-06: one thin page per PAA question is the scaled-content pattern Google targets."""
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'paa2.db'}")
+    monkeypatch.delenv("PAA_ATOMIZATION", raising=False)
+    assert tactics_tool.build_paa_page("Why?", "kw", unique_data=UNIQUE)["status"] == "disabled"
+    monkeypatch.setenv("PAA_ATOMIZATION", "on")
+    assert tactics_tool.build_paa_page("Why?", "kw")["status"] == "error"                   # no unique data
+    assert tactics_tool.build_paa_page("Why?", "kw", unique_data="short")["status"] == "error"
+    monkeypatch.setenv("PAA_MAX_PAGES", "2")
+    for q in ("Q1?", "Q2?"):
+        assert tactics_tool.build_paa_page(q, "kw", unique_data=UNIQUE)["status"] == "ok"
+    over = tactics_tool.build_paa_page("Q3?", "kw", unique_data=UNIQUE)
+    assert over["status"] == "error" and "limit reached" in over["message"]
 
 
 def test_build_comparison_page_tool_requires_both():

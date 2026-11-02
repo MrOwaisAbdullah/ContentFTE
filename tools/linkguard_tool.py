@@ -23,15 +23,20 @@ from lib.linkguard import check_hygiene, inbound_counts, rescue_order
 def check_link_hygiene(
     draft_markdown: str,
     base_url: str = "",
+    available_internal: int = -1,
 ) -> Dict[str, Any]:
-    """Pure hygiene check over the draft markdown (no network)."""
+    """Pure hygiene check over the draft markdown (no network).
+
+    `available_internal`: how many other posts the site has to link to (pass it when known, so a young site is
+    not asked for more internal links than exist). -1 = unknown, keep the fixed minimum."""
     if not isinstance(draft_markdown, str) or not draft_markdown.strip():
         return {
             "status": "error",
             "pass": False,
             "guidance": ["draft_markdown must be a non-empty string."],
         }
-    report = check_hygiene(draft_markdown, base_url=base_url)
+    report = check_hygiene(draft_markdown, base_url=base_url,
+                           available_internal=None if available_internal < 0 else available_internal)
     return {"status": "ok", **report}
 
 

@@ -508,9 +508,10 @@
       "note": "cadence cap + same-site near-duplicate check at approval (word-shingle similarity, blocks above 50%); cross-tenant duplicate detection is deliberately not done (another tenant's content is not ours to read)"
     },
     "SEO-06": {
-      "status": "open",
-      "note": "make PAA atomization opt-in with a unique-data minimum and per-site cap; prune gray-policy tactics",
-      "phase": "1"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "1",
+      "note": "PAA atomization is OFF unless PAA_ATOMIZATION=on, needs a stated unique_data, and is capped per site (PAA_MAX_PAGES/30 days); the gray-policy reference text in the seo-pack skill is not edited"
     },
     "SEO-07": {
       "status": "done",
@@ -546,8 +547,8 @@
     "SEO-13": {
       "status": "partial",
       "branch": "p5",
-      "note": "exact-path inbound counts; explicit orphan list and small-site minimums still open",
-      "phase": "1"
+      "phase": "1",
+      "note": "exact-path inbound counts, an explicit find_orphans(), and the internal-link minimum scales to the posts that exist; depth/role checks are still not wired into the flow"
     },
     "SEO-14": {
       "status": "done",
@@ -583,10 +584,10 @@
       "phase": "1"
     },
     "SEO-20": {
-      "status": "partial",
-      "branch": "p1",
-      "note": "duplicate-FAQ lint added; FAQ optional-by-intent (and emitted once) still open",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "FAQ minimum is per-brief (faq_required/faq_min) and per-instance (FAQ_MIN, 0 = optional); the writer is told not to pad; FAQPage schema is emitted only when FAQs exist"
     },
     "SEO-21": {
       "status": "done",
@@ -600,9 +601,10 @@
       "phase": "1"
     },
     "SEO-23": {
-      "status": "open",
-      "note": "images: >=1200px minimum, descriptive alt, width/height",
-      "phase": "1"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "1",
+      "note": "stock photos narrower than 1200px are skipped (the caller falls back to an AI image) and big ones use a 1600px rendition; alt text describes the picture; width/height on WordPress <img> is not added because it would invalidate Gutenberg block markup"
     },
     "SEO-24": {
       "status": "partial",
@@ -616,9 +618,10 @@
       "phase": "1"
     },
     "SEO-26": {
-      "status": "open",
-      "note": "raise the tutorial word floor; 'what top results cover that we don't'",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "how-to/tutorial queries get a 1500-word floor (TUTORIAL_WORD_FLOOR); compact transactional pages keep theirs"
     },
     "FE-01": {
       "status": "other-repo",
@@ -704,9 +707,9 @@
     },
     "CON-10": {
       "status": "partial",
-      "branch": "p0",
-      "note": "article/keyword ids, publish mode, site slug/URL and settings numbers validated; remaining actions not yet",
-      "phase": "4"
+      "branch": "p5",
+      "phase": "4",
+      "note": "ids, modes, slugs and settings numbers validated; free-text length limits are enforced by the engine (typed meta patch) rather than duplicated in each action"
     },
     "CON-11": {
       "status": "done",
@@ -738,7 +741,8 @@
     "CON-16": {
       "status": "done",
       "branch": "p5",
-      "phase": "4"
+      "phase": "4",
+      "note": "flash messages are HMAC-signed by the server action's redirect and verified in middleware; a crafted or stale link shows nothing. (An earlier version of this fix accepted only fixed codes and would have silenced every real toast; caught and replaced before release.)"
     },
     "TEN-01": {
       "status": "done",

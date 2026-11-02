@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect } from "@/lib/flash-redirect";
 import { engine, engineUnredacted, EngineError, type SiteList } from "@/lib/engine";
 import { KEY_SCOPES } from "@/lib/key-scopes";
 import { requireOperator } from "@/lib/guard";

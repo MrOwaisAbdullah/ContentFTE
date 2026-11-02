@@ -610,3 +610,37 @@ def test_log_coverage_git_can_be_disabled_and_push_retries_after_rebase():
     src = open("scripts/run_stage.py", encoding="utf-8").read()
     assert 'LOG_COVERAGE_GIT' in src and '"pull", "--rebase", "--autostash"' in src
     assert src.index("LOG_COVERAGE_GIT") < src.index('_run_git("add"')       # the opt-out comes before any git write
+
+
+# ---- SEO-23: stock images must be big enough and described -----------------------------------------------------
+def test_descriptive_alt_never_says_stock_image():
+    from tools.tools import descriptive_alt
+    assert descriptive_alt("A barista pouring espresso into a white cup", "coffee maker") == \
+        "A barista pouring espresso into a white cup"
+    assert descriptive_alt("", "coffee maker") == "Photo illustrating coffee maker"
+    assert descriptive_alt("cup", "coffee maker") == "Photo illustrating coffee maker"      # one word is not a description
+    assert "stock" not in descriptive_alt(None, "x").lower()
+
+
+def test_undersized_stock_photos_are_skipped_and_big_ones_get_a_1600px_rendition(monkeypatch):
+    import tools.tools as t
+    monkeypatch.setenv("PEXELS_API_KEY", "k")
+    monkeypatch.delenv("STOCK_MIN_WIDTH", raising=False)
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"photos": [
+                {"id": 1, "width": 525, "height": 350, "alt": "", "src": {"large": "https://p/small.jpg", "original": "https://p/o1.jpg"}},
+                {"id": 2, "width": 4000, "height": 2667, "alt": "Laptop on a desk beside a notebook and coffee",
+                 "src": {"large": "https://p/l2.jpg", "original": "https://p/o2.jpg"}},
+            ]}
+
+    monkeypatch.setattr(t.requests, "get", lambda *a, **k: R())
+    got = t._fetch_stock_candidates("laptop", count=5)
+    assert [c["photo_id"] for c in got] == [2]
+    assert got[0]["image_url"] == "https://p/o2.jpg?auto=compress&cs=tinysrgb&w=1600"
+    assert got[0]["width"] == 4000 and got[0]["alt_text"].startswith("Laptop on a desk")
+    monkeypatch.setenv("STOCK_MIN_WIDTH", "0")
+    assert {c["photo_id"] for c in t._fetch_stock_candidates("laptop", count=5)} == {1, 2}

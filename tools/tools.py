@@ -524,6 +524,27 @@ def _clean_stock_query(topic: str) -> List[str]:
     return variants
 
 
+def stock_min_width() -> int:
+    """Smallest acceptable stock photo width in pixels (STOCK_MIN_WIDTH, default 1200). The hero doubles as the
+    1200x630 Open Graph image; a 525x350 stock photo upscaled to that is soft on every social card (SEO-23).
+    Photos narrower than this are skipped, so the caller falls through to an AI-generated image instead."""
+    try:
+        return max(0, int(os.environ.get("STOCK_MIN_WIDTH") or 1200))
+    except ValueError:
+        return 1200
+
+
+def descriptive_alt(photo_alt: str, keyword: str) -> str:
+    """Alt text that describes the picture. A photographer's own caption is used when it is a real sentence
+    (>= 4 words); otherwise it is built from the topic. It never ends in "stock image/photo" - that is a label
+    for us, not a description for a screen-reader user (SEO-23)."""
+    alt = " ".join((photo_alt or "").split())
+    if len(alt.split()) >= 4:
+        return alt[:200]
+    topic = " ".join((keyword or "").split()) or "the topic"
+    return f"Photo illustrating {topic}"[:200]
+
+
 def _fetch_stock_candidates(keyword: str, count: int = 5) -> List[Dict[str, Any]]:
     """Fetches stock image candidates across visual query variants from Pexels."""
     api_key = os.environ.get('PEXELS_API_KEY', '')
@@ -548,15 +569,28 @@ def _fetch_stock_candidates(keyword: str, count: int = 5) -> List[Dict[str, Any]
                 if pid in seen_ids:
                     continue
                 seen_ids.add(pid)
-                img_url = (photo.get('src', {}).get('large') or photo.get('src', {}).get('medium', '')).replace('\\\\', '/').replace(' ', '%20')
+                min_w = stock_min_width()
+                try:
+                    width, height = int(photo.get('width') or 0), int(photo.get('height') or 0)
+                except (TypeError, ValueError):
+                    width = height = 0
+                if min_w and width and width < min_w:
+                    continue          # too small to use as the hero / OG image without upscaling (SEO-23)
+                src = photo.get('src', {})
+                big = src.get('original') or ''
+                # `large` is only ~940px wide; for a hero ask Pexels' CDN for a 1600px rendition of the original
+                img_url = ((big + "?auto=compress&cs=tinysrgb&w=1600") if big and width >= min_w else
+                           (src.get('large') or src.get('medium', ''))).replace('\\\\', '/').replace(' ', '%20')
                 if img_url and not img_url.startswith('http'):
                     img_url = 'https://' + img_url.lstrip('https://').lstrip('http://')
                 if img_url:
                     candidates.append({
                         "image_url": img_url,
-                        "alt_text": photo.get('alt') or f"{keyword} stock photo",
+                        "alt_text": descriptive_alt(photo.get('alt'), keyword),
                         "source": "Pexels",
-                        "photo_id": pid
+                        "photo_id": pid,
+                        "width": width,
+                        "height": height
                     })
                 if len(candidates) >= count:
                     return candidates
@@ -583,7 +617,7 @@ def _fetch_stock_image(keyword: str, slot: str = "") -> Dict[str, Any]:
         )
         return {
             "image_url": image_url,
-            "alt_text": first.get("alt_text", f"{keyword} stock image"),
+            "alt_text": first.get("alt_text") or descriptive_alt("", keyword),
             "source": "Pexels",
             "evaluation_score": 8.5,
             "feedback": "High quality stock photo from Pexels"

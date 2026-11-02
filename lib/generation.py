@@ -13,7 +13,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from lib.brief_templates import (secondary_keywords_block, template_for,
+from lib.brief_templates import (faq_min_for, secondary_keywords_block, template_for,
                                  template_text, word_floor_for)
 from lib.run_result_utils import loads_lenient
 
@@ -204,7 +204,7 @@ def render_prompt(brief: dict) -> str:
     today = datetime.now(timezone.utc)
     year = today.year
     intent = str(brief.get("template_intent") or brief.get("intent") or "")
-    min_words = word_floor_for(intent)
+    min_words = word_floor_for(intent, str(brief.get("keyword") or brief.get("primary_keyword") or ""))
     target = str(template_for(intent).get("word_target", "1500-2500"))
     internal_links = brief.get("internal_links") or []
     sources = brief.get("sources") or []
@@ -234,7 +234,10 @@ def render_prompt(brief: dict) -> str:
         f"{target} — length matches intent; a flagship informational post "
         "should aim 1500-2500). Short drafts are rejected and re-run.",
         "- Structure: TL;DR near the top (first ~800 chars), `## Sources` "
-        "as the LAST section, 3+ FAQs, question-form H2s.",
+        "as the LAST section, "
+        + (f"{faq_min_for(brief)}+ FAQs" if faq_min_for(brief) else
+           "FAQs only if real searchers ask those questions (otherwise none - do not pad)")
+        + ", question-form H2s.",
         "- Close with a `## Bottom Line` section (60-100 words) placed "
         "immediately BEFORE `## Sources`: a decisive verdict/answer that "
         "summarizes the takeaway and includes 1-2 of the internal links "

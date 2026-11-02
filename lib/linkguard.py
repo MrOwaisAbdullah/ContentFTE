@@ -126,8 +126,13 @@ def check_hygiene(
     max_exact_anchor: int = 2,
     min_external: int = 1,
     max_external: int = 3,
+    available_internal: Optional[int] = None,
 ) -> Dict:
     """Spec §5.6 link hygiene report.
+
+    ``available_internal`` is how many OTHER posts the site actually has to link to. The 3-8 internal-link
+    minimum used to deadlock a site with fewer than three posts (no draft could ever pass); the minimum is
+    now capped at what exists (SEO-13). ``None`` keeps the fixed minimum.
 
     Returns a dict with ``pass`` (bool), counts, duplicate anchors and
     ``guidance`` (actionable fixes for the generator). ``pass`` enforces:
@@ -135,6 +140,8 @@ def check_hygiene(
     [min_external, max_external], and no exact-match anchor repeated
     more than ``max_exact_anchor`` times.
     """
+    if available_internal is not None:
+        min_internal = max(0, min(min_internal, int(available_internal)))
     links = extract_links(markdown or "")
     classified = classify_links(links, base_url=base_url)
     internal = classified["internal"]
@@ -222,6 +229,25 @@ def inbound_counts(
                     break
         counts[slug] = total
     return counts
+
+
+def find_orphans(pages: Iterable[str], source_hrefs: Dict[str, List[str]], *, home: str = "/") -> List[str]:
+    """Pages (paths) that NO other page links to - the explicit orphan list (SEO-13).
+
+    ``pages`` are the site's article paths (``/blog/x``); ``source_hrefs`` maps each page to every href found in
+    its body. A page counts as linked when another page (never itself, never the home page's own listing
+    unless the home page is in ``source_hrefs``) points at exactly that path (host, query, fragment and a
+    trailing slash are ignored). Returned sorted, so the result is stable and diffable."""
+    targets = {path_key(p) for p in pages if path_key(p)}
+    linked: set = set()
+    for source, hrefs in (source_hrefs or {}).items():
+        src = path_key(source)
+        for href in hrefs or []:
+            key = path_key(href)
+            if key and key != src:
+                linked.add(key)
+    home_key = path_key(home) or "/"
+    return sorted(t for t in targets if t not in linked and t != home_key)
 
 
 def rescue_order(

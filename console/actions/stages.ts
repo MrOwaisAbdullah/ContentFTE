@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect } from "@/lib/flash-redirect";
 import { engine, EngineError } from "@/lib/engine";
 import { requireOperator } from "@/lib/guard";
 

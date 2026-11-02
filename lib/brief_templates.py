@@ -12,6 +12,7 @@ onpage-aeo "length matches intent": compact buyer-intent pages are
 from __future__ import annotations
 
 import os
+import re
 
 TEMPLATES: dict[str, dict] = {
     "informational": {
@@ -206,18 +207,58 @@ def template_for(intent: str) -> dict:
     return {"intent": key, **tpl}
 
 
-def word_floor_for(intent: str) -> int:
+_TUTORIAL_RE = re.compile(
+    r"\b(how to|how do i|tutorial|step[- ]by[- ]step|guide to|build(ing)? (a|an|your)|set ?up|"
+    r"implement(ing|ation)?|from scratch|walkthrough)\b", re.I)
+TUTORIAL_FLOOR = 1500
+
+
+def faq_min_for(brief: dict | None = None) -> int:
+    """How many FAQs a draft must carry (SEO-20). Default 3.
+
+    A FAQ block on EVERY post is a template footprint: Google stopped rewarding FAQ rich results, and a uniform
+    "5 questions at the bottom" tells readers and classifiers the page was stamped out. So it is a setting:
+    `brief["faq_required"] = false` (or `brief["faq_min"] = N`) per article, `FAQ_MIN` env per instance
+    (0 = optional everywhere). When it is 0 the writer is told to include FAQs only for questions people
+    really ask, and FAQPage JSON-LD is emitted only when FAQs exist (it already is)."""
+    brief = brief if isinstance(brief, dict) else {}
+    if brief.get("faq_required") is False:
+        return 0
+    for raw in (brief.get("faq_min"), os.environ.get("FAQ_MIN")):
+        try:
+            if raw not in (None, ""):
+                return max(0, min(10, int(raw)))
+        except (TypeError, ValueError):
+            continue
+    return 3
+
+
+def is_tutorial_query(keyword: str) -> bool:
+    return bool(_TUTORIAL_RE.search(keyword or ""))
+
+
+def word_floor_for(intent: str, keyword: str = "") -> int:
     """Deterministic word floor for a brief (pack onpage-aeo "length matches
     intent"): the intent template's `word_floor`, overridable by an explicit
     `GEN_MIN_WORDS` env (operator hard override, e.g. flagship-only sites).
-    """
+
+    A how-to / tutorial query ("how to build...", "step by step", "set up...") raises an informational or
+    commercial floor to TUTORIAL_WORD_FLOOR (default 1500): the pages that rank for those hold working steps and
+    code, and 900 words is below what the competitors that win them publish (SEO-26). Compact transactional
+    pages keep their own floor."""
     env = (os.environ.get("GEN_MIN_WORDS") or "").strip()
     if env:
         try:
             return int(env)
         except ValueError:
             pass
-    return int(template_for(intent).get("word_floor", _DEFAULT_FLOOR))
+    floor = int(template_for(intent).get("word_floor", _DEFAULT_FLOOR))
+    if floor >= _DEFAULT_FLOOR and is_tutorial_query(keyword):
+        try:
+            return max(floor, int(os.environ.get("TUTORIAL_WORD_FLOOR") or TUTORIAL_FLOOR))
+        except ValueError:
+            return max(floor, TUTORIAL_FLOOR)
+    return floor
 
 
 def template_text(intent: str) -> str:

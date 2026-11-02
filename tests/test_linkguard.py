@@ -133,3 +133,24 @@ def test_inbound_counts_match_the_whole_path_not_a_substring():
         ["ai", "ai-agents", "agents"],
     )
     assert counts == {"ai": 1, "ai-agents": 1, "agents": 0}
+
+
+def test_minimum_internal_links_scale_to_what_the_site_has():
+    """SEO-13: a site with 1 other post must not be asked for 3 internal links (it deadlocked drafts)."""
+    from lib.linkguard import check_hygiene
+    md = "Read [our guide](/blog/guide) and the [source](https://ext.example/a)."
+    assert check_hygiene(md, base_url="https://s.test")["pass"] is False                  # fixed minimum of 3
+    assert check_hygiene(md, base_url="https://s.test", available_internal=1)["pass"] is True
+    assert check_hygiene("no links", base_url="https://s.test", available_internal=0)["internal_count"] == 0
+
+
+def test_find_orphans_lists_pages_nothing_links_to():
+    from lib.linkguard import find_orphans
+    pages = ["/blog/a", "/blog/b", "/blog/c", "/blog/ai", "/blog/ai-agents"]
+    hrefs = {
+        "/blog/a": ["https://s.test/blog/b", "/blog/a"],            # a's self-link does not count
+        "/blog/b": ["/blog/ai-agents/#faq"],
+        "/blog/c": [],
+    }
+    assert find_orphans(pages, hrefs) == ["/blog/a", "/blog/ai", "/blog/c"]
+    assert find_orphans(["/", "/blog/x"], {}, home="/") == ["/blog/x"]

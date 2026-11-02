@@ -1200,12 +1200,13 @@ def _content_checks(*, content: str, title: str, summary: str,
     failures report. The word floor is intent-aware (`word_floor_for` —
     compact buyer-intent pages floor at their template's 400-500, flagship
     informational at 900) with `GEN_MIN_WORDS` as an operator override."""
-    from lib.brief_templates import word_floor_for
+    from lib.brief_templates import faq_min_for, word_floor_for
     from lib.seo_keywords import check_keywords, parse_keywords
 
     words = len((content or "").split())
     min_words = word_floor_for(
-        str(brief.get("template_intent") or brief.get("intent") or ""))
+        str(brief.get("template_intent") or brief.get("intent") or ""),
+        str(brief.get("keyword") or brief.get("primary_keyword") or ""))
     md_links = re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", content or "")
     site_base = str(brief.get("site_base_url") or "").rstrip("/")
     internal = [l for l in md_links if site_base and l.startswith(site_base)]
@@ -1217,7 +1218,8 @@ def _content_checks(*, content: str, title: str, summary: str,
         "words": {"pass": words >= min_words, "value": words, "need": min_words},
         "tldr": {"pass": bool(re.search(r"TL\s*;?\s*DR", (content or "")[:800], re.I))},
         "sources": {"pass": bool(re.search(r"^##[ \t]+Sources\b", content or "", re.M | re.I))},
-        "faqs": {"pass": len(faqs or []) >= 3, "value": len(faqs or []), "need": 3},
+        "faqs": {"pass": len(faqs or []) >= faq_min_for(brief), "value": len(faqs or []),
+                 "need": faq_min_for(brief)},
         "stale_year": {"pass": not stale_re.search(title or "")
                        and not stale_re.search(content or "")},
         "summary": {"pass": 0 < len((summary or "").strip()) <= 160,

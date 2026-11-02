@@ -1,5 +1,5 @@
 import "server-only";
-import { redirect } from "next/navigation";
+import { redirect } from "./flash-redirect";
 import { currentInstance } from "./instances";
 import { INSTANCE_FIELD, instanceMismatchMessage } from "./instance-guard";
 import { requireSession } from "./session";
@@ -13,5 +13,5 @@ export async function requireOperator(formData: FormData, returnTo = "/"): Promi
   await requireSession();
   const current = await currentInstance();
   const problem = instanceMismatchMessage(String(formData.get(INSTANCE_FIELD) ?? ""), current.name);
-  if (problem) redirect(`${returnTo}?err=instance_changed`);   // a code, not text (CON-16)
+  if (problem) redirect(`${returnTo}?err=${encodeURIComponent(problem)}`);
 }
