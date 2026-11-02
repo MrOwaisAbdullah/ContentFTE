@@ -272,6 +272,26 @@ class ApiKey(Base):
     site: Mapped[Site] = relationship()
 
 
+class DeliveryOutbox(Base):
+    """A custom-site webhook delivery that did not succeed on the first try, kept for retry (lib/outbox.py)."""
+
+    __tablename__ = "delivery_outbox"
+    __table_args__ = (Index("ix_outbox_status_next", "status", "next_attempt_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    article_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    delivery_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, default="")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(12), default="pending")      # pending | delivered | dead
+    last_error: Mapped[str] = mapped_column(String(300), default="")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Lease(Base):
     """A time-limited exclusive claim on a named operation ("publish:42"), shared by every worker process
     (lib/lease.py). The UNIQUE key is the lock; `expires_at` lets a crashed holder's claim lapse."""

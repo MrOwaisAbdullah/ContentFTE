@@ -3048,6 +3048,15 @@ def _deliver_to_custom_site(art: ArticleModel) -> dict | None:
         payload["article_id"] = art.id
         payload["event"] = "article.published"
         res = custom_site.deliver(payload, webhook_url=url, secret=secret)
+        if res.get("status") != "ok":
+            # Not delivered: keep it for a later retry (survives a crash and a down site) instead of losing it.
+            try:
+                from lib import outbox
+                outbox.enqueue(art.site_id, art.id, url, payload, res.get("delivery_id") or "",
+                               str(res.get("message") or ""))
+                res = {**res, "queued": True}
+            except Exception as exc:  # noqa: BLE001
+                res = {**res, "queued": False, "queue_error": type(exc).__name__}
         s = get_session()
         try:
             s.add(AuditLog(article_id=art.id, site_id=art.site_id, action="article.delivery",

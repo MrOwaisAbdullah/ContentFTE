@@ -61,7 +61,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | - | 7 | - | - | - | 15 | 11 |
 | 2 - Tenant context, auth and secrets | 4 | - | 1 | 2 | 4 | 16 | 11 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 12 |
+| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 11 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -177,7 +177,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 30 of 42 done, 7 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 31 of 42 done, 6 partly done, 5 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
@@ -186,7 +186,7 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [x] **ADP-01** (High) Sanity uses createIfNotExists with _id = post-{slug}: a retry with new content, or a different article with th… - Sanity publish compares a content hash and engine article id: unchanged = reported no-op, changed = revision-guarded patch, other article/Studio post on the slug = explicit conflict; SANITY_PUBLISH_AS_DRAFT option - `phase5-pipeline-adapters`
 - [~] **ADP-02** (High) wp_render.inline() is regex-based: linked images become <a>\x000\x00</a> (NUL leak, image lost); two code span… - inline renderer fixed (linked images, code spans, nested lists, balanced-paren URLs); a full markdown AST (markdown-it-py) is still the cleaner end state - `phase5-pipeline-adapters`
 - [x] **ADP-03** (High) _ensure_term: WP returns HTML-encoded names (Tips &amp; Tricks), so equality fails, the POST returns 400 term_… - `phase4-remaining-hardening`
-- [~] **ADP-04** (High) Custom-site delivery: deliver() has no callers, posts unsigned JSON to a process-global URL with no retry, del… - signed, retried, per-site delivery wired into publish; a persistent outbox (survives a crash mid-retry) is still open - `phase5-pipeline-adapters`
+- [x] **ADP-04** (High) Custom-site delivery: deliver() has no callers, posts unsigned JSON to a process-global URL with no retry, del… - custom-site deliveries are HMAC-signed with a delivery id, retried, per-site URL/secret, and a failed one is stored in a persistent outbox and retried with backoff under the same id (scripts/process_outbox.py; give-up raises an alert). Schedule the processor. - `phase5-pipeline-adapters`
 - [x] **TEN-03** (High) Spend control: search tools call meter() without a site → in shared mode get_or_create_site("") raises and the… - per-site monthly USD cap and a per-site Tavily budget - `phase5-pipeline-adapters`
 - [ ] **TEN-04** (High) Scheduler = single-site Actions pipeline: fixed crons, run_stage.py has no --site, one concurrency group, ~15 … - DB job queue + scheduler honouring cadence; retire the single-site Actions cron
 - [~] **TEN-05** (High) Discord bot isn't tenant-aware (one store behind a channel allow-list) - user allow-list done; one bot serving many sites (guild -> site routing) still open - `phase4-remaining-hardening`
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 30 of 42 done, 7 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 31 of 42 done, 6 partly done, 5 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

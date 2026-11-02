@@ -42,6 +42,19 @@ def collect_alerts(now: datetime | None = None) -> List[Dict[str, Any]]:
         alerts.append(_alert("critical", "not_ready", "", f"readiness check raised {type(exc).__name__}"))
 
     try:
+        from lib.outbox import pending_summary
+        ob = pending_summary()
+        if ob["dead"]:
+            alerts.append(_alert("critical", "delivery_failed", "",
+                                 f"{ob['dead']} site delivery(ies) gave up after every retry; the site never "
+                                 "received those articles (re-publish them, or fix the site's webhook)"))
+        elif ob["pending"] >= 20:
+            alerts.append(_alert("warning", "delivery_backlog", "",
+                                 f"{ob['pending']} site deliveries are waiting to be retried"))
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
         init_db()
         s = get_session()
         try:

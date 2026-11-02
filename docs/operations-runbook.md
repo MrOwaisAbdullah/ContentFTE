@@ -13,6 +13,7 @@ them changes behaviour for an instance that ignores them.
 | Backups | `python scripts/backup_db.py --dir <path> --keep 14` (SQLite online backup, or `pg_dump`) | Schedule it. On Neon also enable point-in-time restore in the project settings. |
 | Schema changes | Alembic (`alembic.ini`, `migrations/`); baseline `0001` | `uv sync --extra migrations`. Existing database: `alembic stamp 0001`. New change: add a numbered file in `migrations/versions/`, then `alembic upgrade head`. |
 | Secrets in the database | Fernet encryption of WordPress password, IndexNow/Bing keys, Discord webhook, delivery secret | `SECRETS_KEY=...`, then `python scripts/encrypt_site_secrets.py` (see `.env.example`). |
+| Site deliveries | A custom-site webhook that fails on publish is queued in `delivery_outbox` and retried (1m, 2m, 4m ... up to 6h, 8 attempts) under the same delivery id; giving up raises a `delivery_failed` alert | Schedule `python scripts/process_outbox.py` every few minutes. |
 | Several workers | Publish / generate / stage runs and `Idempotency-Key` replay are single-flight across processes (database leases) | Automatic. |
 
 ## Restoring

@@ -428,10 +428,10 @@
       "phase": "3"
     },
     "ADP-04": {
-      "status": "partial",
+      "status": "done",
       "branch": "p5",
-      "note": "signed, retried, per-site delivery wired into publish; a persistent outbox (survives a crash mid-retry) is still open",
-      "phase": "3"
+      "phase": "3",
+      "note": "custom-site deliveries are HMAC-signed with a delivery id, retried, per-site URL/secret, and a failed one is stored in a persistent outbox and retried with backoff under the same id (scripts/process_outbox.py; give-up raises an alert). Schedule the processor."
     },
     "ADP-05": {
       "status": "partial",

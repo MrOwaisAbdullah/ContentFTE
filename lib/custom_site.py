@@ -153,6 +153,7 @@ def deliver(
     max_attempts: int = 3,
     backoff: float = 1.5,
     sleep: Callable[[float], None] = time.sleep,
+    delivery_id: str = "",
 ) -> Dict[str, Any]:
     """POST the payload to the site's publish webhook. Best-effort; never raises.
 
@@ -172,7 +173,7 @@ def deliver(
                 "message": "no SITE_PUBLISH_WEBHOOK configured — use the SDK pull route instead"}
     secret = (secret or os.environ.get("SITE_PUBLISH_SECRET") or "").strip()
     body = canonical_body(payload)
-    delivery_id = str(uuid.uuid4())
+    delivery_id = delivery_id or str(uuid.uuid4())      # a queued retry passes its original id back in
     last = "no attempt made"
     for attempt in range(1, max(1, max_attempts) + 1):
         headers = {"Content-Type": "application/json; charset=utf-8", DELIVERY_HEADER: delivery_id,
