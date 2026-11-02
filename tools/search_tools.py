@@ -6,6 +6,7 @@ from agents import function_tool
 from typing import List, Optional, Dict, Any, Union
 import requests
 from lib.safe_fetch import safe_get
+from tools import url_guard
 from bs4 import BeautifulSoup
 
 # Tavily client. It used to be built at import time and RAISED when TAVILY_API_KEY was unset, so any
@@ -70,6 +71,7 @@ async def tavily_search_tool(query: str, max_results: int = 5, topic: str = "gen
         if time_range:
             kwargs["time_range"] = time_range
         response = await tavily_client.search(query, **kwargs)
+        url_guard.remember_results(r.get("url", "") for r in response.get("results", []))
         return {
             "query": response.get("query", query),
             "results": [
@@ -99,6 +101,11 @@ async def tavily_extract_tool(urls: List[str], include_images: bool = False) -> 
         Union[List[Dict[str, Any]], Dict[str, Any]]: A list of dictionaries containing url and content for each URL,
                                                      or a dict with an 'error' key if an exception occurs.
     """
+    urls = list(urls or [])[:url_guard.MAX_EXTRACT_URLS]
+    for u in urls:
+        refusal = url_guard.check_model_url(u)
+        if refusal:
+            return {"error": f"Refused to extract '{u[:80]}': {refusal}", "results": []}
     try:
         from lib.tavily_meter import meter
         status = meter(n=max(1, len(urls)))
@@ -143,9 +150,13 @@ async def tavily_crawl_tool(start_url: str, max_depth: int = 2, limit: int = 10,
         Union[List[Dict[str, Any]], Dict[str, Any]]: A list of dictionaries containing url and raw_content for each crawled page,
                                                      or a dict with an 'error' key if an exception occurs.
     """
+    refusal = url_guard.check_model_url(start_url)
+    if refusal:
+        return {"error": f"Refused to crawl '{(start_url or '')[:80]}': {refusal}", "results": []}
+    max_depth, limit = url_guard.clamp_crawl(max_depth, limit)       # the model chose these numbers
     try:
         from lib.tavily_meter import meter
-        status = meter()
+        status = meter(n=url_guard.crawl_cost(limit))
         if not status.get("allowed"):
             return {"error": "Tavily budget exhausted for this site this month — "
                              "pause and flag.", "paused": True, **status}
@@ -176,6 +187,9 @@ def fetch_url_title(url: str) -> str:
     Returns:
         str: The title of the webpage, or the URL itself if the title cannot be fetched.
     """
+    refusal = url_guard.check_model_url(url)
+    if refusal or not url_guard.allow_title_fetch():
+        return url      # callers treat "the URL itself" as "title unavailable"
     try:
         # `url` is chosen by the model (and may come from untrusted pages): fetch it safely, capped at 2 MB.
         response = safe_get(url, timeout=5, max_bytes=2 * 1024 * 1024)

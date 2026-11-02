@@ -4,7 +4,8 @@ import requests
 from lib.redact import redact_headers
 from lib.safe_fetch import safe_get
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+import hashlib
 import logging
 import json
 import uuid
@@ -18,6 +19,28 @@ from lib.markdown_parser import markdown_to_sanity_blocks
 # Configure logging for this module
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def _truthy(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Fields that define "the content of this post" for change detection. Publishing metadata (timestamps, the hash
+# itself) is excluded, so re-sending identical content with a new publishedAt is still "unchanged".
+_FINGERPRINT_FIELDS = ("title", "summary", "slug", "categories", "content", "faqs", "focusKeyword",
+                       "secondaryKeywords", "seoTitle", "seoDescription", "tldr", "mainImage", "author")
+
+
+def content_fingerprint(document: Dict[str, Any]) -> str:
+    """Stable hash of a post document's content fields (key order and Portable Text `_key`s ignored)."""
+    def scrub(v):
+        if isinstance(v, dict):
+            return {k: scrub(x) for k, x in sorted(v.items()) if k != "_key"}
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        return v
+    payload = {k: scrub(document.get(k)) for k in _FINGERPRINT_FIELDS if k in document}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
 
 class SanityAdapter:
     """A reusable adapter for posting content to Sanity.io, handling schema correctly."""
@@ -496,6 +519,67 @@ class SanityAdapter:
 
 
     # Inside your SanityAdapter class
+
+    def _find_existing_post(self, doc_id: str, slug: str) -> Optional[Dict[str, Any]]:
+        """The document that already owns this id, or - for a Studio-authored post with a random id - this
+        slug. Returns {_id, _rev, contentHash, engineArticleId, publishedAt} or None."""
+        query = ('*[_type == "post" && (_id == $id || slug.current == $slug)][0]'
+                 '{_id, _rev, contentHash, engineArticleId, publishedAt}')
+        url = self._build_query_endpoint(query, {"id": doc_id, "slug": slug})
+        resp = self._make_request("GET", url, data=None, max_retries=2)
+        resp.raise_for_status()
+        return resp.json().get("result") or None
+
+    def upsert_post_document(self, document: Dict[str, Any]) -> Dict[str, Any]:
+        """Create the post, or bring an existing one up to date - never silently do nothing.
+
+        `createIfNotExists` alone (what this used to be) reports success when the id already exists and writes
+        NOTHING: a retry carrying corrected content, or a different article that slugifies to the same slug,
+        looked published and was not (ADP-01). Now:
+          * nothing there            -> createIfNotExists
+          * same content hash        -> success, `unchanged: True` (the idempotent retry case)
+          * same engine article id   -> patch the changed fields, guarded by ifRevisionID
+          * a DIFFERENT article, or a Studio-authored post, owns the slug -> an explicit `slug_conflict` error
+        """
+        doc_id = document.get("_id") or ""
+        slug = (document.get("slug") or {}).get("current", "")
+        base_id = doc_id[len("drafts."):] if doc_id.startswith("drafts.") else doc_id
+        try:
+            existing = self._find_existing_post(doc_id, slug)
+        except Exception as e:  # noqa: BLE001 - if we cannot look, fall back to the safe create-if-missing
+            logger.warning(f"[SanityAdapter.upsert_post_document] existence check failed ({e}); using createIfNotExists")
+            return self.create_document(document)
+        if existing is None:
+            return self.create_document(document)
+
+        ours = str(document.get("engineArticleId") or "")
+        theirs = str(existing.get("engineArticleId") or "")
+        same_doc = existing.get("_id") in (doc_id, base_id, f"drafts.{base_id}")
+        if existing.get("contentHash") and existing.get("contentHash") == document.get("contentHash") and same_doc:
+            return {"success": True, "document_id": existing["_id"], "unchanged": True}
+        owned = same_doc and (not ours or not theirs or ours == theirs)
+        if not owned:
+            return {"success": False, "slug_conflict": True, "existing_id": existing.get("_id"),
+                    "error": (f"slug '{slug}' is already used by another post ({existing.get('_id')}"
+                              f"{', engine article ' + theirs if theirs else ', authored in Studio'}). "
+                              "Choose a different slug or update that post deliberately.")}
+        patch_fields = {k: v for k, v in document.items()
+                        if k not in ("_id", "_type", "publishedAt")}      # keep the original first-published date
+        patch: Dict[str, Any] = {"id": existing["_id"], "set": patch_fields}
+        if existing.get("_rev"):
+            patch["ifRevisionID"] = existing["_rev"]
+        try:
+            resp = self._make_request("POST", f"/data/mutate/{self.dataset}",
+                                      data={"mutations": [{"patch": patch}]}, max_retries=3)
+            resp.raise_for_status()
+            return {"success": True, "document_id": existing["_id"], "updated": True}
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                return {"success": False, "conflict": True,
+                        "error": "The post changed in Sanity while it was being updated; nothing was overwritten. Retry."}
+            return {"success": False, "error": f"Update failed: {e}"}
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": f"Update failed: {e}"}
 
     def create_document(self, document: Dict[str, Any], max_retries: int = 3) -> Dict[str, Any]:
         """
@@ -1071,7 +1155,8 @@ class SanityAdapter:
                   local_image_path: str, slug: str, alt_text: str, faqs: List[Dict[str, str]],
                   focus_keyphrase: str = "", seo_title: str = "",
                   seo_description: str = "", tldr: str = "",
-                  secondary_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+                  secondary_keywords: Optional[List[str]] = None,
+                  engine_article_id: Optional[Union[int, str]] = None) -> Dict[str, Any]:
         """
         Posts a blog post to Sanity CMS, correctly mapping fields to the 'post' schema, including FAQs.
         Uses the markdown_to_sanity_blocks parser for content.
@@ -1286,6 +1371,14 @@ class SanityAdapter:
             # live: plain `create` with no client _id let every one of those
             # paths mint a fresh random-ID duplicate post on the site.
             doc_id = f"post-{slug}"
+            # Draft mode (ADP-01): SANITY_PUBLISH_AS_DRAFT=1 writes `drafts.<id>` so an editor reviews the
+            # post in Studio before it goes live. SANITY_REQUIRE_IMAGE=1 does the same automatically for a post
+            # with no featured image - the schema requires mainImage, so a live doc without one is invalid in
+            # Studio (the 2026-10-08 incident class) - instead of publishing it broken (ADP-14).
+            as_draft = _truthy(os.environ.get("SANITY_PUBLISH_AS_DRAFT")) or (
+                _truthy(os.environ.get("SANITY_REQUIRE_IMAGE")) and not image_asset_id)
+            if as_draft:
+                doc_id = f"drafts.{doc_id}"
 
             document = {
                 "_type": "post",
@@ -1328,8 +1421,16 @@ class SanityAdapter:
             else:
                 logger.warning(f"Document {doc_id} created without a mainImage (flagged no-image publish).")
 
-            # 8. Create Document
-            create_result = self.create_document(document)
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            document["publishedAt"] = now_iso
+            document["updatedAt"] = now_iso
+            document["canonicalUrl"] = full_url
+            if engine_article_id:
+                document["engineArticleId"] = str(engine_article_id)
+            document["contentHash"] = content_fingerprint(document)
+
+            # 8. Create or update (idempotent, never a silent no-op on changed content)
+            create_result = self.upsert_post_document(document)
 
             # Inside SanityAdapter.post_blog, after create_result = self.create_document(...)
             logger.debug(f"[SanityAdapter.post_blog] create_document returned: {create_result}")

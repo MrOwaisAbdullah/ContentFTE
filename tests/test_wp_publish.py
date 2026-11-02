@@ -465,3 +465,34 @@ def test_wp_post_unconfigured(monkeypatch):
     out = service.wp_post(99)  # fixture deleted WP_* env
     assert "error" in out and "not configured" in out["error"]
     assert _FakeConnector.instances == []
+
+
+def test_refreshing_an_elementor_page_rewrites_its_elementor_document(monkeypatch):
+    """ADP-09: an Elementor page renders from _elementor_data, so a refresh that only updates post_content
+    left the visible page stale."""
+    from sdk import service
+
+    saved = []
+
+    class _FakeElementor:
+        def __init__(self, cfg):
+            pass
+
+        def save_document(self, post_id, elements, **kw):
+            saved.append((post_id, elements, kw))
+            return {"ok": True, "id": post_id, "saved_elements": len(elements)}
+
+    monkeypatch.setattr("lib.elementor.ElementorClient", _FakeElementor)
+    _wp_env(monkeypatch)
+    _FakeConnector.existing_terms = {"categories": ["AI Agents"], "tags": []}
+    elementor_id = _approved_article(status="published", keyword="el kw", title="Elementor Post",
+                                     meta={"wp_post_id": 41, "render_target": "elementor"})
+    plain_id = _approved_article(status="published", keyword="plain kw", title="Plain Post",
+                                 meta={"wp_post_id": 42})
+
+    assert service.refresh_article(plain_id)["ok"] is True
+    assert saved == []                                     # a block-editor page is untouched by Elementor
+    out = service.refresh_article(elementor_id)
+    assert out["ok"] is True
+    assert saved and saved[0][0] == 41
+    assert saved[0][2]["page_settings"] == {"hide_title": "yes"}

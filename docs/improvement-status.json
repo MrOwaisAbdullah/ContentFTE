@@ -132,9 +132,10 @@
       "phase": "2"
     },
     "SEC-20": {
-      "status": "open",
-      "note": "drop fetch_url_title from agents reading untrusted text; restrict Tavily URL tools to this run's results",
-      "phase": "2"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "2",
+      "note": "model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment"
     },
     "SEC-21": {
       "status": "open",
@@ -340,8 +341,10 @@
       "phase": "3"
     },
     "PIPE-14": {
-      "status": "open",
-      "phase": "3"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "3",
+      "note": "crawl depth/limit clamped and metered by size, extract URL count capped; a whole-run token/request/time budget in the runner is still open"
     },
     "PIPE-15": {
       "status": "open",
@@ -357,16 +360,22 @@
       "phase": "3"
     },
     "PIPE-18": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "LanguageTool is one process singleton (or a remote server); the pipeline caches its download"
     },
     "PIPE-19": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "runner fleet drops every model router.yaml disables"
     },
     "PIPE-20": {
-      "status": "open",
-      "phase": "3"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "3",
+      "note": "preferred/banned term contradiction fixed and guarded by a test; the author persona is still hard-coded rather than read from BrandProfile"
     },
     "PIPE-21": {
       "status": "open",
@@ -383,9 +392,10 @@
       "phase": "3"
     },
     "ADP-01": {
-      "status": "open",
-      "note": "Sanity createIfNotExists silently ignores a changed re-publish; no draft mode",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "Sanity publish compares a content hash and engine article id: unchanged = reported no-op, changed = revision-guarded patch, other article/Studio post on the slug = explicit conflict; SANITY_PUBLISH_AS_DRAFT option"
     },
     "ADP-02": {
       "status": "partial",
@@ -405,9 +415,10 @@
       "phase": "3"
     },
     "ADP-05": {
-      "status": "open",
-      "note": "markdown_parser: tables in fences, ==/~~ in code, blockquotes, hr, html_block, relative links",
-      "phase": "3"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "3",
+      "note": "relative links, quotes, html blocks, tables in fences, ==/~~ in code, links in table cells fixed; horizontal rules stay literal (the Studio schema has no divider type) and list-image ordering is open"
     },
     "ADP-06": {
       "status": "done",
@@ -415,9 +426,10 @@
       "phase": "3"
     },
     "ADP-07": {
-      "status": "open",
-      "note": "custom payload: featured image, canonical, OG, meta_title; buildMetadata helper",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "payload v2: meta_title, canonical, featured image, OG block; SDK buildMetadata() for Next.js"
     },
     "ADP-08": {
       "status": "open",
@@ -425,9 +437,10 @@
       "phase": "3"
     },
     "ADP-09": {
-      "status": "open",
-      "note": "refresh_article must rewrite _elementor_data",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "refresh rewrites _elementor_data for pages built with the Elementor target"
     },
     "ADP-10": {
       "status": "done",
@@ -452,9 +465,10 @@
       "phase": "0"
     },
     "ADP-14": {
-      "status": "open",
-      "note": "Sanity: publish without mainImage, publishedAt/updatedAt/canonical/ogImage fields",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "publishedAt/updatedAt/canonicalUrl fields in schema and adapter; SANITY_REQUIRE_IMAGE=1 holds an image-less post as a draft instead of publishing it invalid"
     },
     "ADP-15": {
       "status": "done",

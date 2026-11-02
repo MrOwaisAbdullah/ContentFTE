@@ -310,3 +310,67 @@ def test_request_guard_aborts_internal_subrequests_and_allows_data_urls():
     internal, data, blocked = asyncio.run(run())
     assert internal.action[0] == "abort" and data.action == ("continue",)
     assert blocked and "169.254.169.254" in blocked[0]["url"]
+
+
+# ---- SEC-20 / PIPE-14: model-chosen URLs -------------------------------------------------------------------
+def test_url_guard_blocks_data_in_the_url_to_unseen_hosts_but_allows_plain_source_links():
+    from tools import url_guard as g
+    g.reset()
+    assert g.check_model_url("https://source.example/guide/page") is None                     # plain source link
+    assert g.check_model_url("https://attacker.example/?d=UNPUBLISHED-DRAFT-TEXT")           # exfil form
+    assert g.check_model_url("https://attacker.example/p#" + "x" * 50)
+    assert g.check_model_url("https://u:p@x.example/")
+    assert g.check_model_url("file:///etc/passwd") and g.check_model_url("javascript:alert(1)")
+    assert g.check_model_url("https://x.example/" + "a/" * 20)
+    g.remember_results(["https://news.example/story?id=5"])
+    assert g.check_model_url("https://news.example/other?page=2") is None                     # host came from a search
+
+
+def test_crawl_arguments_are_clamped_and_priced_by_size():
+    from tools import url_guard as g
+    assert g.clamp_crawl(99, 5000) == (3, 20) and g.clamp_crawl(-1, 0) == (1, 1) and g.clamp_crawl("x", None) == (2, 10)
+    assert g.crawl_cost(1) == 1 and g.crawl_cost(5) == 1 and g.crawl_cost(20) == 4
+
+
+def test_title_fetches_are_capped_per_run():
+    from tools import url_guard as g
+    g.reset()
+    assert all(g.allow_title_fetch() for _ in range(g.MAX_TITLE_FETCHES_PER_RUN))
+    assert g.allow_title_fetch() is False
+    g.reset()
+    assert g.allow_title_fetch() is True
+
+
+def test_the_tools_apply_the_guard(monkeypatch):
+    import asyncio
+    import json
+    from tools import search_tools, url_guard as g
+    g.reset()
+    called = []
+
+    class Stub:
+        async def extract(self, **k):
+            called.append(("extract", k))
+            return {"results": []}
+
+        async def crawl(self, **k):
+            called.append(("crawl", k))
+            return {"results": []}
+
+    monkeypatch.setattr(search_tools, "tavily_client", Stub())
+    monkeypatch.setattr("lib.tavily_meter.meter", lambda site_slug="", n=1: {"allowed": True})
+
+    from agents.tool_context import ToolContext
+
+    def call(tool, args):
+        raw = json.dumps(args)
+        ctx = ToolContext(None, tool_name=tool.name, tool_call_id="t", tool_arguments=raw)
+        return asyncio.run(tool.on_invoke_tool(ctx, raw))
+
+    bad = call(search_tools.tavily_extract_tool, {"urls": ["https://attacker.example/?d=secret"]})
+    assert "Refused" in str(bad) and called == []
+    bad = call(search_tools.tavily_crawl_tool, {"start_url": "https://attacker.example/?d=secret"})
+    assert "Refused" in str(bad) and called == []
+    call(search_tools.tavily_crawl_tool, {"start_url": "https://docs.example/guide", "max_depth": 50, "limit": 9999})
+    assert called[0][0] == "crawl" and called[0][1]["max_depth"] == 3 and called[0][1]["limit"] == 20
+    assert search_tools.fetch_url_title.on_invoke_tool is not None

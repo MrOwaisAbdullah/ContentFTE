@@ -97,3 +97,29 @@ def test_deliver_reports_network_failure(monkeypatch):
     _capture(monkeypatch, [RuntimeError("connection refused")] * 3)
     out = custom_site.deliver({"title": "x"}, webhook_url="https://hook.example/deploy", sleep=lambda s: None)
     assert out["status"] == "error" and "connection refused" in out["message"]
+
+
+def test_payload_v2_carries_meta_title_canonical_image_and_og():
+    p = custom_site.build_delivery_payload(
+        title="Best CRM", markdown="# Best CRM\n\nbody", meta_description="Pick HubSpot.",
+        slug="best-crm", url="https://s.test/best-crm", meta_title="Best CRM for Agencies (2026)",
+        featured_image={"url": "https://cdn.test/h.jpg", "alt": "hero", "width": 1200, "height": 630},
+        date_published="2026-01-01", date_modified="2026-02-01")
+    assert p["payload_version"] == 2
+    assert p["seo"]["meta_title"] == "Best CRM for Agencies (2026)" and p["seo"]["title"] == "Best CRM"
+    assert p["seo"]["canonical"] == "https://s.test/best-crm"
+    assert p["image"]["url"] == "https://cdn.test/h.jpg"
+    assert p["og"]["image"] == "https://cdn.test/h.jpg" and p["og"]["modified_time"] == "2026-02-01"
+
+
+def test_payload_v2_degrades_cleanly_without_an_image_or_meta_title():
+    p = custom_site.build_delivery_payload(title="T", markdown="x", slug="t", url="https://s.test/t")
+    assert p["seo"]["meta_title"] == "T" and p["image"] is None and p["og"]["image"] == ""
+
+
+def test_featured_image_ref_ignores_local_paths_and_inpost_rows():
+    from sdk import service
+    assert service._featured_image_ref({"images": [{"slot": "inpost", "url": "https://x/1.jpg"},
+                                                   {"slot": "featured", "path": "C:/tmp/a.png"}]}) is None
+    ref = service._featured_image_ref({"images": [{"slot": "featured", "url": "https://x/f.jpg", "alt": "a", "width": "1200"}]})
+    assert ref == {"url": "https://x/f.jpg", "alt": "a", "width": 1200}

@@ -194,7 +194,7 @@ class MarkdownToSanityConverter:
                 # Validate that destination is a proper URL
                 if destination:
                     # Check if URL is properly formatted
-                    if not destination.startswith(('http://', 'https://', '/', '#', 'mailto:', 'tel:')):
+                    if not self._link_is_allowed(destination):
                         # If not a proper URL, treat as text instead of link
                         child = current_node.first_child
                         while child:
@@ -370,6 +370,19 @@ class MarkdownToSanityConverter:
                         self._debug_log(f"Added fallback {style} heading block")
                         
         elif node_type == 'block_quote':
+            paragraphs = []
+            child = node.first_child
+            while child:
+                if child.t in ('paragraph', 'heading'):
+                    sp, md = self._parse_inline_content(child)
+                    if sp:
+                        paragraphs.append((sp, md))
+                child = child.nxt
+            if len(paragraphs) > 1:
+                for sp, md in paragraphs:        # "> a\n>\n> b" is two quoted paragraphs, not "ab"
+                    self.blocks.append(self._create_block('blockquote', sp, md))
+                self._debug_log("Added multi-paragraph blockquote")
+                return
             spans, mark_defs = self._parse_inline_content(node)
             if spans:
                 block = self._create_block('blockquote', spans, mark_defs)
@@ -472,6 +485,16 @@ class MarkdownToSanityConverter:
             for nested_list in nested_lists:
                 self._process_node(nested_list)
                         
+        elif node_type == 'html_block':
+            raw = getattr(node, 'literal', '') or ''
+            text = re.sub(r'<!--.*?-->', '', raw, flags=re.S)
+            text = re.sub(r'<(script|style)\b.*?</\1>', '', text, flags=re.S | re.I)
+            text = re.sub(r'<[^>]+>', '', text)
+            for para in [t.strip() for t in re.split(r'\n\s*\n', text) if t.strip()]:
+                span = self._create_simple_span(re.sub(r'\s+', ' ', para))
+                if span:
+                    self.blocks.append(self._create_block('normal', [span]))
+
         elif node_type == 'thematic_break':
             span = self._create_simple_span('---')
             if span:
@@ -532,6 +555,29 @@ class MarkdownToSanityConverter:
             self.blocks.append(image_block)
             self._debug_log(f"Added image block: {destination}")
     
+    _ALLOWED_LINK_SCHEMES = ('http', 'https', 'mailto', 'tel')
+
+    @classmethod
+    def _link_is_allowed(cls, destination: str) -> bool:
+        """http(s)/mailto/tel, anchors and RELATIVE paths ('/x', 'x/y', '../z.md') are links; any other scheme
+        (javascript:, data:, vbscript:, file:) is not. Relative links used to be demoted to plain text, so
+        '[see](../guide)' lost its link (ADP-05)."""
+        dest = re.sub(r'[\x00-\x20\x7f]+', '', destination or '').lower()
+        if not dest:
+            return False
+        m = re.match(r'^([a-z][a-z0-9+.\-]*):', dest)
+        return m is None or m.group(1) in cls._ALLOWED_LINK_SCHEMES
+
+    @staticmethod
+    def _protect_inline_code(line: str):
+        """Replace `code spans` with placeholders so ==/~~ rewriting cannot touch them."""
+        spans: List[str] = []
+
+        def stash(m):
+            spans.append(m.group(0))
+            return f"\x00C{len(spans) - 1}\x00"
+        return re.sub(r'(`+)(?:(?!\1).)+?\1', stash, line), spans
+
     def _preprocess_extensions(self, markdown_text: str) -> str:
         """GFM/HTML extensions commonmark-py doesn't parse natively.
 
@@ -557,15 +603,20 @@ class MarkdownToSanityConverter:
             if in_fence:
                 out.append(line)
                 continue
+            line, code_spans = self._protect_inline_code(line)
             line = re.sub(r'==([^=\n]+?)==', r'<mark>\1</mark>', line)
             line = re.sub(r'~~([^~\n]+?)~~', r'<s>\1</s>', line)
+            for i, original in enumerate(code_spans):
+                line = line.replace(f"\x00C{i}\x00", original)
             out.append(line)
         return '\n'.join(out)
 
-    def _parse_cell_spans(self, text: str, key_prefix: str) -> List[Dict[str, Any]]:
-        """Minimal inline parse for table cells: bold, italic, code, highlight."""
+    def _parse_cell_spans(self, text: str, key_prefix: str, mark_defs: Optional[List[Dict[str, Any]]] = None
+                          ) -> List[Dict[str, Any]]:
+        """Minimal inline parse for table cells: links, bold, italic, code, highlight. Link annotations are
+        appended to `mark_defs` (the cell block's markDefs) - cell links used to stay as raw `[x](y)` text."""
         spans: List[Dict[str, Any]] = []
-        token = re.compile(r'(\*\*(.+?)\*\*|(?<!\*)\*([^*\n]+?)\*(?!\*)|`([^`\n]+?)`|<mark>(.+?)</mark>)')
+        token = re.compile(r'(\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*(.+?)\*\*|(?<!\*)\*([^*\n]+?)\*(?!\*)|`([^`\n]+?)`|<mark>(.+?)</mark>)')
         pos = 0
         counter = 0
 
@@ -586,13 +637,21 @@ class MarkdownToSanityConverter:
         for match in token.finditer(text):
             add_span(text[pos:match.start()], [])
             if match.group(2) is not None:
-                add_span(match.group(2), ['strong'])
-            elif match.group(3) is not None:
-                add_span(match.group(3), ['em'])
+                href = match.group(3)
+                if mark_defs is not None and self._link_is_allowed(href):
+                    key = f"{key_prefix}-l{len(mark_defs)}"
+                    mark_defs.append({"_key": key, "_type": "link", "href": href})
+                    add_span(match.group(2), [key])
+                else:
+                    add_span(match.group(2), [])
             elif match.group(4) is not None:
-                add_span(match.group(4), ['code'])
+                add_span(match.group(4), ['strong'])
             elif match.group(5) is not None:
-                add_span(match.group(5), ['highlight'])
+                add_span(match.group(5), ['em'])
+            elif match.group(6) is not None:
+                add_span(match.group(6), ['code'])
+            elif match.group(7) is not None:
+                add_span(match.group(7), ['highlight'])
             pos = match.end()
         add_span(text[pos:], [])
         if not spans:
@@ -610,13 +669,14 @@ class MarkdownToSanityConverter:
         for r_idx, row in enumerate(rows):
             cells = []
             for c_idx, cell_text in enumerate(row):
+                cell_marks: List[Dict[str, Any]] = []
                 spans = self._parse_cell_spans(
-                    cell_text.strip(), f"t{self.mark_def_counter}-{r_idx}-{c_idx}"
+                    cell_text.strip(), f"t{self.mark_def_counter}-{r_idx}-{c_idx}", cell_marks
                 )
                 cells.append({
                     "_key": f"cell-{self._create_block_key()}",
                     "_type": "tableCell",
-                    "children": [self._create_block('normal', spans, [])],
+                    "children": [self._create_block('normal', spans, cell_marks)],
                 })
             table_rows.append({
                 "_key": f"row-{self._create_block_key()}",
@@ -650,8 +710,21 @@ class MarkdownToSanityConverter:
                 line = line[:-1]
             return [c.strip() for c in line.split('|')]
 
+        fence = ''
         while i < len(lines):
             line = lines[i]
+            stripped = line.lstrip()
+            if not fence and (stripped.startswith('```') or stripped.startswith('~~~')):
+                fence = stripped[:3]
+                out.append(line)
+                i += 1
+                continue
+            if fence:
+                if stripped.startswith(fence):
+                    fence = ''
+                out.append(line)
+                i += 1
+                continue
             if ('|' in line and i + 1 < len(lines)
                     and sep_re.match(lines[i + 1] or '')
                     and '-' in lines[i + 1]):

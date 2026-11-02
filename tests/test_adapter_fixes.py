@@ -419,3 +419,187 @@ def test_derived_tags_are_capped_but_supplied_tags_are_not(monkeypatch):
     assert supplied == ["a", "b", "c", "d", "e"]
     monkeypatch.setenv("DERIVED_TAGS_MAX", "0")
     assert tax.derive_taxonomy(keyword="best crm software")["tags"] == []
+
+
+# ---- ADP-01 / ADP-14: Sanity upsert, slug conflicts, draft policy ------------------------------------------------
+def _upsert_adapter(existing, mutate_status=200):
+    import lib.sanity_adapter as sa
+    ad = sa.SanityAdapter.__new__(sa.SanityAdapter)
+    ad.dataset = "production"
+    ad.base_url, ad.headers = "https://x.api.sanity.io", {}
+    ad._build_query_endpoint = lambda q, params=None, perspective="raw": "/q"
+    sent = []
+
+    class Resp:
+        def __init__(self, status, body=None):
+            self.status_code, self._b = status, body or {}
+
+        def json(self):
+            return self._b
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import requests
+                e = requests.exceptions.HTTPError("x")
+                e.response = self
+                raise e
+
+    def fake(method, url, data=None, **kw):
+        if method == "GET":
+            return Resp(200, {"result": existing})
+        sent.append(data["mutations"][0])
+        return Resp(mutate_status, {})
+
+    ad._make_request = fake
+    return ad, sent
+
+
+def _doc(**over):
+    import lib.sanity_adapter as sa
+    d = {"_id": "post-x", "_type": "post", "title": "T", "slug": {"_type": "slug", "current": "x"},
+         "content": [{"_type": "block", "_key": "a"}], "engineArticleId": "7", "publishedAt": "2026-01-01T00:00:00Z"}
+    d.update(over)
+    d["contentHash"] = sa.content_fingerprint(d)
+    return d
+
+
+def test_a_new_post_is_created():
+    ad, sent = _upsert_adapter(None)
+    assert ad.upsert_post_document(_doc())["success"] is True
+    assert "createIfNotExists" in sent[0]
+
+
+def test_an_identical_retry_is_a_reported_no_op():
+    doc = _doc()
+    ad, sent = _upsert_adapter({"_id": "post-x", "_rev": "r1", "contentHash": doc["contentHash"], "engineArticleId": "7"})
+    out = ad.upsert_post_document(doc)
+    assert out["success"] and out["unchanged"] and sent == []
+
+
+def test_changed_content_for_the_same_article_is_patched_not_ignored():
+    ad, sent = _upsert_adapter({"_id": "post-x", "_rev": "r1", "contentHash": "old", "engineArticleId": "7"})
+    out = ad.upsert_post_document(_doc(title="Corrected title"))
+    assert out["success"] and out["updated"]
+    patch = sent[0]["patch"]
+    assert patch["ifRevisionID"] == "r1" and patch["set"]["title"] == "Corrected title"
+    assert "publishedAt" not in patch["set"] and "_id" not in patch["set"]       # first-published date is kept
+
+
+def test_a_different_article_or_a_studio_post_on_the_slug_is_a_conflict():
+    ad, sent = _upsert_adapter({"_id": "post-x", "_rev": "r1", "contentHash": "old", "engineArticleId": "99"})
+    out = ad.upsert_post_document(_doc())
+    assert out["success"] is False and out["slug_conflict"] and sent == []
+    ad2, sent2 = _upsert_adapter({"_id": "abc123-random-studio-id", "_rev": "r1"})
+    out2 = ad2.upsert_post_document(_doc())
+    assert out2["slug_conflict"] and "authored in Studio" in out2["error"] and sent2 == []
+
+
+def test_a_concurrent_edit_during_update_is_reported():
+    ad, _ = _upsert_adapter({"_id": "post-x", "_rev": "r1", "contentHash": "old", "engineArticleId": "7"}, mutate_status=409)
+    out = ad.upsert_post_document(_doc(title="New"))
+    assert out["success"] is False and out["conflict"] is True
+
+
+def test_fingerprint_ignores_keys_and_publishing_metadata_but_not_content():
+    import lib.sanity_adapter as sa
+    a = {"title": "T", "content": [{"_key": "1", "text": "x"}], "publishedAt": "A"}
+    b = {"title": "T", "content": [{"_key": "2", "text": "x"}], "publishedAt": "B"}
+    assert sa.content_fingerprint(a) == sa.content_fingerprint(b)
+    assert sa.content_fingerprint(a) != sa.content_fingerprint({**a, "title": "T2"})
+
+
+# ---- ADP-05: Portable Text parser ---------------------------------------------------------------------------------
+def _plain(blocks):
+    return [(b.get("style"), "".join(c.get("text", "") for c in b.get("children", []))) for b in blocks if b.get("_type") == "block"]
+
+
+def test_portable_text_multi_paragraph_quotes_stay_separate():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    assert _plain(m("> one\n>\n> two")) == [("blockquote", "one"), ("blockquote", "two")]
+
+
+def test_portable_text_keeps_the_text_of_html_blocks():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    out = _plain(m("<details>\n<summary>Hi</summary>\n\nbody\n</details>\n\n<script>alert(1)</script>"))
+    assert ("normal", "Hi") in out and ("normal", "body") in out
+    assert not any("alert" in t for _, t in out)
+
+
+def test_portable_text_leaves_tables_inside_code_fences_alone():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    blocks = m("```\n| a | b |\n|---|---|\n| 1 | 2 |\n```")
+    assert [b["_type"] for b in blocks] == ["code"] and "| a | b |" in blocks[0]["code"]
+
+
+def test_highlight_and_strike_markers_do_not_rewrite_inline_code():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    kids = m("`==x==` and ==y==")[0]["children"]
+    assert (kids[0]["text"], kids[0]["marks"]) == ("==x==", ["code"])
+    assert any(c["text"] == "y" and c.get("marks") == ["highlight"] for c in kids)
+
+
+def test_relative_links_stay_links_and_script_schemes_do_not():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    block = m("[g](../guide) [rel](guide/page) [bad](javascript:alert(1)) [d](data:text/html,x)")[0]
+    hrefs = [d["href"] for d in block["markDefs"]]
+    assert hrefs == ["../guide", "guide/page"]
+
+
+def test_links_inside_table_cells_become_link_annotations():
+    from lib.markdown_parser import markdown_to_sanity_blocks as m
+    table = m("| h | i |\n|---|---|\n| [x](/a) | **y** |")[0]
+    cell = table["rows"][1]["cells"][0]["children"][0]
+    assert cell["markDefs"][0]["href"] == "/a"
+    assert cell["children"][0]["marks"] == [cell["markDefs"][0]["_key"]]
+    strong = table["rows"][1]["cells"][1]["children"][0]["children"][0]
+    assert strong["marks"] == ["strong"]
+
+
+# ---- PIPE-18: one LanguageTool per process -----------------------------------------------------------------------
+def test_language_tool_is_built_once_and_reused(monkeypatch):
+    import tools.tools as t
+    built = []
+
+    class Fake:
+        def __init__(self, *a, **k):
+            built.append((a, k))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(t, "LanguageTool", Fake)
+    monkeypatch.setattr(t, "_language_tool", None)
+    monkeypatch.delenv("LANGUAGETOOL_REMOTE_SERVER", raising=False)
+    a, b = t._get_language_tool(), t._get_language_tool()
+    assert a is b and len(built) == 1
+    monkeypatch.setattr(t, "_language_tool", None)
+    monkeypatch.setenv("LANGUAGETOOL_REMOTE_SERVER", "http://lt.internal:8081")
+    t._get_language_tool()
+    assert built[-1][1] == {"remote_server": "http://lt.internal:8081"}
+    monkeypatch.setattr(t, "_language_tool", None)
+
+
+# ---- PIPE-19: the runner fleet follows router.yaml ----------------------------------------------------------------
+def test_router_disabled_models_are_read_and_dropped_from_the_runner_fleet(tmp_path):
+    from blog_agent.custom_runner import FallbackAgentRunner, router_disabled_models
+    cfg = tmp_path / "router.yaml"
+    cfg.write_text("models:\n  - { model: a }\ndisabled:\n  - gemma-4-26b-a4b-it   # broken\n  - 'x/y:free'\npacing:\n  - not-a-model\n",
+                   encoding="utf-8")
+    assert router_disabled_models(str(cfg)) == {"gemma-4-26b-a4b-it", "x/y:free"}
+    assert router_disabled_models(str(tmp_path / "missing.yaml")) == set()
+    names = {m["name"] for m in FallbackAgentRunner().LLM_MODELS}
+    assert "gemma-4-26b-a4b-it" not in names and "gemma-4-31b-it" not in names      # disabled in the repo's router.yaml
+
+
+# ---- PIPE-20: preferred terms may not be banned words -------------------------------------------------------------
+def test_no_preferred_term_replacement_is_a_banned_word():
+    import asyncio
+    import json
+    from agents.tool_context import ToolContext
+    from tools.tools import get_author_context_tool
+    ctx = ToolContext(None, tool_name="get_author_context_tool", tool_call_id="t", tool_arguments="{}")
+    data = asyncio.run(get_author_context_tool.on_invoke_tool(ctx, "{}"))
+    data = json.loads(data) if isinstance(data, str) else data
+    banned = {b.strip().lower() for b in data.get("banned_words", [])}
+    for src, repl in (data.get("preferred_terms") or {}).items():
+        assert repl.strip().lower() not in banned, f"'{src}' -> '{repl}' is also a banned word"

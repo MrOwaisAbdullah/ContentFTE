@@ -135,6 +135,13 @@ jobs:
         with:
           enable-cache: true
 
+      # LanguageTool downloads ~200 MB on first use; cache it so only the first run on a branch pays (PIPE-18).
+      - name: Cache LanguageTool download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/language_tool_python
+          key: languagetool-${{ runner.os }}-v1
+
       # --- gemini-free-router: local quota scheduler in front of Gemini ---
       # Every Gemini call in this run goes through the router (GFR_BASE_URL on
       # the Run stage step), which owns per-model RPM/RPD/TPM windows, queues

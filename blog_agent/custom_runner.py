@@ -85,6 +85,31 @@ def _openrouter_free_shared_quota() -> Dict[str, Dict[str, Any]]:
 
 
 # Custom runner that extends AgentRunner and adds fallback logic
+def router_disabled_models(path: Optional[str] = None) -> set:
+    """Model ids listed under `disabled:` in router.yaml (the gemini-free-router config), so the runner's
+    fleet follows the router's instead of being a second hand-kept list. A tiny reader on purpose: it needs
+    no YAML dependency, only understands the flat `disabled:
+  - model` shape, and returns an empty set if
+    the file is missing or odd (then nothing is filtered - the old behaviour)."""
+    import pathlib
+    cfg = pathlib.Path(path) if path else pathlib.Path(__file__).resolve().parents[1] / "router.yaml"
+    try:
+        lines = cfg.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    out, active = set(), False
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw.startswith((" ", "	")):
+            active = raw.strip() == "disabled:"
+            continue
+        item = raw.strip()
+        if active and item.startswith("- "):
+            out.add(item[2:].split("#", 1)[0].strip().strip("'\""))
+    return out
+
+
 def _provider_key(name: str) -> str:
     """The provider key, read when a client is BUILT. A missing key used to raise KeyError while the
     module-level agents were constructed, so merely importing blog_agents (a test, the console, a tool
@@ -178,6 +203,12 @@ class FallbackAgentRunner(AgentRunner):
             # quota tables below follow it automatically.
             *_openrouter_free_entries(),
         ]
+
+        # Models the router has switched off must not stay in this chain: the runner would keep trying them,
+        # spend attempts, and count their quota while the router refuses them (PIPE-19).
+        _off = router_disabled_models()
+        if _off:
+            self.LLM_MODELS = [m for m in self.LLM_MODELS if m["model"] not in _off and m["name"] not in _off]
 
         # Paid, last-resort-only models. DeepSeek V4 Flash has been promoted
         # to LLM_MODELS (for cross-provider evaluation). This list is now

@@ -40,9 +40,21 @@ def build_delivery_payload(
     focus_keyword: str = "",
     tldr: str = "",
     schema_extra: Optional[Dict[str, Any]] = None,
+    meta_title: str = "",
+    canonical: str = "",
+    featured_image: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Rendered, site-agnostic payload for a custom site (Astro/Next/React)."""
+    """Rendered, site-agnostic payload for a custom site (Astro/Next/React).
+
+    v2 (ADP-07) adds what a page needs to emit correct head tags without re-deriving it: a distinct
+    `seo.meta_title` (falls back to the title), `seo.canonical` (the article URL), the `image` (featured
+    image url/alt/size) and a ready-made `og` block. The SDK's `buildMetadata(payload)` maps these to a
+    Next.js `generateMetadata()` result."""
     from lib.geo import extract_tldr
+
+    page_url = canonical or url
+    img = featured_image if isinstance(featured_image, dict) and featured_image.get("url") else None
+    description = meta_description
 
     payload = {
         "title": title,
@@ -69,10 +81,24 @@ def build_delivery_payload(
         # received as Yoast/Rank Math fields.
         "seo": {
             "title": title,
+            "meta_title": (meta_title or "").strip() or title,
             "description": meta_description,
+            "canonical": page_url,
             "focus_keyword": focus_keyword,
             "tldr": tldr or extract_tldr(markdown),
         },
+        "image": img,
+        "og": {
+            "type": "article",
+            "title": (meta_title or "").strip() or title,
+            "description": description,
+            "url": page_url,
+            "image": (img or {}).get("url", ""),
+            "image_alt": (img or {}).get("alt", ""),
+            "published_time": date_published or "",
+            "modified_time": date_modified or "",
+        },
+        "payload_version": 2,
     }
     return payload
 

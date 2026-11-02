@@ -10,6 +10,8 @@ from slugify import slugify
 import textstat
 from language_tool_python import LanguageTool
 import time
+import atexit
+import threading
 from lib.sanity_adapter import SanityAdapter
 from lib import image_vision
 from lib import image_format
@@ -267,8 +269,9 @@ def get_author_context_tool():
         "preferred_terms": {
             "AI": "smart automation",
             "users": "clients or creators",
-            "website": "web experience",
-            "tool": "solution"
+            "website": "web experience"
+            # "tool" -> "solution" was here, but "solution" is in banned_words below: the agent was told to
+            # use and to avoid the same word (PIPE-20).
         },
 
         "banned_words": ["enterprise", "solution", "synergy", "leverage (as verb)", "disruptive", "cutting-edge", "game-changer", "revolutionary", "revolutionize", "dive in", "venture", "innovative", "realm", "adhere", "delve", "reimagine", "robust", "orchestrate", "diverse", "commendable", "embrace", "paramount", "beacon", "captivate", "commendable", "advancement in the realm", "aims to bridge", "aims to democratize", "aims to foster innovation and collaboration", "becomes increasingly evident", "behind the veil", "breaking barriers", "breakthrough has the potential to revolutionize the way", "bringing us", "bringing us closer to a future", "by combining the capabilities", "by harnessing the power", "capturing the attention", "continue to advance", "continue to make significant strides", "continue to push the boundaries", "continues to progress rapidly", "crucial to be mindful", "crucially", "cutting-edge", "drive the next big", "encompasses a wide range of real-life scenarios", "enhancement further enhances", "ensures that even", "essential to understand the nuances", "excitement", "exciting opportunities", "exciting possibilities", "exciting times lie ahead as we unlock the potential of", "excitingly", "expanded its capabilities", "expect to witness transformative breakthroughs", "expect to witness transformative breakthroughs in their capabilities", "exploration of various potential answers", "explore the fascinating world", "exploring new frontiers", "exploring this avenue", "foster the development", "future might see us placing", "groundbreaking way", "groundbreaking advancement", "groundbreaking study", "groundbreaking technology", "have come a long way in recent years", "hold promise", "implications are profound", "improved efficiency in countless ways", "in conclusion", "in the fast-paced world", "innovative service", "intrinsic differences", "it discovered an intriguing approach", "it remains to be seen", "it serves as a stepping stone towards the realization", "latest breakthrough signifies", "latest offering", "let’s delve into the exciting details", "main message to take away", "make informed decisions", "mark a significant step forward", "mind-boggling figure","more robust evaluation","for instance","navigate the landscape","notably","one step closer","one thing is clear","only time will tell","opens up exciting possibilities","paving the way for enhanced performance","possibilities are endless","potentially revolutionizing the way","push the boundaries","raise fairness concerns","raise intriguing questions","rapid pace of development","rapidly developing","redefine the future","remarkable abilities","remarkable breakthrough","remarkable proficiency","remarkable success","remarkable tool","remarkably","elevate ","captivate ","tapestry ","delve ","leverage ","resonate ","foster ","endeavor ","embark ","unleash ","renowned","represent a major milestone","represents a significant milestone in the field","revolutionize the way","revolutionizing the way","risks of drawing unsupported conclusions","seeking trustworthiness","significant step forward","significant strides","the necessity of clear understanding","there is still room for improvement","transformative power","truly exciting","uncover hidden trends","understanding of the capabilities","unleashing the potential","unlocking the power","unraveling","we can improve understanding and decision-making","welcome your thoughts","what sets this apart","what’s more","with the introduction","bespoke","whimsical","meticulous","emerge","refrain","vibrant","reimagine","evolve","supercharge","pivotal"],
@@ -389,18 +392,47 @@ def textstat_tool(content: str):
     except Exception as e:
         return {"error": f"Readability analysis failed: {str(e)}"}
 
+_language_tool = None
+_language_tool_lock = threading.Lock()
+
+
+def _get_language_tool():
+    """One LanguageTool per process (PIPE-18). It used to build - and tear down - a LanguageTool for EVERY
+    call, i.e. start a JVM and, on a cold CI runner, download ~200 MB, each time the agent checked a section.
+
+    LANGUAGETOOL_REMOTE_SERVER=<url> points at an already-running server instead (no local JVM at all);
+    LTP_PATH (language_tool_python's own setting) is the download cache - the pipeline workflow caches it."""
+    global _language_tool
+    with _language_tool_lock:
+        if _language_tool is None:
+            remote = (os.environ.get("LANGUAGETOOL_REMOTE_SERVER") or "").strip()
+            _language_tool = LanguageTool('en-US', remote_server=remote) if remote else LanguageTool('en-US')
+            atexit.register(_close_language_tool)
+        return _language_tool
+
+
+def _close_language_tool():
+    global _language_tool
+    with _language_tool_lock:
+        if _language_tool is not None:
+            try:
+                _language_tool.close()
+            except Exception:  # noqa: BLE001 - interpreter shutdown
+                pass
+            _language_tool = None
+
+
 @function_tool
 def grammar_check_tool(content: str):
     """Checks grammar and style using LanguageTool."""
     try:
-        tool = LanguageTool('en-US')
+        tool = _get_language_tool()
         matches = tool.check(content)
         feedback = []
         
         for match in matches[:10]:
             feedback.append(f"Grammar/Style issue at '{match.context}': {match.message} (Suggested: {match.replacements[0] if match.replacements else 'review manually'})")
         
-        tool.close()
         return {
             "issues_count": len(matches),
             "feedback": feedback if feedback else ["No grammar or style issues detected."]

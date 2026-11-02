@@ -60,8 +60,8 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 7 | 1 | 5 |
 | 1 - Make the quality gates real | 1 | 10 | - | - | - | 5 | 17 |
-| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 5 | 9 | 17 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 7 | 10 | 29 |
+| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 5 | 10 | 17 |
+| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 7 | 19 | 23 |
 | 4 - Fleet console and operations | 7 | - | - | - | - | 5 | 10 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -140,7 +140,7 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 
 _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant state, secrets out of plaintext, readiness and error contracts, observable requests.
 
-**Status: in progress** - 13 of 30 done, 9 partly done, 8 not done (item-by-item list in section 2).
+**Status: in progress** - 13 of 30 done, 10 partly done, 7 not done (item-by-item list in section 2).
 
 - [x] **SEC-03** (High) No key→site binding - `phase2-site-api-keys`
 - [~] **ENG-04** (High) generate_content: no single-flight per article; token usage read from module-global LAST_USAGE (concurrent run… - single-flight done; LAST_USAGE module global and cost-in-finally still open - `phase4-remaining-hardening`
@@ -166,7 +166,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [x] **ENG-19** (Medium) Both clients retry 4xx (401/404/409/422) because raise_for_status()/!res.ok is inside the retry try; non-idemp… - Python and TypeScript clients - `phase4-remaining-hardening`
 - [x] **CON-06** (Medium) No fetch timeout; the layout awaits 3 engine calls on every request → one hung engine freezes every page. - `phase0-console-engine-hardening`
 - [~] **SEC-15** (Low) Hardening: no security headers in next.config.ts; engine CORS defaults to  (and omits DELETE/PUT); OpenAPI doc… - security headers, media proxy, /docs gated (ENGINE_DOCS), shared-mode CORS default deny; a nonce-based CSP for the console is still open - `phase5-pipeline-adapters`
-- [ ] **SEC-20** (Low) Model-chosen fetch URLs enable data exfiltration - drop fetch_url_title from agents reading untrusted text; restrict Tavily URL tools to this run's results
+- [~] **SEC-20** (Low) Model-chosen fetch URLs enable data exfiltration - model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment - `phase5-pipeline-adapters`
 - [ ] **SEC-21** (Low) Second-order injection via brain/ - stop re-feeding log_coverage summaries to the generator as instructions; site-scope brain reads (partly done in p3)
 - [~] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open - `phase5-pipeline-adapters`
 - [x] **ENG-21** (Low) Observability: /health always OK (no DB check), no readiness probe, no request id, print() in places. - X-Request-ID on every response and log line, LOG_FORMAT=json, access log without query strings; /ready added earlier - `phase5-pipeline-adapters`
@@ -177,13 +177,13 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 13 of 42 done, 6 partly done, 23 not done (item-by-item list in section 2).
+**Status: in progress** - 19 of 42 done, 9 partly done, 14 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [~] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - per-process single-flight done; a DB-level claim is needed for multi-worker deployments - `phase4-remaining-hardening`
 - [ ] **PIPE-02** (High) The nested evaluator (content_evaluation_agent.as_tool()) runs through the inherited Runner.run, not run_with_…
 - [x] **PIPE-08** (High) /run_workflow imports a non-existent symbol before its try → every workflow type returns 500 - `phase5-pipeline-adapters`
-- [ ] **ADP-01** (High) Sanity uses createIfNotExists with _id = post-{slug}: a retry with new content, or a different article with th… - Sanity createIfNotExists silently ignores a changed re-publish; no draft mode
+- [x] **ADP-01** (High) Sanity uses createIfNotExists with _id = post-{slug}: a retry with new content, or a different article with th… - Sanity publish compares a content hash and engine article id: unchanged = reported no-op, changed = revision-guarded patch, other article/Studio post on the slug = explicit conflict; SANITY_PUBLISH_AS_DRAFT option - `phase5-pipeline-adapters`
 - [~] **ADP-02** (High) wp_render.inline() is regex-based: linked images become <a>\x000\x00</a> (NUL leak, image lost); two code span… - inline renderer fixed (linked images, code spans, nested lists, balanced-paren URLs); a full markdown AST (markdown-it-py) is still the cleaner end state - `phase5-pipeline-adapters`
 - [x] **ADP-03** (High) _ensure_term: WP returns HTML-encoded names (Tips &amp; Tricks), so equality fails, the POST returns 400 term_… - `phase4-remaining-hardening`
 - [~] **ADP-04** (High) Custom-site delivery: deliver() has no callers, posts unsigned JSON to a process-global URL with no retry, del… - signed, retried, per-site delivery wired into publish; a persistent outbox (survives a crash mid-retry) is still open - `phase5-pipeline-adapters`
@@ -198,28 +198,28 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [ ] **PIPE-11** (Medium) Brief stage writes inside the agent loop; MaxTurnsExceeded re-runs the agent on the next model and replays wri…
 - [ ] **PIPE-12** (Medium) Screenshot QA is scored by a text-only agent that can't see pixels; VLM QA fails open (passed=True on outage);…
 - [ ] **PIPE-13** (Medium) ~7 FallbackAgentRunner instances each re-seed quota from the Sheets usage log (local date, not Pacific) and di…
-- [ ] **PIPE-14** (Medium) No run-level token/request/time budget; tavily_crawl_tool(limit, max_depth) is model-controlled and metered as…
+- [~] **PIPE-14** (Medium) No run-level token/request/time budget; tavily_crawl_tool(limit, max_depth) is model-controlled and metered as… - crawl depth/limit clamped and metered by size, extract URL count capped; a whole-run token/request/time budget in the runner is still open - `phase5-pipeline-adapters`
 - [ ] **PIPE-15** (Medium) get_keyword_tool marks a keyword "used" immediately; release is in-process only, so a killed run loses the top…
 - [ ] **PIPE-16** (Medium) Actions concurrency group keeps one pending run — a third dispatch cancels the earlier pending one (contradict…
 - [x] **PIPE-17** (Medium) Import-time key requirements (search_tools.py:10 raises without TAVILY_API_KEY; OPENROUTER_API_KEY read at imp… - `phase5-pipeline-adapters`
-- [ ] **PIPE-18** (Medium) grammar_check_tool starts a LanguageTool JVM per call and downloads ~200 MB on every cold Actions runner.
-- [ ] **ADP-05** (Medium) markdown_parser (Portable Text): table placeholder replaced inside code fences; ==/~~ rewrites inline code; mu… - markdown_parser: tables in fences, ==/~~ in code, blockquotes, hr, html_block, relative links
+- [x] **PIPE-18** (Medium) grammar_check_tool starts a LanguageTool JVM per call and downloads ~200 MB on every cold Actions runner. - LanguageTool is one process singleton (or a remote server); the pipeline caches its download - `phase5-pipeline-adapters`
+- [~] **ADP-05** (Medium) markdown_parser (Portable Text): table placeholder replaced inside code fences; ==/~~ rewrites inline code; mu… - relative links, quotes, html blocks, tables in fences, ==/~~ in code, links in table cells fixed; horizontal rules stay literal (the Studio schema has no divider type) and list-image ordering is open - `phase5-pipeline-adapters`
 - [x] **ADP-06** (Medium) Sanity HTTP: retries only on exceptions (never 429/5xx), max_retries=1; update_post_content patches without if… - `phase5-pipeline-adapters`
-- [ ] **ADP-07** (Medium) Custom payload has no featured image, canonical, OG, or meta_title (always the article title); image staging r… - custom payload: featured image, canonical, OG, meta_title; buildMetadata helper
+- [x] **ADP-07** (Medium) Custom payload has no featured image, canonical, OG, or meta_title (always the article title); image staging r… - payload v2: meta_title, canonical, featured image, OG block; SDK buildMetadata() for Next.js - `phase5-pipeline-adapters`
 - [ ] **ADP-08** (Medium) WP SEO meta: only Yoast verified (AIOSEO key isn't a real v4 field; SEOPress/Rank Math unverified); no OG/Twit… - probe registered SEO meta keys; wrap JSON-LD in wp:html; Rank Math/SEOPress/AIOSEO
-- [ ] **ADP-09** (Medium) refresh_article rewrites content but not _elementor_data → Elementor pages stay stale. - refresh_article must rewrite _elementor_data
+- [x] **ADP-09** (Medium) refresh_article rewrites content but not _elementor_data → Elementor pages stay stale. - refresh rewrites _elementor_data for pages built with the Elementor target - `phase5-pipeline-adapters`
 - [x] **ADP-10** (Medium) fetch_internal_links builds base/{slug} (wrong unless permalinks are %postname%; use p["link"]); existing_slug… - `phase4-remaining-hardening`
 - [x] **ADP-11** (Medium) slugify_taxonomy strips all non-ASCII → Urdu/Arabic/Chinese categories become uncategorized-N; Sanity path use… - `phase4-remaining-hardening`
 - [x] **ADP-12** (Medium) WP media: unquoted Content-Disposition; MIME from extension (ignores image_format.sniff_mime, built for JPEG-i… - Content-Disposition, sniffed MIME, checked alt-text write; dedupe of media on retry still open - `phase4-remaining-hardening`
 - [ ] **TEN-07** (Medium) SeoCache, _keyword_claim, IMAGE_STAGING_DIR have no site dimension - SeoCache, _keyword_claim and IMAGE_STAGING_DIR need a site dimension
 - [ ] **TEN-09** (Medium) Spec design relies on new free-tier accounts per instance (Gemini, OpenRouter, Cloudflare, Tavily) — multiplie… - decide: pooled paid provider keys with per-tenant caps vs a free-tier account per site _(needs your decision)_
 - [ ] **OPS-02** (Medium) Stage single-flight and idempotency are in-process while the image runs --workers 2. - stage single-flight and idempotency must survive multiple workers (DB-backed)
-- [ ] **PIPE-19** (Low) router.yaml disables gemma-4-26b/31b but LLM_MODELS still lists them → wrong per-model accounting.
-- [ ] **PIPE-20** (Low) Author persona hard-coded as "Owais Abdullah"; preferred_terms maps "tool"→"solution" while "solution" is bann…
+- [x] **PIPE-19** (Low) router.yaml disables gemma-4-26b/31b but LLM_MODELS still lists them → wrong per-model accounting. - runner fleet drops every model router.yaml disables - `phase5-pipeline-adapters`
+- [~] **PIPE-20** (Low) Author persona hard-coded as "Owais Abdullah"; preferred_terms maps "tool"→"solution" while "solution" is bann… - preferred/banned term contradiction fixed and guarded by a test; the author persona is still hard-coded rather than read from BrandProfile - `phase5-pipeline-adapters`
 - [ ] **PIPE-21** (Low) Image quota breaker is process-local → each CI run re-burns an attempt against the Cloudflare daily cap.
 - [x] **PIPE-22** (Low) Dependencies: >= floors only (lock is the only pin); bs4 dummy package; deprecated oauth2client; requirements.… - PR CI (pytest, console tsc+tests, SDK build+smoke); unused deps removed; bs4 -> beautifulsoup4; requirements.txt exported from the lock; bot requirements bounded - `phase5-pipeline-adapters`
 - [ ] **PIPE-23** (Low) log_coverage pushes to git without rebase on a shallow checkout; assumes one repo per site.
-- [ ] **ADP-14** (Low) Sanity: publishes without mainImage though the schema requires it (Studio-invalid doc, the 2026-10-08 incident… - Sanity: publish without mainImage, publishedAt/updatedAt/canonical/ogImage fields
+- [x] **ADP-14** (Low) Sanity: publishes without mainImage though the schema requires it (Studio-invalid doc, the 2026-10-08 incident… - publishedAt/updatedAt/canonicalUrl fields in schema and adapter; SANITY_REQUIRE_IMAGE=1 holds an image-less post as a draft instead of publishing it invalid - `phase5-pipeline-adapters`
 - [x] **ADP-15** (Low) IndexNow/Bing keys are env-global, but IndexNow verifies keys per host → pings for other tenants' hosts fail. - `phase5-pipeline-adapters`
 
 #### Phase 4 - Fleet console and operations (ongoing)
@@ -634,7 +634,7 @@ Task list in §2.
 
 ### Phase 2 — Tenant context, auth & secrets (≈2–3 weeks)
 <!-- phase-status:2:start -->
-**Status: in progress** - 13 of 30 done, 9 partly done, 8 not done (item-by-item list in section 2).
+**Status: in progress** - 13 of 30 done, 10 partly done, 7 not done (item-by-item list in section 2).
 <!-- phase-status:2:end -->
 - `TenantContext`; remove import-time globals (TEN-02) and startup Brand DNA (PIPE-06); per-run agent construction.
 - Per-site hashed scoped keys; `_require_site` / `_load_article` choke points (SEC-03, ENG-08, ENG-09); tenancy test matrix.
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 13 of 42 done, 6 partly done, 23 not done (item-by-item list in section 2).
+**Status: in progress** - 19 of 42 done, 9 partly done, 14 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRequire } from "node:module";
 import { ContentFTEArticle } from "./dist/renderer.js";
-import { ContentFTEClient, ContentFTEError } from "./dist/contentfte.js";
+import { ContentFTEClient, ContentFTEError, buildMetadata } from "./dist/contentfte.js";
 
 const failures = [];
 function check(ok, label) {
@@ -163,6 +163,21 @@ check(r.calls[0].hasSignal, "every request carries a timeout signal");
 const require = createRequire(import.meta.url);
 const cjs = require("./dist/contentfte.cjs");
 check(typeof cjs.ContentFTEClient === "function", "CJS require of contentfte entry works");
+
+// buildMetadata: payload v2 -> Next.js generateMetadata()
+{
+  const md = buildMetadata({
+    ...payload,
+    seo: { title: "Best CRM", meta_title: "Best CRM for Agencies (2026)", description: "Pick HubSpot.", canonical: "https://example.com/best-crm", focus_keyword: "crm", tldr: "" },
+    image: { url: "https://cdn.example.com/hero.jpg", alt: "hero", width: 1200, height: 630 },
+    og: { type: "article", title: "Best CRM for Agencies (2026)", description: "Pick HubSpot.", url: "https://example.com/best-crm", image: "https://cdn.example.com/hero.jpg", image_alt: "hero", published_time: "2026-01-01", modified_time: "2026-02-01" },
+  });
+  check(md.title === "Best CRM for Agencies (2026)", "buildMetadata uses meta_title");
+  check(md.alternates.canonical === "https://example.com/best-crm", "buildMetadata sets canonical");
+  check(md.openGraph.images?.[0]?.url === "https://cdn.example.com/hero.jpg" && md.twitter.card === "summary_large_image", "buildMetadata maps the featured image to OG + twitter card");
+  const bare = buildMetadata({ ...payload });
+  check(bare.twitter.card === "summary" && bare.title === "Best CRM for Agencies", "buildMetadata degrades without v2 fields");
+}
 
 if (failures.length) {
   console.error(`\n${failures.length} smoke check(s) failed`);

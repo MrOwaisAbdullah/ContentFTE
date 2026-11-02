@@ -92,8 +92,12 @@ export interface WpPostResult {
 export interface SeoFields {
   /** SEO title for search/social (<=60 chars). Falls back to `title`. */
   title: string;
+  /** Distinct <title> text (payload v2); falls back to `title`. */
+  meta_title?: string;
   /** Meta description (<=160 chars). Same value as `excerpt`. */
   description: string;
+  /** Canonical URL of the article (payload v2). */
+  canonical?: string;
   /** The primary keyword this post targets (empty when unknown). */
   focus_keyword: string;
   /** The 40-60 word TL;DR answer, or "" when the post has none. */
@@ -116,6 +120,20 @@ export interface DeliveryPayload {
     faq?: Record<string, unknown> | null;
   };
   seo?: SeoFields;
+  /** Featured image (payload v2), when one with a public URL exists. */
+  image?: { url: string; alt: string; width?: number; height?: number } | null;
+  /** Ready-made Open Graph values (payload v2). */
+  og?: {
+    type: string;
+    title: string;
+    description: string;
+    url: string;
+    image: string;
+    image_alt: string;
+    published_time: string;
+    modified_time: string;
+  };
+  payload_version?: number;
   status?: string;
   scores?: Record<string, number>;
   cost_usd?: number;
@@ -302,4 +320,58 @@ export class ContentFTEClient {
   async runStage(stage: string) {
     return this.request("POST", `/sdk/v1/run/${stage}`);
   }
+}
+
+/** The subset of Next.js `Metadata` that `buildMetadata` returns (kept structural so the SDK needs no `next` dependency). */
+export interface BuiltMetadata {
+  title: string;
+  description: string;
+  alternates: { canonical: string };
+  openGraph: {
+    type: "article";
+    title: string;
+    description: string;
+    url: string;
+    publishedTime?: string;
+    modifiedTime?: string;
+    images?: { url: string; alt?: string; width?: number; height?: number }[];
+  };
+  twitter: { card: "summary_large_image" | "summary"; title: string; description: string; images?: string[] };
+}
+
+/**
+ * Map a delivery payload to Next.js `generateMetadata()` output, so a page's head tags (title, description,
+ * canonical, Open Graph, Twitter) come from the engine's single source instead of being re-derived by hand:
+ *
+ *     export async function generateMetadata({ params }) {
+ *       return buildMetadata(await cfte.getContent(id));
+ *     }
+ */
+export function buildMetadata(payload: DeliveryPayload): BuiltMetadata {
+  const seo = payload.seo;
+  const title = (seo?.meta_title || seo?.title || payload.title || "").trim();
+  const description = (seo?.description || payload.excerpt || "").trim();
+  const canonical = seo?.canonical || payload.url || "";
+  const og = payload.og;
+  const image = payload.image && payload.image.url ? payload.image : null;
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      type: "article",
+      title: og?.title || title,
+      description: og?.description || description,
+      url: og?.url || canonical,
+      ...(og?.published_time ? { publishedTime: og.published_time } : {}),
+      ...(og?.modified_time ? { modifiedTime: og.modified_time } : {}),
+      ...(image ? { images: [{ url: image.url, alt: image.alt, width: image.width, height: image.height }] } : {}),
+    },
+    twitter: {
+      card: image ? "summary_large_image" : "summary",
+      title: og?.title || title,
+      description: og?.description || description,
+      ...(image ? { images: [image.url] } : {}),
+    },
+  };
 }

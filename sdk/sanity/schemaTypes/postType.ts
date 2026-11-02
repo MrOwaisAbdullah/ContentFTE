@@ -165,6 +165,39 @@ export const postType = defineType({
       validation: (Rule) =>
         Rule.max(600).warning("A TL;DR is 40-60 words (~300 characters)"),
     }),
+    // Publishing metadata written by the engine (ADP-14). All optional; a post authored by hand in Studio
+    // simply leaves them empty. `contentHash` / `engineArticleId` let the engine tell "same article, nothing
+    // changed" from "same article, new content" from "a DIFFERENT article that wants this slug" (ADP-01).
+    defineField({
+      name: "publishedAt",
+      title: "Published at",
+      type: "datetime",
+      description: "When the article first went live (set by the engine).",
+    }),
+    defineField({
+      name: "updatedAt",
+      title: "Updated at",
+      type: "datetime",
+      description: "Last substantive content change (set by the engine on re-publish). Drives dateModified.",
+    }),
+    defineField({
+      name: "canonicalUrl",
+      title: "Canonical URL",
+      type: "url",
+      description: "Overrides the default canonical (the post URL) when set.",
+    }),
+    defineField({
+      name: "engineArticleId",
+      type: "string",
+      readOnly: true,
+      hidden: true,
+    }),
+    defineField({
+      name: "contentHash",
+      type: "string",
+      readOnly: true,
+      hidden: true,
+    }),
     // `blockContent` (not an inline array) is what the engine writes into:
     // blocks, images, code objects and GFM tables. See blockContentType.ts.
     defineField({

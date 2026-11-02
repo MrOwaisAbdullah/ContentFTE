@@ -2038,6 +2038,9 @@ def get_article(article_id: int, include_content: bool = False) -> dict:
                 # An operator PATCH of meta.tldr (SEO tab) wins over the
                 # TL;DR block parsed from the markdown by build_delivery_payload.
                 tldr=str(meta.get("tldr") or ""),
+                meta_title=str(brief.get("meta_title") or ""),
+                canonical=url,
+                featured_image=_featured_image_ref(meta),
             )
             data.update(payload)
             data["slug"] = slug
@@ -2583,6 +2586,28 @@ def _download_image(url: str) -> str | None:
         return None
 
 
+def _featured_image_ref(meta: dict) -> dict | None:
+    """The article's featured image as {url, alt, width, height} for the delivery payload - only an image that
+    already has a public http(s) URL (a local staging path is not something a remote site can load)."""
+    rows = meta.get("images") if isinstance(meta, dict) else None
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("slot") or "").strip().lower() == "inpost":
+            continue
+        url = str(row.get("url") or row.get("image_url") or "").strip()
+        if url.startswith(("http://", "https://")):
+            ref = {"url": url, "alt": str(row.get("alt") or row.get("alt_text") or "").strip()}
+            for k in ("width", "height"):
+                try:
+                    if row.get(k):
+                        ref[k] = int(row[k])
+                except (TypeError, ValueError):
+                    pass
+            return ref
+    return None
+
+
 def _wp_images(meta: dict) -> tuple[str | None, str, list[dict], list[str]]:
     """meta.images -> (featured_path, featured_alt, inpost_images, temp_paths).
 
@@ -3048,6 +3073,7 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
         base = ((art.site.base_url if art.site is not None else "") or "").strip().rstrip("/")
         url = f"{base}/{slug}" if base else ""
         featured_path, featured_alt, inpost, temps = _wp_images(meta)
+        is_elementor = str(meta.get("render_target") or "").lower() == "elementor"
         try:
             conn = WordPressConnector(cfg)
             tax = _article_taxonomy(conn, art, meta, brief)
@@ -3071,11 +3097,22 @@ def refresh_article(article_id: int, via: str = "api") -> dict:
                 date_modified=_modified_iso(art),
                 schema_extra=_schema_extra(art, meta, brief),
                 focus_keyphrase=_focus_keyphrase(meta, brief),
-                render_target="blocks",
+                render_target="elementor" if is_elementor else "blocks",
             )
             body = _render_wp_body(conn, post)
             res = conn.update_post(int(post_id), post, body_html=body,
                                    featured_image_path=featured_path)
+            if is_elementor:
+                # An Elementor page renders from `_elementor_data`, NOT from post_content: updating only the
+                # content left the visible page stale (ADP-09). Rewrite the document from the new content.
+                from lib import wp_render
+                from lib.elementor import ElementorClient, build_blog_page_data
+                elementor_body = post.html + "\n" + wp_render.jsonld_script(post.article_schema)
+                if post.faq_schema:
+                    elementor_body += "\n" + wp_render.jsonld_script(post.faq_schema)
+                res["elementor"] = ElementorClient(cfg).save_document(
+                    int(post_id), build_blog_page_data(post.title, elementor_body, faqs=post.faqs),
+                    page_settings={"hide_title": "yes"})
         except Exception as exc:  # noqa: BLE001 — refresh never raises
             return _err(f"wp refresh failed: {type(exc).__name__}: {exc}",
                         "check WP config / reachability, then re-run refresh")
@@ -3605,6 +3642,7 @@ def elementor_build(article_id: int, post_id: int | None = None,
             elementor_state = result.get("elementor") or {
                 "ok": False, "error": "publish did not report an elementor write"}
             meta["wp_post_id"] = result["id"]
+            meta["render_target"] = "elementor"     # refresh_article must rewrite _elementor_data too (ADP-09)
             art.meta = meta
             s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                            action="article.elementor_build",
@@ -3629,6 +3667,7 @@ def elementor_build(article_id: int, post_id: int | None = None,
                         "confirm the post id, Elementor >= 3.27, and an "
                         "Administrator app password")
         meta["wp_post_id"] = post_id
+        meta["render_target"] = "elementor"
         art.meta = meta
         s.add(AuditLog(article_id=art.id, site_id=art.site_id,
                        action="article.elementor_build",
