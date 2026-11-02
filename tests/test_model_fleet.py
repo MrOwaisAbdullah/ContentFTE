@@ -119,3 +119,11 @@ def _read(*parts: str) -> str:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, *parts), encoding="utf-8") as fh:
         return fh.read()
+
+
+def test_the_image_vlm_fallbacks_contain_no_retired_model():
+    """PIPE-12: the VLM list still named gemini-3.5-flash-lite, retired by Google's 2026-10 notice, so a fallback
+    attempt went to a dead model."""
+    from lib import image_vision
+    retired = {"gemini-3.5-flash", "gemini-3.5-flash-lite"}
+    assert not (set(image_vision.IMAGE_VLM_FALLBACKS) | {image_vision.IMAGE_VLM_MODEL}) & retired

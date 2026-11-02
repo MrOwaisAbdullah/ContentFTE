@@ -282,8 +282,9 @@
     },
     "ENG-22": {
       "status": "open",
-      "note": "split sdk/service.py (3.4k lines) along the seams in the plan",
-      "phase": "2"
+      "branch": "",
+      "phase": "2",
+      "note": "mechanical but risky: tests monkeypatch names on sdk.service, so a split must keep every patched symbol resolvable there"
     },
     "PIPE-01": {
       "status": "partial",
@@ -305,11 +306,15 @@
     },
     "PIPE-04": {
       "status": "open",
-      "phase": "1"
+      "branch": "",
+      "phase": "1",
+      "note": "posting is LLM-driven over Google Sheets; the safe fix (slug and the Published flag written in Python after a confirmed post id) belongs with the Sheets-to-Postgres cutover (TASKS 44/47), not a patch on the Sheets path"
     },
     "PIPE-05": {
       "status": "open",
-      "phase": "1"
+      "branch": "",
+      "phase": "1",
+      "note": "needs an attempts/quarantine column on the Sheets queue; wait for the Postgres queue (TEN-04)"
     },
     "PIPE-06": {
       "status": "partial",
@@ -341,11 +346,15 @@
     },
     "PIPE-11": {
       "status": "open",
-      "phase": "3"
+      "branch": "",
+      "phase": "3",
+      "note": "brief writes happen inside the Sheets agent loop; moves with the cutover"
     },
     "PIPE-12": {
-      "status": "open",
-      "phase": "3"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "3",
+      "note": "the retired gemini-3.5-flash-lite is out of the VLM fallback list (guarded by a test); the screenshot QA still fails open on a VLM outage by design (it reports fallback=true) and check-models.yml still probes ids the runner does not use"
     },
     "PIPE-13": {
       "status": "partial",
@@ -361,7 +370,9 @@
     },
     "PIPE-15": {
       "status": "open",
-      "phase": "3"
+      "branch": "",
+      "phase": "3",
+      "note": "the keyword claim lives in the Sheets path; moves with the cutover (a DB claim_at + sweeper)"
     },
     "PIPE-16": {
       "status": "done",
@@ -736,8 +747,9 @@
     },
     "CON-12": {
       "status": "open",
-      "note": "split articles/[id]/page.tsx, site-cadence-settings.tsx and lib/shell.tsx (needs browser verification)",
-      "phase": "4"
+      "branch": "",
+      "phase": "4",
+      "note": "needs a browser to verify the console after splitting its largest components"
     },
     "CON-13": {
       "status": "decision",
@@ -769,8 +781,9 @@
     },
     "TEN-02": {
       "status": "open",
-      "note": "replace import-time site identity/provider globals with TenantContext lookups",
-      "phase": "2"
+      "branch": "",
+      "phase": "2",
+      "note": "large: replace import-time site identity/provider globals with a per-request TenantContext across ~15 modules"
     },
     "TEN-03": {
       "status": "done",
@@ -780,8 +793,9 @@
     },
     "TEN-04": {
       "status": "open",
-      "note": "DB job queue + scheduler honouring cadence; retire the single-site Actions cron",
-      "phase": "3"
+      "branch": "",
+      "phase": "3",
+      "note": "large: needs TEN-02 first (stage handlers are not site-scoped), then a jobs table + scheduler tick + workers"
     },
     "TEN-05": {
       "status": "partial",

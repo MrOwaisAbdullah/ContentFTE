@@ -61,7 +61,7 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
 | 1 - Make the quality gates real | - | 7 | - | - | - | 15 | 11 |
 | 2 - Tenant context, auth and secrets | 4 | - | 1 | 2 | 4 | 16 | 11 |
-| 3 - Scheduler, workers, quotas, adapters | - | 1 | - | - | 6 | 30 | 10 |
+| 3 - Scheduler, workers, quotas, adapters | - | 1 | - | - | 6 | 31 | 10 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 9 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -110,8 +110,8 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 **Status: in progress** - 15 of 26 done, 7 partly done, 4 not done (item-by-item list in section 2).
 
 - [x] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft … - the writer prompt no longer lets a high Jev score replace the evaluator (at least one evaluation per draft); QUALITY_GATE_REQUIRE_EVAL=1 makes recorded evaluator sub-scores mandatory for engine-generated articles at approval - `phase5-pipeline-adapters`
-- [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish…
-- [ ] **PIPE-05** (High) Head-of-line blocking: content always takes the first Generated=No brief, post always row 2; a poison row burn…
+- [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish… - posting is LLM-driven over Google Sheets; the safe fix (slug and the Published flag written in Python after a confirmed post id) belongs with the Sheets-to-Postgres cutover (TASKS 44/47), not a patch on the Sheets path
+- [ ] **PIPE-05** (High) Head-of-line blocking: content always takes the first Generated=No brief, post always row 2; a poison row burn… - needs an attempts/quarantine column on the Sheets queue; wait for the Postgres queue (TEN-04)
 - [x] **PIPE-07** (High) Internal-link fetch budget is a process global reset only in run_content/run_post — in the long-lived API/MCP … - internal-link fetch budget is per time window (INTERNAL_LINKS_WINDOW_S) and defaults to 6 calls (one per H2), so a long-lived API/MCP process no longer returns [] forever - `phase5-pipeline-adapters`
 - [x] **SEO-01** (High) lib/eval_gate.check_gate / write_audit have no production caller; the evaluator prompt claims "the caller stil… - `phase1-quality-gates`
 - [x] **SEO-02** (High) SDK/MCP path _content_checks has no fact-check or link validation; external-link check only counts links (and … - SDK/approve path; the Sheets path still relies on the prompt - `phase1-quality-gates`
@@ -150,7 +150,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [~] **PIPE-06** (High) Brand DNA applied only in main.py lifespan, for the first Site, to module-level agents, once per process - scheduled runs (run_stage) and the API lifespan share one helper that injects the site's Brand DNA; agents are still module-level objects rather than built per run from a TenantContext (TEN-02) - `phase5-pipeline-adapters`
 - [x] **CON-03** (High) Active instance is one global cookie resolved at call time; with two tabs on different instances, a click in t… - `phase0-console-engine-hardening`
 - [~] **CON-05** (High) Settings the engine never reads: image., content - cadence, budget AND the Content group (min words, FAQ on/off, brand voice prompt) are now read by the engine; the Image group (preference, relevancy threshold, VLM model, revisions), Indexing and Notifications groups are still saved but not consumed - `phase5-pipeline-adapters`
-- [ ] **TEN-02** (High) Import-time site identity and process-global provider config: SITE_BASE_URL/SITE_HOST/SITE_PREFIX frozen at im… - replace import-time site identity/provider globals with TenantContext lookups
+- [ ] **TEN-02** (High) Import-time site identity and process-global provider config: SITE_BASE_URL/SITE_HOST/SITE_PREFIX frozen at im… - large: replace import-time site identity/provider globals with a per-request TenantContext across ~15 modules
 - [x] **SEC-09** (Medium) Console middleware only checks that a console_session cookie exists; requireSession() runs in the layout and 3… - `phase0-console-engine-hardening`
 - [x] **SEC-10** (Medium) Console login: no rate limit or lockout; error text names OPERATOR_PASSWORD; 7-day token with no revocation; n… - `phase0-console-engine-hardening`
 - [x] **SEC-14** (Medium) Plaintext secrets at rest: Site.settings.wp.app_password in DB JSON; engine API keys in console/instances.json… - site secrets (WordPress app password, IndexNow/Bing keys, Discord webhook, delivery secret) are Fernet-encrypted in the database with SECRETS_KEY (rotation supported) and decrypted only where used; scripts/encrypt_site_secrets.py converts existing rows; the console encrypts instances.json API keys with INSTANCES_KEY. Both are off until you set a key - you must generate and store them. - `phase5-pipeline-adapters`
@@ -170,14 +170,14 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [x] **SEC-21** (Low) Second-order injection via brain/ - get_brain_notes_tool returns first-hand voice notes in full but only the titles/tags of LLM-drafted coverage records, as data under a different key - `phase5-pipeline-adapters`
 - [x] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - a WordPress draft push does not stamp published_at and does not ping search engines; 'live' is reported on the publish result; going live later stamps it - `phase5-pipeline-adapters`
 - [x] **ENG-21** (Low) Observability: /health always OK (no DB check), no readiness probe, no request id, print() in places. - X-Request-ID on every response and log line, LOG_FORMAT=json, access log without query strings; /ready added earlier - `phase5-pipeline-adapters`
-- [ ] **ENG-22** (Low) sdk/service.py is 3,118 lines and REST/MCP duplicate stage-run logic - split sdk/service.py (3.4k lines) along the seams in the plan
+- [ ] **ENG-22** (Low) sdk/service.py is 3,118 lines and REST/MCP duplicate stage-run logic - mechanical but risky: tests monkeypatch names on sdk.service, so a split must keep every patched symbol resolvable there
 - [ ] **SEC-16** (-) Historically leaked Google SA key: scrubbed from master, rotation in GCP IAM never confirmed — and still reach… - confirm/rotate the Google service-account key in GCP IAM (same action as SEC-22) _(owner action)_
 
 #### Phase 3 - Scheduler, workers, quotas, adapters (about 3-4 weeks)
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 32 of 42 done, 5 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 32 of 42 done, 6 partly done, 4 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
@@ -188,18 +188,18 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [x] **ADP-03** (High) _ensure_term: WP returns HTML-encoded names (Tips &amp; Tricks), so equality fails, the POST returns 400 term_… - `phase4-remaining-hardening`
 - [x] **ADP-04** (High) Custom-site delivery: deliver() has no callers, posts unsigned JSON to a process-global URL with no retry, del… - custom-site deliveries are HMAC-signed with a delivery id, retried, per-site URL/secret, and a failed one is stored in a persistent outbox and retried with backoff under the same id (scripts/process_outbox.py; give-up raises an alert). Schedule the processor. - `phase5-pipeline-adapters`
 - [x] **TEN-03** (High) Spend control: search tools call meter() without a site → in shared mode get_or_create_site("") raises and the… - per-site monthly USD cap and a per-site Tavily budget - `phase5-pipeline-adapters`
-- [ ] **TEN-04** (High) Scheduler = single-site Actions pipeline: fixed crons, run_stage.py has no --site, one concurrency group, ~15 … - DB job queue + scheduler honouring cadence; retire the single-site Actions cron
+- [ ] **TEN-04** (High) Scheduler = single-site Actions pipeline: fixed crons, run_stage.py has no --site, one concurrency group, ~15 … - large: needs TEN-02 first (stage handlers are not site-scoped), then a jobs table + scheduler tick + workers
 - [~] **TEN-05** (High) Discord bot isn't tenant-aware (one store behind a channel allow-list) - user allow-list done; one bot serving many sites (guild -> site routing) still open - `phase4-remaining-hardening`
 - [x] **TEN-06** (High) Post-id WP/Elementor routes resolve creds from env only - post-id WordPress/Elementor operations (REST and MCP) take site_slug and use that site's credentials; mandatory on a multi-site engine, never the process env WordPress - `phase5-pipeline-adapters`
 - [x] **SEC-13** (Medium) Webhooks: custom-site push has no HMAC, timestamp, delivery id or retry; Sanity revalidate webhook accepts the… - custom-site pushes are HMAC-signed with timestamp and delivery id, retried, per-site URL/secret; revalidate webhook compares in constant time, drops the body/query secret by default and uses after() for IndexNow - `phase5-pipeline-adapters`
 - [x] **ENG-14** (Medium) Idempotency cache is an in-process dict (no TTL despite the docstring, no cap, per-worker under --workers 2, r… - Idempotency-Key responses are stored in the database for 24h and replayed by any worker - `phase5-pipeline-adapters`
 - [x] **PIPE-09** (Medium) Brief prompt names manage_sheet_tool; the tool is manage_sheet_data_tool - `phase1-quality-gates`
 - [x] **PIPE-10** (Medium) Gemini tool-schema risk: manage_sheet_data_tool.data: Optional[Union[List[List[str]], str]] (nested anyOf), $d… - no tool schema has a nested union or array-of-array parameter (contract test); the sheet tools take plain-text data (JSON text for batch updates) and the model can no longer tune retries/delay - `phase5-pipeline-adapters`
-- [ ] **PIPE-11** (Medium) Brief stage writes inside the agent loop; MaxTurnsExceeded re-runs the agent on the next model and replays wri…
-- [ ] **PIPE-12** (Medium) Screenshot QA is scored by a text-only agent that can't see pixels; VLM QA fails open (passed=True on outage);…
+- [ ] **PIPE-11** (Medium) Brief stage writes inside the agent loop; MaxTurnsExceeded re-runs the agent on the next model and replays wri… - brief writes happen inside the Sheets agent loop; moves with the cutover
+- [~] **PIPE-12** (Medium) Screenshot QA is scored by a text-only agent that can't see pixels; VLM QA fails open (passed=True on outage);… - the retired gemini-3.5-flash-lite is out of the VLM fallback list (guarded by a test); the screenshot QA still fails open on a VLM outage by design (it reports fallback=true) and check-models.yml still probes ids the runner does not use - `phase5-pipeline-adapters`
 - [~] **PIPE-13** (Medium) ~7 FallbackAgentRunner instances each re-seed quota from the Sheets usage log (local date, not Pacific) and di… - one FallbackAgentRunner per process (one set of quota books); making the router the sole quota owner is still open - `phase5-pipeline-adapters`
 - [x] **PIPE-14** (Medium) No run-level token/request/time budget; tavily_crawl_tool(limit, max_depth) is model-controlled and metered as… - per-run budget (RUN_MAX_MODEL_CALLS, RUN_MAX_SECONDS, reset per stage) plus clamped crawl/extract arguments - `phase5-pipeline-adapters`
-- [ ] **PIPE-15** (Medium) get_keyword_tool marks a keyword "used" immediately; release is in-process only, so a killed run loses the top…
+- [ ] **PIPE-15** (Medium) get_keyword_tool marks a keyword "used" immediately; release is in-process only, so a killed run loses the top… - the keyword claim lives in the Sheets path; moves with the cutover (a DB claim_at + sweeper)
 - [x] **PIPE-16** (Medium) Actions concurrency group keeps one pending run — a third dispatch cancels the earlier pending one (contradict… - pipeline concurrency is per stage, so queued runs of different stages no longer evict each other - `phase5-pipeline-adapters`
 - [x] **PIPE-17** (Medium) Import-time key requirements (search_tools.py:10 raises without TAVILY_API_KEY; OPENROUTER_API_KEY read at imp… - `phase5-pipeline-adapters`
 - [x] **PIPE-18** (Medium) grammar_check_tool starts a LanguageTool JVM per call and downloads ~200 MB on every cold Actions runner. - LanguageTool is one process singleton (or a remote server); the pipeline caches its download - `phase5-pipeline-adapters`
@@ -237,7 +237,7 @@ _Goal:_ Operate many instances: fleet home, approvals inbox, users and roles, pr
 - [x] **CON-09** (Medium) Count-by-fetching-all: site detail fetches 500 articles to count statuses; media fetches 500 + one detail call… - `phase0-console-engine-hardening`
 - [~] **CON-10** (Medium) Form input not validated (Number(...) → NaN ids; unbounded numbers; enums not allow-listed). - ids, modes, slugs and settings numbers validated; free-text length limits are enforced by the engine (typed meta patch) rather than duplicated in each action - `phase5-pipeline-adapters`
 - [x] **CON-11** (Medium) Hydration-mismatch risk from toLocaleString() in client components rendered on the server. - `phase0-console-engine-hardening`
-- [ ] **CON-12** (Medium) Very large components: articles/[id]/page.tsx 1,001 lines (7 inline tabs), site-cadence-settings.tsx 899 lines… - split articles/[id]/page.tsx, site-cadence-settings.tsx and lib/shell.tsx (needs browser verification)
+- [ ] **CON-12** (Medium) Very large components: articles/[id]/page.tsx 1,001 lines (7 inline tabs), site-cadence-settings.tsx 899 lines… - needs a browser to verify the console after splitting its largest components
 - [ ] **CON-13** (Medium) One shared operator password; no user identity, roles, or actor on mutations — the engine can't record who app… - decide whether you need separate logins/roles (owner/reviewer/client) before building accounts and an actor on mutations _(needs your decision)_
 - [x] **TEN-08** (Medium) Provisioning: onboarding site #N takes ~21 manual steps (≈12 external accounts, ≥5 file edits/redeploys); the … - POST /sdk/v1/provision (platform key): site + scoped one-time key + health check + a list of what a human still has to do; idempotent; python client provision_site() - `phase5-pipeline-adapters`
 - [x] **OPS-01** (Medium) No migrations chain, backups/PITR, error tracking, uptime probe or alerting beyond Discord pings from run_stag… - audit rows record the acting key; Sentry (scrubbed, optional extra); scripts/backup_db.py with retention; sdk/ops.py + scripts/alerts_check.py (budget, cadence, readiness) posting to Discord; uptime probe workflow; Alembic baseline; docs/operations-runbook.md. Turning on Sentry, the uptime secrets, scheduling the backup/alerts, and Neon PITR are settings only you can make. - `phase5-pipeline-adapters`
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 32 of 42 done, 5 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 32 of 42 done, 6 partly done, 4 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

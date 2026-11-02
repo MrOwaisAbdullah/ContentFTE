@@ -48,13 +48,13 @@ from lib.run_result_utils import loads_lenient
 logger = logging.getLogger(__name__)
 
 # Primary VLM: Qwen 3 VL 30B / 8B via OpenRouter (best-in-class vision & visual QA)
-# with fallback to Gemini 3.5 Flash Lite and DeepSeek V4.1 Flash.
+# with fallback to Gemini 3.1 Flash Lite (3.5 Flash Lite was retired 2026-10).
 IMAGE_VLM_MODEL = os.environ.get("IMAGE_VLM_MODEL") or "qwen/qwen3-vl-30b-a3b-instruct"
 IMAGE_VLM_FALLBACKS = [
     m.strip()
     for m in (
         os.environ.get("IMAGE_VLM_FALLBACKS")
-        or "qwen/qwen3-vl-8b-instruct,gemini-3.5-flash-lite,gemini-2.5-flash"
+        or "qwen/qwen3-vl-8b-instruct,gemini-3.1-flash-lite,gemini-2.5-flash"
     ).split(",")
     if m.strip()
 ]
