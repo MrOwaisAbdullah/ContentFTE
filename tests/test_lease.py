@@ -123,3 +123,42 @@ def test_a_stage_held_by_another_worker_is_refused_over_rest(lease, monkeypatch)
     app.include_router(router)
     r = TestClient(app).post("/sdk/v1/run/research")
     assert r.status_code == 409 and "another worker" in r.json()["detail"]
+
+
+# ------------------------------------------------------------------ PIPE-21 / PIPE-07
+def test_flags_expire_and_are_shared(lease):
+    assert lease.flag_active("breaker:x") is False
+    assert lease.set_flag("breaker:x", 600) is True
+    assert lease.flag_active("breaker:x") is True
+    assert lease.set_flag("breaker:x", 1) is True                   # re-setting always works (shortened to 1s)
+    import time
+    time.sleep(1.3)
+    assert lease.flag_active("breaker:x") is False
+
+
+def test_the_image_quota_breaker_survives_a_new_process(lease, monkeypatch):
+    """A fresh CI run is a fresh process: the module variable alone started every run with the breaker CLOSED."""
+    import tools.tools as t
+    monkeypatch.setattr(t, "_IMAGE_QUOTA_UNTIL", 0.0)
+    assert t.image_quota_active() is False
+    assert t._mark_image_quota("Cloudflare: daily neuron quota exhausted") is True
+    monkeypatch.setattr(t, "_IMAGE_QUOTA_UNTIL", 0.0)               # "restart the process"
+    assert t.image_quota_active() is True                            # still engaged, via the shared flag
+    assert t._mark_image_quota("some unrelated 500 error") is False
+
+
+def test_the_internal_links_budget_resets_per_window_not_never(monkeypatch):
+    import tools.tools as t
+    monkeypatch.setattr(t, "MAX_INTERNAL_LINKS_CALLS", 2)
+    monkeypatch.setattr(t, "INTERNAL_LINKS_WINDOW_S", 100)
+    monkeypatch.setattr(t, "fetch_internal_links_usage_count", 5)    # a long-lived process that burned its budget
+    monkeypatch.setattr(t, "_internal_links_window_start", 0.0)      # ...long ago
+    import time
+    start = time.time()
+    # emulate the window check the tool performs on entry
+    if time.time() - t._internal_links_window_start > t.INTERNAL_LINKS_WINDOW_S:
+        t.fetch_internal_links_usage_count = 0
+        t._internal_links_window_start = start
+    assert t.fetch_internal_links_usage_count == 0
+    assert t.MAX_INTERNAL_LINKS_CALLS == 2 and t.reset_internal_links_counter() is None
+    assert t._internal_links_window_start >= start

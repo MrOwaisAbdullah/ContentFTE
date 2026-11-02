@@ -37,13 +37,7 @@ jobs:
           GEMINI_API_KEY: test
           TAVILY_API_KEY: test
         run: |
-          # Four tests fail on a clean master (tracked in docs/improvement-status.md); they are deselected
-          # so CI is a usable signal. Remove an entry here when its test is fixed.
-          uv run pytest -q -p no:cacheprovider \
-            --deselect tests/test_api_mcp.py::test_content_route_is_unified_delivery_payload \
-            --deselect tests/test_image_pipeline.py::test_score_below_threshold_fails \
-            --deselect tests/test_image_pipeline.py::test_select_inpost_accepts_high_score_stock \
-            --deselect tests/test_image_pipeline.py::test_select_inpost_download_failure_falls_back_to_ai
+          uv run pytest -q -p no:cacheprovider
 
   console:
     runs-on: ubuntu-latest

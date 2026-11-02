@@ -95,6 +95,49 @@ def release(key: str) -> None:
         pass
 
 
+def set_flag(key: str, ttl: int) -> bool:
+    """Raise a shared, self-expiring flag (e.g. "the image provider is out of quota until ...").
+
+    Unlike `claim` this always succeeds: it (re)sets the expiry whoever set it before. Every worker process and
+    every CI run that shares the database sees it (PIPE-21). False only if the database could not be used."""
+    try:
+        init_db()
+        s = get_session()
+        try:
+            expires = _now() + timedelta(seconds=max(1, ttl))
+            row = s.execute(select(Lease).where(Lease.key == key)).scalar_one_or_none()
+            if row is None:
+                try:
+                    s.add(Lease(key=key, holder="flag", expires_at=expires))
+                    s.commit()
+                    return True
+                except IntegrityError:
+                    s.rollback()
+                    row = s.execute(select(Lease).where(Lease.key == key)).scalar_one_or_none()
+            if row is not None:
+                row.holder, row.expires_at = "flag", expires
+                s.commit()
+            return True
+        finally:
+            s.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def flag_active(key: str) -> bool:
+    """True while a flag raised with `set_flag` has not expired. False on any database problem (fail open)."""
+    try:
+        init_db()
+        s = get_session()
+        try:
+            row = s.execute(select(Lease).where(Lease.key == key)).scalar_one_or_none()
+            return bool(row is not None and _aware(row.expires_at) > _now())
+        finally:
+            s.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def idem_get(key: str) -> Optional[dict]:
     try:
         init_db()

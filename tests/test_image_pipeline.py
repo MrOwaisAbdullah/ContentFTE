@@ -111,9 +111,11 @@ def test_score_high_passes(monkeypatch):
 
 def test_score_below_threshold_fails(monkeypatch):
     _patch_vlm(monkeypatch)
-    monkeypatch.setattr(image_vision, "call_jev_sync", lambda state, q: _Resp(0.72))
+    # The stock gate judges topic relevancy ALONE (art style is irrelevant for a stock photo), with a floor of
+    # IMAGE_STOCK_RELEVANCY_THRESHOLD (0.30) - the older 0.8 bar in this test was removed on purpose.
+    monkeypatch.setattr(image_vision, "call_jev_sync", lambda state, q: _Resp(0.22))
     out = image_vision.score_topic_relevancy("x.jpg", "neural nets")
-    assert out["score"] == 72
+    assert out["score"] == 22
     assert out["passed"] is False
     assert out["fallback"] is False
 

@@ -311,8 +311,10 @@
       "phase": "2"
     },
     "PIPE-07": {
-      "status": "open",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "internal-link fetch budget is per time window (INTERNAL_LINKS_WINDOW_S) and defaults to 6 calls (one per H2), so a long-lived API/MCP process no longer returns [] forever"
     },
     "PIPE-08": {
       "status": "done",
@@ -382,8 +384,10 @@
       "note": "preferred/banned term contradiction fixed and guarded by a test; the author persona is still hard-coded rather than read from BrandProfile"
     },
     "PIPE-21": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "the image-provider quota breaker is stored in the database as an expiring flag, so a new CI run starts with it engaged instead of re-burning an attempt"
     },
     "PIPE-22": {
       "status": "done",

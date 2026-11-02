@@ -59,9 +59,9 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | Phase | `phase0-console-engine-hardening` | `phase1-quality-gates` | `phase2-site-api-keys` | `phase3-tenant-isolation` | `phase4-remaining-hardening` | `phase5-pipeline-adapters` | Not fully done |
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
-| 1 - Make the quality gates real | 1 | 8 | - | - | - | 10 | 15 |
+| 1 - Make the quality gates real | 1 | 8 | - | - | - | 11 | 14 |
 | 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 13 | 15 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 26 | 15 |
+| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 27 | 14 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -107,12 +107,12 @@ _Goal:_ Close the open doors: unauthenticated /mcp and REST, secrets in response
 
 _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO gates run on every path to approved; honest structured data and dates; cadence and duplicate controls.
 
-**Status: in progress** - 11 of 26 done, 8 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 12 of 26 done, 8 partly done, 6 not done (item-by-item list in section 2).
 
 - [ ] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft …
 - [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish…
 - [ ] **PIPE-05** (High) Head-of-line blocking: content always takes the first Generated=No brief, post always row 2; a poison row burn…
-- [ ] **PIPE-07** (High) Internal-link fetch budget is a process global reset only in run_content/run_post — in the long-lived API/MCP …
+- [x] **PIPE-07** (High) Internal-link fetch budget is a process global reset only in run_content/run_post — in the long-lived API/MCP … - internal-link fetch budget is per time window (INTERNAL_LINKS_WINDOW_S) and defaults to 6 calls (one per H2), so a long-lived API/MCP process no longer returns [] forever - `phase5-pipeline-adapters`
 - [x] **SEO-01** (High) lib/eval_gate.check_gate / write_audit have no production caller; the evaluator prompt claims "the caller stil… - `phase1-quality-gates`
 - [x] **SEO-02** (High) SDK/MCP path _content_checks has no fact-check or link validation; external-link check only counts links (and … - SDK/approve path; the Sheets path still relies on the prompt - `phase1-quality-gates`
 - [ ] **SEO-04** (High) MAJOR refresh = new URL + 301 whenever decay ≥ 50% or the page is > 365 days old — resets URL history, and cli… - REFRESH_POLICY switch is built (escalate|in_place); you choose — recommended in_place _(needs your decision)_
@@ -177,7 +177,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 27 of 42 done, 7 partly done, 8 not done (item-by-item list in section 2).
+**Status: in progress** - 28 of 42 done, 7 partly done, 7 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
@@ -216,7 +216,7 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [x] **OPS-02** (Medium) Stage single-flight and idempotency are in-process while the image runs --workers 2. - stage runs, publish and generate are single-flight across worker processes via expiring database leases; Idempotency-Key replay is stored in the database - `phase5-pipeline-adapters`
 - [x] **PIPE-19** (Low) router.yaml disables gemma-4-26b/31b but LLM_MODELS still lists them → wrong per-model accounting. - runner fleet drops every model router.yaml disables - `phase5-pipeline-adapters`
 - [~] **PIPE-20** (Low) Author persona hard-coded as "Owais Abdullah"; preferred_terms maps "tool"→"solution" while "solution" is bann… - preferred/banned term contradiction fixed and guarded by a test; the author persona is still hard-coded rather than read from BrandProfile - `phase5-pipeline-adapters`
-- [ ] **PIPE-21** (Low) Image quota breaker is process-local → each CI run re-burns an attempt against the Cloudflare daily cap.
+- [x] **PIPE-21** (Low) Image quota breaker is process-local → each CI run re-burns an attempt against the Cloudflare daily cap. - the image-provider quota breaker is stored in the database as an expiring flag, so a new CI run starts with it engaged instead of re-burning an attempt - `phase5-pipeline-adapters`
 - [x] **PIPE-22** (Low) Dependencies: >= floors only (lock is the only pin); bs4 dummy package; deprecated oauth2client; requirements.… - PR CI (pytest, console tsc+tests, SDK build+smoke); unused deps removed; bs4 -> beautifulsoup4; requirements.txt exported from the lock; bot requirements bounded - `phase5-pipeline-adapters`
 - [x] **PIPE-23** (Low) log_coverage pushes to git without rebase on a shallow checkout; assumes one repo per site. - log_coverage retries a rejected push after a rebase, and LOG_COVERAGE_GIT=0 keeps coverage in the database only - `phase5-pipeline-adapters`
 - [x] **ADP-14** (Low) Sanity: publishes without mainImage though the schema requires it (Studio-invalid doc, the 2026-10-08 incident… - publishedAt/updatedAt/canonicalUrl fields in schema and adapter; SANITY_REQUIRE_IMAGE=1 holds an image-less post as a draft instead of publishing it invalid - `phase5-pipeline-adapters`
@@ -617,7 +617,7 @@ Task list in §2.
 
 ### Phase 1 — Make the quality gates real (≈2 weeks)
 <!-- phase-status:1:start -->
-**Status: in progress** - 11 of 26 done, 8 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 12 of 26 done, 8 partly done, 6 not done (item-by-item list in section 2).
 <!-- phase-status:1:end -->
 - SEO-01/SEO-02/PIPE-01: `check_gate` + fixed fact-check + link validation enforced in code on every path to `approved`; audit rows persisted.
 - SEO-09: overall score computed in code; accuracy + experience sub-scores; code-snippet verifier (AST/import check + context7 docs lookup for library APIs).
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 27 of 42 done, 7 partly done, 8 not done (item-by-item list in section 2).
+**Status: in progress** - 28 of 42 done, 7 partly done, 7 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

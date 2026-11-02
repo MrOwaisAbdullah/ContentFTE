@@ -30,14 +30,20 @@ logger = logging.getLogger(__name__)
 
 # Global variable to track fetch_internal_links_tool usage
 fetch_internal_links_usage_count = 0
-MAX_INTERNAL_LINKS_CALLS = 3
+# One call per H2 (4-6) is what the writer prompt asks for; 3 starved every longer post (PIPE-07).
+MAX_INTERNAL_LINKS_CALLS = int(os.environ.get("INTERNAL_LINKS_MAX_CALLS") or "6")
+# The counter is a process global that only the pipeline stages reset. In the long-lived API / MCP process nothing
+# did, so after the first few calls ever made the tool returned [] FOREVER. The budget is now per time window.
+INTERNAL_LINKS_WINDOW_S = int(os.environ.get("INTERNAL_LINKS_WINDOW_S") or "1800")
+_internal_links_window_start = 0.0
 
 
 def reset_internal_links_counter():
     """Reset the per-stage internal links call counter. Call at the start of
     each pipeline stage so every stage gets its own budget of 3 calls."""
-    global fetch_internal_links_usage_count
+    global fetch_internal_links_usage_count, _internal_links_window_start
     fetch_internal_links_usage_count = 0
+    _internal_links_window_start = time.time()
 
 # Define Pydantic model for FAQ items
 class FAQItem(BaseModel):
@@ -707,10 +713,20 @@ _QUOTA_MARKERS = ("quota", "rate limit", "ratelimit", "too many requests",
                   "out of capacity", "insufficient credit", "limit reached")
 
 
+_IMAGE_BREAKER_KEY = "breaker:image-provider"
+
+
 def image_quota_active() -> bool:
-    """True while the quota circuit breaker is engaged (fails open)."""
+    """True while the quota circuit breaker is engaged (fails open).
+
+    The breaker is shared through the database (lib/lease.py) as well as held in this process: it used to be a
+    module variable, so every fresh CI run - a new process - started with it closed and spent another attempt
+    on a provider that was out of quota for the day (PIPE-21)."""
     try:
-        return time.time() < _IMAGE_QUOTA_UNTIL
+        if time.time() < _IMAGE_QUOTA_UNTIL:
+            return True
+        from lib import lease
+        return lease.flag_active(_IMAGE_BREAKER_KEY)
     except Exception:
         return False
 
@@ -725,6 +741,8 @@ def _mark_image_quota(detail: str) -> bool:
         return False
     try:
         _IMAGE_QUOTA_UNTIL = time.time() + max(60, IMAGE_QUOTA_COOLDOWN_S)
+        from lib import lease
+        lease.set_flag(_IMAGE_BREAKER_KEY, max(60, IMAGE_QUOTA_COOLDOWN_S))
     except Exception:
         pass
     logger.warning(
@@ -1703,7 +1721,6 @@ def _select_inpost_image(
     hooks exist for tests; production callers use the defaults
     (_fetch_stock_image, image_vision.score_topic_relevancy, _generate_image).
     """
-    fetch_stock = fetch_stock or _fetch_stock_image
     score_fn = score or image_vision.score_topic_relevancy
     generate_fn = generate or _generate_image
     threshold = int(image_vision.IMAGE_STOCK_RELEVANCY_THRESHOLD * 100)
@@ -1722,9 +1739,16 @@ def _select_inpost_image(
     candidates: List[Dict[str, Any]] = []
     if (topic or "").strip():
         try:
-            candidates = _fetch_stock_candidates(topic, count=3)
+            if fetch_stock is not None:
+                # An injected fetcher (tests, or a caller with its own source) yields ONE candidate. It used to be
+                # silently ignored in favour of Pexels, so the hook documented above did nothing.
+                one = fetch_stock(topic, "inpost") or {}
+                candidates = [one] if one.get("image_url") else []
+            else:
+                candidates = _fetch_stock_candidates(topic, count=3)
         except Exception as e:
-            logger.warning(f"_fetch_stock_candidates raised for {topic!r}: {e}")
+            logger.warning(f"stock candidate fetch raised for {topic!r}: {e}")
+    undownloadable = 0
 
     best_candidate = None
     best_verdict = None
@@ -1736,6 +1760,7 @@ def _select_inpost_image(
             continue
         local = cand_url if not cand_url.startswith("http") else _download_image_to_temp(cand_url)
         if not local:
+            undownloadable += 1
             continue
         try:
             verdict = score_fn(local, topic, section_summary) or {}
@@ -1788,7 +1813,8 @@ def _select_inpost_image(
             gate["decision"] = "stock_accepted"
             return out
     else:
-        gate.update(stock_candidate=None, stock_passed=False, stock_error="no candidates evaluated")
+        gate.update(stock_candidate=None, stock_passed=False, stock_error="no candidates evaluated",
+                    stock_download_failed=bool(undownloadable))
         _log_gate("stock_unavailable", "no stock candidates passed inspection")
 
     # Stock rejected/unavailable -> in-post AI lane (textless, Jev-ranked look).
@@ -2147,7 +2173,10 @@ def fetch_internal_links_tool(topic: str, max_results: int = 3, exclude_slug: st
     Returns:
         dict: Result containing status, links, and message or error.
     """
-    global fetch_internal_links_usage_count
+    global fetch_internal_links_usage_count, _internal_links_window_start
+    if time.time() - _internal_links_window_start > INTERNAL_LINKS_WINDOW_S:
+        fetch_internal_links_usage_count = 0                 # a new run window: the budget starts over
+        _internal_links_window_start = time.time()
     
     # Increment usage counter
     fetch_internal_links_usage_count += 1

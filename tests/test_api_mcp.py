@@ -438,7 +438,7 @@ def test_content_route_is_unified_delivery_payload():
     assert body["meta"]["summary"] == "A meta description."
     # FAQ accordion HTML for non-React custom sites (same markup as WP)
     assert "<details" in body["faq_html"] and "contentfte-faq" in body["faq_html"]
-    assert body["status"] == "briefed" and body["scores"] == {}
+    assert body["status"] == "briefed" and body["scores"] == {"sub_scores": {}}   # normalized shape the console reads
 
 
 def test_list_articles_route_and_tool():
