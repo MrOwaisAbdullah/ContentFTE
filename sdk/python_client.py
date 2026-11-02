@@ -79,6 +79,11 @@ class ContentFTEClient:
             return resp.json()
         raise last_exc  # type: ignore[misc]
 
+    def provision_site(self, slug: str, **fields) -> dict:
+        """Onboard a site in one call (platform key). `fields`: name, site_type, base_url, settings,
+        key_label, key_scopes, rotate_key, check_health. The returned `key.key` is shown once."""
+        return self._request("POST", "/sdk/v1/provision", json={"slug": slug, **fields})
+
     def submit_article(self, site_slug: str, keyword: str = "", brief: dict | None = None,
                        idempotency_key: str = "") -> dict:
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}

@@ -65,7 +65,7 @@ def test_service_full_lifecycle():
     assert "error" in refused and "approved" in refused["error"]
 
     approved = service.approve_article(art["id"], approved=True, note="gate passed")
-    assert approved["status"] == "approved" and approved["event"] == "article.published"
+    assert approved["status"] == "approved" and approved["event"] == "article.approved" and approved["legacy_event"] == "article.published"
 
     pub = service.publish_article(art["id"], mode="draft")
     assert pub["status"] == "published" and pub["event"] == "article.published"
@@ -124,7 +124,7 @@ def test_rest_api_endpoints_and_idempotency():
     content = client.get(f"/sdk/v1/articles/{aid}/content")
     assert content.status_code == 200 and "html" in content.json()
     ok = client.post(f"/sdk/v1/articles/{aid}/approve", json={"approved": True})
-    assert ok.json()["event"] == "article.published"
+    assert ok.json()["event"] == "article.approved" and ok.json()["legacy_event"] == "article.published"
     health = client.get("/sdk/v1/sites/api-site/health")
     assert health.status_code == 200 and health.json()["site"] == "api-site"
     # 404 for unknown article

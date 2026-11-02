@@ -68,6 +68,7 @@ def assess(
     faqs: Optional[list] = None,
     check_links: Optional[bool] = None,
     head_fn: Optional[Callable[[str], tuple]] = None,
+    siblings: Optional[Iterable[tuple]] = None,
 ) -> dict:
     meta = meta if isinstance(meta, dict) else {}
     content_md = content_md or ""
@@ -87,6 +88,21 @@ def assess(
             blocking.append(f"draft check '{name}' failed{detail}")
     else:
         checks["draft"] = {"skipped": "no generation checks recorded (not engine-generated)"}
+
+    # 1b) near-duplicate of an article the site already has (scaled-content control, SEO-05).
+    #     `siblings` = (id, title, markdown) of the site's other articles; the caller supplies them.
+    if siblings is not None:
+        from lib import similarity
+        dupes = similarity.near_duplicates(content_md, siblings)
+        checks["near_duplicate"] = {"matches": dupes, "threshold": similarity.DEFAULT_THRESHOLD}
+        if dupes and dupes[0]["similarity"] >= similarity.DEFAULT_THRESHOLD:
+            top = dupes[0]
+            blocking.append(f"near-duplicate of article #{top['id']} '{top['title']}' "
+                            f"({int(top['similarity'] * 100)}% of its phrasing is shared)")
+        elif dupes:
+            top = dupes[0]
+            warnings.append(f"overlaps article #{top['id']} '{top['title']}' "
+                            f"({int(top['similarity'] * 100)}% shared phrasing) - check it is not the same article")
 
     # 2) fact-check against the research on file
     excerpts = [e for e in (source_excerpts or []) if str(e).strip()]

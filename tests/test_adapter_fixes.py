@@ -603,3 +603,10 @@ def test_no_preferred_term_replacement_is_a_banned_word():
     banned = {b.strip().lower() for b in data.get("banned_words", [])}
     for src, repl in (data.get("preferred_terms") or {}).items():
         assert repl.strip().lower() not in banned, f"'{src}' -> '{repl}' is also a banned word"
+
+
+# ---- PIPE-23: log_coverage can skip git, and retries a rejected push after a rebase --------------------------------
+def test_log_coverage_git_can_be_disabled_and_push_retries_after_rebase():
+    src = open("scripts/run_stage.py", encoding="utf-8").read()
+    assert 'LOG_COVERAGE_GIT' in src and '"pull", "--rebase", "--autostash"' in src
+    assert src.index("LOG_COVERAGE_GIT") < src.index('_run_git("add"')       # the opt-out comes before any git write

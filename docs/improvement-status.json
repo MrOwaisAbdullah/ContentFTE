@@ -149,9 +149,9 @@
     },
     "SEC-23": {
       "status": "partial",
-      "branch": "p4",
-      "note": "workflow permissions: contents: read done; move secrets to a master-only GitHub Environment and split log_coverage into its own job (repo settings)",
-      "phase": "0"
+      "branch": "p5",
+      "phase": "0",
+      "note": "least-privilege workflow permissions; git credentials are persisted only for log_coverage; secrets in a master-only GitHub Environment is a repo setting you must apply"
     },
     "SEC-24": {
       "status": "done",
@@ -170,10 +170,10 @@
       "phase": "0"
     },
     "ENG-03": {
-      "status": "partial",
-      "branch": "p4",
-      "note": "per-process single-flight done; a DB-level claim is needed for multi-worker deployments",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "publish single-flight now spans processes (database lease)"
     },
     "ENG-04": {
       "status": "partial",
@@ -210,9 +210,9 @@
     },
     "ENG-10": {
       "status": "partial",
-      "branch": "p4",
-      "note": "approving a published article no longer regresses it; full transition table open; event name kept for compatibility",
-      "phase": "2"
+      "branch": "p5",
+      "phase": "2",
+      "note": "approve no longer regresses a published article and the event is now article.approved (legacy_event keeps the old name for one release); a full transition table is still open"
     },
     "ENG-11": {
       "status": "done",
@@ -232,10 +232,10 @@
       "phase": "2"
     },
     "ENG-14": {
-      "status": "partial",
+      "status": "done",
       "branch": "p5",
-      "note": "bounded 24h TTL cache that replays copies; still per process - a database-backed key store is needed for multiple workers",
-      "phase": "3"
+      "phase": "3",
+      "note": "Idempotency-Key responses are stored in the database for 24h and replayed by any worker"
     },
     "ENG-15": {
       "status": "partial",
@@ -351,8 +351,10 @@
       "phase": "3"
     },
     "PIPE-16": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "pipeline concurrency is per stage, so queued runs of different stages no longer evict each other"
     },
     "PIPE-17": {
       "status": "done",
@@ -388,8 +390,10 @@
       "phase": "3"
     },
     "PIPE-23": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "log_coverage retries a rejected push after a rebase, and LOG_COVERAGE_GIT=0 keeps coverage in the database only"
     },
     "ADP-01": {
       "status": "done",
@@ -499,9 +503,9 @@
     },
     "SEO-05": {
       "status": "partial",
-      "branch": "p1",
-      "note": "posting cap enforced as a sliding window; embedding near-duplicate and cross-tenant duplicate checks open",
-      "phase": "1"
+      "branch": "p5",
+      "phase": "1",
+      "note": "cadence cap + same-site near-duplicate check at approval (word-shingle similarity, blocks above 50%); cross-tenant duplicate detection is deliberately not done (another tenant's content is not ours to read)"
     },
     "SEO-06": {
       "status": "open",
@@ -774,9 +778,10 @@
       "phase": "3"
     },
     "TEN-08": {
-      "status": "open",
-      "note": "one-call provisioning API (about 21 manual steps today)",
-      "phase": "4"
+      "status": "done",
+      "branch": "p5",
+      "phase": "4",
+      "note": "POST /sdk/v1/provision (platform key): site + scoped one-time key + health check + a list of what a human still has to do; idempotent; python client provision_site()"
     },
     "TEN-09": {
       "status": "decision",
@@ -789,9 +794,10 @@
       "phase": "4"
     },
     "OPS-02": {
-      "status": "open",
-      "note": "stage single-flight and idempotency must survive multiple workers (DB-backed)",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "stage runs, publish and generate are single-flight across worker processes via expiring database leases; Idempotency-Key replay is stored in the database"
     },
     "OPS-03": {
       "status": "done",

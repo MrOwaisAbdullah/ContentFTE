@@ -66,6 +66,7 @@ ROUTES: dict[tuple[str, str], tuple[str, str]] = {
     ("GET", f"{P}/spend/summary"): (SELF, "read"),
     # --- platform only ------------------------------------------------------------------------
     ("POST", f"{P}/sites"): (PLATFORM, "admin"),                 # create/edit a site (and its secrets)
+    ("POST", f"{P}/provision"): (PLATFORM, "admin"),             # one-call onboarding: site + scoped key
     ("DELETE", f"{P}/sites/{{site_slug}}"): (PLATFORM, "admin"),
     ("GET", f"{P}/sites/{{site_slug}}/keys"): (PLATFORM, "admin"),      # a key must not mint keys
     ("POST", f"{P}/sites/{{site_slug}}/keys"): (PLATFORM, "admin"),

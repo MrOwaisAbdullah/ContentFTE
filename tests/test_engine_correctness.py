@@ -497,3 +497,53 @@ def test_concurrent_site_creation_does_not_blow_up(svc):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errors and len(set(ids)) == 1
+
+
+# ------------------------------------------------------------------ TEN-08: one-call provisioning
+def test_provisioning_creates_the_site_and_a_one_time_key_and_is_idempotent(svc, monkeypatch):
+    monkeypatch.setattr(svc, "site_health", lambda slug, **k: {"ok": True})
+    out = svc.provision_site("new-client", name="New Client", site_type="custom", base_url="https://new.test",
+                             settings={"posting_frequency": "weekly"})
+    assert "error" not in out and out["created"] is True
+    assert out["key"]["key"].startswith("cfte_") and out["key"]["scopes"] == ["read", "write"]
+    assert out["health"] == {"ok": True}
+    assert any("only once" in t for t in out["next"])
+    # a re-run does NOT mint a second plaintext key
+    again = svc.provision_site("new-client", base_url="https://new.test")
+    assert again["created"] is False and again["key"] is None and "already has" in again["key_note"]
+    # ...unless asked to
+    rotated = svc.provision_site("new-client", rotate_key=True)
+    assert rotated["key"]["key"] != out["key"]["key"]
+
+
+def test_provisioning_validates_and_lists_what_a_human_still_has_to_do(svc, monkeypatch):
+    monkeypatch.setattr(svc, "site_health", lambda slug, **k: {"ok": False})
+    assert "invalid site slug" in svc.provision_site("Bad Slug")["error"]
+    assert "invalid site_type" in svc.provision_site("ok-slug", site_type="ghost")["error"]
+    assert "invalid base_url" in svc.provision_site("ok-slug", base_url="ftp://x")["error"]
+    wp = svc.provision_site("wp-client", site_type="wordpress", base_url="https://wp.test")
+    assert any("application password" in t for t in wp["next"])
+    done = svc.provision_site("wp-client-2", site_type="wordpress", base_url="https://wp2.test",
+                              settings={"wp": {"username": "ed", "app_password": "abcd efgh"}})
+    assert not any("application password" in t for t in done["next"])
+    # the secret was stored but is not echoed back
+    assert "abcd efgh" not in str(done)
+
+
+def test_a_site_key_cannot_provision(svc):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from sdk.server import router
+    k = svc.provision_site("tenant-a", base_url="https://a.test", check_health=False)["key"]["key"]
+    app = FastAPI()
+    app.include_router(router)
+    import os
+    os.environ["SDK_MASTER_KEY"] = "platform-key"
+    try:
+        c = TestClient(app)
+        assert c.post("/sdk/v1/provision", json={"slug": "tenant-b"}, headers={"X-Site-Key": k}).status_code == 403
+        ok = c.post("/sdk/v1/provision", json={"slug": "tenant-b", "check_health": False},
+                    headers={"X-Site-Key": "platform-key"})
+        assert ok.status_code == 200 and ok.json()["key"]["key"].startswith("cfte_")
+    finally:
+        os.environ.pop("SDK_MASTER_KEY", None)

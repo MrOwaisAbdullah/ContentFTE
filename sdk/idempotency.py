@@ -23,7 +23,10 @@ DEFAULT_MAX_ENTRIES = 5000
 
 class IdempotencyCache:
     def __init__(self, ttl: float = DEFAULT_TTL_SECONDS, max_entries: int = DEFAULT_MAX_ENTRIES,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, shared: bool = False):
+        # `shared=True` also writes through to the database (lib/lease.py), so a retry that lands on another
+        # worker is replayed too. The in-memory copy stays as the fast path and the fallback.
+        self.shared = shared
         self.ttl = ttl
         self.max_entries = max(1, int(max_entries))
         self._clock = clock
@@ -31,6 +34,11 @@ class IdempotencyCache:
         self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[dict]:
+        if self.shared:
+            from lib import lease
+            hit = lease.idem_get(key)
+            if hit is not None:
+                return hit
         with self._lock:
             hit = self._items.get(key)
             if hit is None:
@@ -43,6 +51,9 @@ class IdempotencyCache:
             return copy.deepcopy(value)
 
     def set(self, key: str, value: dict) -> None:
+        if self.shared:
+            from lib import lease
+            lease.idem_put(key, value)
         with self._lock:
             self._items[key] = (self._clock(), copy.deepcopy(value))
             self._items.move_to_end(key)

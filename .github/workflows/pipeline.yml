@@ -87,8 +87,13 @@ on:
 # lib/sanity_adapter.py -- but this avoids the wasted work in the first
 # place.) cancel-in-progress: false means a second trigger queues and runs
 # after the first finishes, rather than being dropped.
+#
+# The group is PER STAGE (PIPE-16). A single global group keeps only ONE pending run: a third dispatch while one
+# is running and one is queued silently cancelled the queued one (e.g. a Discord "run content" lost behind a
+# scheduled "research" and a manual "post"). Same stage still serialises - the case this protects - while
+# different stages no longer evict each other from the queue.
 concurrency:
-  group: contentspark-pipeline
+  group: contentspark-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.event.schedule || 'run' }}
   cancel-in-progress: false
 
 jobs:
@@ -104,8 +109,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-
       - name: Resolve stage
         id: resolve
         run: |
@@ -129,6 +132,13 @@ jobs:
                 ;;
             esac
           fi
+
+      # Checkout comes after "Resolve stage" on purpose: the workflow token is left in the repo's git config
+      # ONLY for log_coverage (the one stage that pushes). Every other stage runs LLM agents over untrusted web
+      # content with ~20 secrets in scope; it must not also find a write-capable token on disk (SEC-23).
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: ${{ steps.resolve.outputs.stage == 'log_coverage' }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0

@@ -43,7 +43,7 @@ Endpoints:
 Auth: per-site API key via X-Site-Key header (SDK_MASTER_KEY, dev-open when
 unset). Idempotency-Key honored on POST /articles (24h in-memory cache, bounded; see sdk/idempotency.py).
 Webhook events returned in responses: article.ready / article.drafted /
-article.published / article.needs_review. Every mutating action is
+article.approved (legacy: article.published) / article.needs_review. Every mutating action is
 audit-logged by the service.
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ router = APIRouter(prefix="/sdk/v1", tags=["sdk"], dependencies=[Depends(authori
 
 logger = logging.getLogger("sdk.server")
 
-_idempotency = IdempotencyCache()
+_idempotency = IdempotencyCache(shared=True)
 
 
 def _ctx() -> AuthContext:
@@ -394,6 +394,32 @@ def upsert_site(body: SiteUpsert, x_site_key: str | None = Header(default=None))
                                settings=body.settings)
 
 
+class ProvisionRequest(BaseModel):
+    slug: str = Field(max_length=63)
+    name: str = Field(default="", max_length=200)
+    site_type: str = "custom"           # custom | wordpress
+    base_url: str = Field(default="", max_length=300)
+    settings: dict[str, Any] | None = None
+    key_label: str = Field(default="", max_length=120)
+    key_scopes: list[str] | None = None  # default: read + write
+    rotate_key: bool = False
+    check_health: bool = True
+
+
+@router.post("/provision")
+def provision_site(body: ProvisionRequest, x_site_key: str | None = Header(default=None)) -> dict:
+    """Onboard a site in one call: create/update it, mint its scoped API key (shown once) and check that it can
+    reach its CMS. Idempotent. Platform key only."""
+    _check_site_key(x_site_key)
+    result = service.provision_site(
+        body.slug, name=body.name, site_type=body.site_type, base_url=body.base_url, settings=body.settings,
+        key_label=body.key_label, key_scopes=body.key_scopes, rotate_key=body.rotate_key,
+        check_health=body.check_health, via="sdk")
+    if "error" in result:
+        raise EngineHTTPError(result, 400 if "invalid" in result["error"] or "unknown scope" in result["error"] else None)
+    return result
+
+
 @router.delete("/sites/{site_slug}")
 def delete_site(site_slug: str, x_site_key: str | None = Header(default=None)) -> dict:
     _check_site_key(x_site_key)
@@ -625,6 +651,13 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
             raise HTTPException(status_code=409,
                                 detail=f"stage '{stage}' is already running")
         _running_stages.add(stage)
+    # ...and across worker processes: `--workers 2` has two copies of the set above, so the same stage could
+    # start twice. The lease lives in the database and expires, so a killed run cannot block the stage forever.
+    from lib import lease as _lease
+    if _lease.claim(f"stage:{stage}", ttl=3600) is False:
+        with _run_lock:
+            _running_stages.discard(stage)
+        raise HTTPException(status_code=409, detail=f"stage '{stage}' is already running on another worker")
 
     def _invoke() -> None:
         try:
@@ -647,6 +680,7 @@ def run_stage(stage: str, background_tasks: BackgroundTasks,
         finally:
             with _run_lock:
                 _running_stages.discard(stage)
+            _lease.release(f"stage:{stage}")
 
     background_tasks.add_task(_invoke)
     out = {"status": "accepted", "stage": stage}

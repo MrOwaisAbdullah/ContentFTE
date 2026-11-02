@@ -1019,6 +1019,12 @@ async def run_stage(params: RunStageInput) -> str:
             return _out({"error": f"stage '{stage}' is already running",
                          "next": "wait for the current run to finish"})
         _running_stages.add(stage)
+    from lib import lease as _lease
+    if await asyncio.to_thread(_lease.claim, f"stage:{stage}", 3600) is False:
+        with _stage_lock:
+            _running_stages.discard(stage)
+        return _out({"error": f"stage '{stage}' is already running on another worker",
+                     "next": "wait for the current run to finish"})
 
     async def _invoke() -> None:
         try:
@@ -1028,6 +1034,7 @@ async def run_stage(params: RunStageInput) -> str:
         finally:
             with _stage_lock:
                 _running_stages.discard(stage)
+            await asyncio.to_thread(_lease.release, f"stage:{stage}")
 
     task = asyncio.create_task(_invoke())
     _stage_tasks.add(task)

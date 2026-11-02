@@ -2227,6 +2227,12 @@ async def run_log_coverage() -> None:
         print("[log_coverage] Nothing new to log; all approved posts already have a coverage file.")
         return
 
+    if (os.environ.get("LOG_COVERAGE_GIT") or "1").strip().lower() in ("0", "false", "off", "no"):
+        # DB-only mode (PIPE-23): the coverage rows were already mirrored to the database above; do not commit
+        # to a repository at all. Right for a multi-site deployment where one git repo cannot belong to every site.
+        print(f"[log_coverage] LOG_COVERAGE_GIT=0 - kept {len(new_files)} coverage record(s) in the database only.")
+        return
+
     rel_paths = [os.path.relpath(p, _REPO_ROOT) for p in new_files]
     _run_git("config", "user.name", "seo-blog-agent-pipeline")
     _run_git("config", "user.email", f"pipeline@{SITE_HOST}")
@@ -2239,7 +2245,14 @@ async def run_log_coverage() -> None:
     if commit_result.returncode != 0:
         print(f"[log_coverage] git commit failed: {commit_result.stderr}")
         return
+    # A shallow Actions checkout is behind the branch as soon as anyone else pushes between our checkout and
+    # now, so a bare `git push` is rejected as non-fast-forward. Rebase onto the remote and retry (PIPE-23).
     push_result = _run_git("push")
+    for _attempt in range(2):
+        if push_result.returncode == 0:
+            break
+        _run_git("pull", "--rebase", "--autostash")
+        push_result = _run_git("push")
     if push_result.returncode != 0:
         print(f"[log_coverage] git push failed: {push_result.stderr}")
         _notify_discord_status(

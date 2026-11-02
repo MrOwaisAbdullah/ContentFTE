@@ -2076,6 +2076,18 @@ def _research_corpus(s, art: ArticleModel) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
+def _sibling_articles(s, art: ArticleModel, limit: int = 300) -> list[tuple]:
+    """(id, title, markdown) of the SAME site's other articles that have content - what a draft is compared
+    with for near-duplicate detection. Same site only: another tenant's articles are not ours to read."""
+    rows = s.execute(
+        select(ArticleModel.id, ArticleModel.title, ArticleModel.content_md)
+        .where(ArticleModel.site_id == art.site_id, ArticleModel.id != art.id,
+               ArticleModel.content_md.is_not(None), ArticleModel.status != "rejected")
+        .order_by(ArticleModel.id.desc()).limit(limit)
+    ).all()
+    return [(r[0], r[1] or "", r[2] or "") for r in rows if (r[2] or "").strip()]
+
+
 def _assess_gate(s, art: ArticleModel, check_links: bool | None = None) -> dict:
     meta = art.meta or {}
     return quality_gate.assess(
@@ -2084,6 +2096,7 @@ def _assess_gate(s, art: ArticleModel, check_links: bool | None = None) -> dict:
         source_excerpts=_research_corpus(s, art),
         faqs=meta.get("faqs"),
         check_links=check_links,
+        siblings=_sibling_articles(s, art),
     )
 
 
@@ -2164,7 +2177,10 @@ def approve_article(article_id: int, approved: bool = True, note: str = "",
         ))
         s.commit()
         return {"id": art.id, "status": art.status,
-                "event": "article.published" if approved else "article.needs_review",
+                # Approval is not publication: the event is `article.approved`. `legacy_event` keeps the old
+                # (misleading) name for one release so a consumer keyed on it keeps working (ENG-10).
+                "event": "article.approved" if approved else "article.needs_review",
+                **({"legacy_event": "article.published"} if approved else {}),
                 **({"gate": {"pass": gate["pass"], "warnings": gate["warnings"],
                              **({"overridden": overridden} if overridden else {})}}
                    if gate else {})}
@@ -2778,19 +2794,30 @@ def _claim(kind: str, article_id: int) -> bool:
     """Take the single-flight slot for (operation, article). False if one is already running in this
     process. A double-clicked Publish, or a console retry while the first call is still in flight,
     used to run twice and create two WordPress posts (the id was only saved AFTER the remote create);
-    two concurrent generations both ran the LLM and both wrote (plan ENG-03 / ENG-04). Per-process:
-    a multi-worker deployment still needs the DB-level claim from the plan's later phases."""
+    two concurrent generations both ran the LLM and both wrote (plan ENG-03 / ENG-04). Across
+    processes too: the claim is mirrored in the `leases` table (lib/lease.py), which expires, so a killed
+    worker cannot wedge an article."""
     with _inflight_lock:
         key = (kind, int(article_id))
         if key in _inflight:
             return False
         _inflight.add(key)
-        return True
+    # Cross-process: the same claim in the database, so a second uvicorn worker (or a pipeline process) cannot
+    # run the same publish/generation. None = the table is unusable -> keep only the process-local guard.
+    from lib import lease
+    held = lease.claim(f"{kind}:{int(article_id)}")
+    if held is False:
+        with _inflight_lock:
+            _inflight.discard(key)
+        return False
+    return True
 
 
 def _release(kind: str, article_id: int) -> None:
     with _inflight_lock:
         _inflight.discard((kind, int(article_id)))
+    from lib import lease
+    lease.release(f"{kind}:{int(article_id)}")
 
 
 def publish_article(article_id: int, mode: str = "draft", via: str = "api",
@@ -3232,6 +3259,84 @@ CADENCE_INTERVALS: dict[str, timedelta | None] = {
     "biweekly": timedelta(days=14),
     "monthly": timedelta(days=30),
 }
+
+
+def provision_site(slug: str, name: str = "", site_type: str = "custom", base_url: str = "",
+                   settings: dict | None = None, key_label: str = "", key_scopes: list[str] | None = None,
+                   rotate_key: bool = False, check_health: bool = True, via: str = "api") -> dict:
+    """Onboard a site in ONE call (TEN-08): create/update the site, mint its scoped API key, and report whether
+    it can reach its CMS - replacing ~21 manual steps across the console, the env and a redeploy.
+
+    Idempotent and safe to re-run: the site is upserted (stored secrets survive a re-send, see
+    `merge_settings`); a key is minted only if the site has none yet (or `rotate_key=True`), because the
+    plaintext key exists exactly once. Returns `{site, key?, health?, next}` where `next` lists what is still
+    left for a human (e.g. a WordPress app password was not supplied)."""
+    slug = (slug or "").strip()
+    if not valid_site_slug(slug):
+        return _err(f"invalid site slug {slug!r}", "use lower-case letters, digits and hyphens (max 63 chars)")
+    site_type = (site_type or "custom").strip().lower()
+    if site_type not in ("custom", "wordpress"):
+        return _err(f"invalid site_type {site_type!r}", "use 'custom' or 'wordpress'")
+    base_url = (base_url or "").strip()
+    if base_url and not base_url.startswith(("http://", "https://")):
+        return _err("invalid base_url", "use a full URL such as https://example.com")
+
+    site = upsert_site(slug, name=name, site_type=site_type, base_url=base_url, settings=settings or {})
+    if "error" in site:
+        return site
+
+    from sdk import keys as site_keys
+    existing = site_keys.list_site_keys(slug)
+    active = [k for k in (existing.get("keys") or []) if not k.get("revoked")]
+    out: dict[str, Any] = {"site": site, "created": bool(site.get("created"))}
+    todo: list[str] = []
+    if active and not rotate_key:
+        out["key"] = None
+        out["key_note"] = f"site already has {len(active)} active key(s); pass rotate_key=true to mint another"
+    else:
+        minted = site_keys.create_site_key(slug, label=key_label or "provisioned",
+                                           scopes=key_scopes or ["read", "write"], via=via)
+        if "error" in minted:
+            return minted
+        out["key"] = minted
+        todo.append("store the API key now - it is shown only once")
+
+    stored = (settings or {})
+    if site_type == "wordpress":
+        wp = stored.get("wp") if isinstance(stored.get("wp"), dict) else {}
+        have_stored = bool(((get_site_settings_raw(slug) or {}).get("wp") or {}).get("app_password"))
+        if not (wp.get("username") and (wp.get("app_password") or have_stored)):
+            todo.append("add the WordPress username and application password (Settings > WordPress)")
+    if not base_url and not site.get("base_url"):
+        todo.append("set the site's public base URL (used for canonicals, internal links and IndexNow)")
+    if check_health and (base_url or site.get("base_url")):
+        try:
+            out["health"] = site_health(slug)
+        except Exception as exc:  # noqa: BLE001 - health is advisory
+            out["health"] = {"error": f"{type(exc).__name__}: {exc}"}
+    todo.append("optionally set cadence, quality and delivery/webhook settings, then submit the first article")
+    out["next"] = todo
+    s = get_session()
+    try:
+        row = _site_by_slug(s, slug)
+        s.add(AuditLog(site_id=row.id if row else None, action="site.provision",
+                       payload={"via": via, "site_type": site_type, "minted_key": bool(out.get("key")),
+                                "created": out["created"]}))
+        s.commit()
+    finally:
+        s.close()
+    return out
+
+
+def get_site_settings_raw(slug: str) -> dict | None:
+    """The stored settings blob (unredacted) - for internal checks only, never returned from an API."""
+    init_db()
+    s = get_session()
+    try:
+        row = _site_by_slug(s, slug)
+        return dict(row.settings or {}) if row else None
+    finally:
+        s.close()
 
 
 def _int_setting(value: Any, *, default: int, lo: int, hi: int) -> int:

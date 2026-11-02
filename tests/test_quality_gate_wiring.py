@@ -142,3 +142,25 @@ def test_rest_returns_409_with_reasons_and_accepts_force(svc):
 
     forced = client.post(f"/sdk/v1/articles/{aid}/approve", json={"approved": True, "force": True})
     assert forced.status_code == 200 and forced.json()["status"] == "approved"
+
+
+def test_approval_is_refused_for_a_copy_of_another_article_on_the_same_site(svc):
+    """SEO-05: scaled-content control is enforced where articles become `approved`, within one site only."""
+    body = ("Choosing a CRM for a small agency starts with how you bill clients. Hourly billing needs time tracking "
+            "built in, while retainers need recurring invoices and a clean pipeline view. ") * 6
+    original = _article(svc, body, keyword="crm for agencies")
+    copy = _article(svc, "# Copy\n\n" + body, keyword="agency crm guide")
+    out = svc.check_article_gate(copy)
+    assert out["pass"] is False and any("near-duplicate" in b for b in out["blocking"])
+    # a different tenant's identical text is not compared
+    from lib.db import Article, get_session
+    other = svc.submit_article("other-site", keyword="crm for agencies")["id"]
+    s = get_session()
+    try:
+        s.get(Article, other).content_md = body
+        s.get(Article, other).status = "drafted"
+        s.commit()
+    finally:
+        s.close()
+    assert not any("near-duplicate" in b for b in svc.check_article_gate(other)["blocking"])
+    assert original != copy

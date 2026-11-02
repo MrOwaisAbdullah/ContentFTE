@@ -272,6 +272,29 @@ class ApiKey(Base):
     site: Mapped[Site] = relationship()
 
 
+class Lease(Base):
+    """A time-limited exclusive claim on a named operation ("publish:42"), shared by every worker process
+    (lib/lease.py). The UNIQUE key is the lock; `expires_at` lets a crashed holder's claim lapse."""
+
+    __tablename__ = "leases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    holder: Mapped[str] = mapped_column(String(80), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IdempotencyRecord(Base):
+    """A stored response for an Idempotency-Key, replayed for 24h by any worker (lib/lease.py)."""
+
+    __tablename__ = "idempotency_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    response: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class BrainEntry(Base):
     """§5.x what the writer actually knows — real voice entries + auto-logged
     coverage history. Mirrors brain/*.md so the store is the source of truth
