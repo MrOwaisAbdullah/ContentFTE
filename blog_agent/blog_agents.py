@@ -34,7 +34,7 @@ from lib.jev_tools import (
 
 # enable_verbose_stdout_logging()
 
-custom_runner = FallbackAgentRunner()
+custom_runner = FallbackAgentRunner.shared()
 
 content_evaluation_agent = Agent(
     name="Content Evaluation Agent",
@@ -362,12 +362,12 @@ content_generator_agent = Agent(
     5. **Jev Verified Cascade — cheap gate before expensive evaluator (70-500ms, $0.042/MTok, typed) — includes stack/about-me alignment:**
     - BEFORE calling `get_evaluation_feedback`, call `jev_score_draft_quality_tool` with your current draft, `facts_json` (JSON string of `["excerpt 1", "excerpt 2", ...]` — the source excerpts you fact-checked against, or `["No facts provided"]` if none), **and `live_profile_json`** (JSON string of `live_profile` from Step 2 `get_author_context_tool`: `{about_me: about (one-line bio, e.g. "Spec-Driven Developer..."), summary, skills: string[], current_roles}` — this is `tools.py:185` `live_profile` vs fallback static `tagline/proof_points`; see `AUTHOR_PROFILE_API_URL` `https://owaisabdullah.dev/api/profile`). It returns `{supported, on_brand, stack_aligned, score, publish_ready, usage, fallback}` where `publish_ready = supported>=0.7 && score>=1.5 && on_brand>=0.6 && stack_aligned>=0.7`.
     - `stack_aligned` checks: does `draft`'s tech mentions (frameworks, DB, infra) match only items in `live_profile.skills` + `summary` core stack (TypeScript/Next.js/Python/Claude Code/OpenAI SDK/PostgreSQL/pgvector/R2/Docker) and `about_me` — not invented stacks like generic WordPress/PHP when live is Next.js? Fallback static (`tools.py:252` `React/Next.js/Python/Sanity/WordPress`) is stale; if live fetch failed, the tool still returns fallback but will be low, flagging for reviewer. **About me clearly:** `live_profile.about_me` (`live_profile.about`) is the one-line bio to keep tone on-brand; `summary` is the longer paragraph; `current_roles` is `["Title at Company" for Present]`.
-    - If `publish_ready==true`, you MAY skip `get_evaluation_feedback` for this iteration (saves DeepSeek ~$0.0003-0.0008 and 2-5s) and treat the draft as publish-ready — log the Jev `usage` and proceed to Step 6 (Return). This is the Jev Verified Cascade pattern (references/patterns.md, cookbook `evaluate-and-optimize/jev-verified-cascade` verified via Context7 `/openrouterteam/docs`).
+    - Even when `publish_ready==true`, you MUST still call `get_evaluation_feedback` at least once per draft. The Jev score is a cheap classifier, NOT a substitute for the evaluator: only the evaluator records the six sub-scores (accuracy, depth, seo, voice, originality, citability) that the deterministic quality gate enforces at approval. Use a high Jev score to skip REPEAT evaluation rounds after the evaluator has already passed the draft, never the first one (PIPE-03). Log the Jev `usage` and proceed.
     - If `publish_ready==false` or `fallback==true`, still call `get_evaluation_feedback` but include Jev's `supported/on_brand/stack_aligned/score` in your feedback analysis to narrow the rewrite (e.g., if `stack_aligned` low, fix stack mentions to match `live_profile.skills`; if `supported` low, focus rewrite on factual claims; if `on_brand` low, fix tone).
     - On any `JevError`/timeout, the tool returns `publish_ready==false, fallback==true` — never block, always fall through to the full evaluator.
 
     5b. **Evaluate and Iterate (expensive, gated):**
-    - Use `get_evaluation_feedback` to evaluate content (only if Jev gate did not already mark publish_ready). ALWAYS include your current Title and Summary in this call, not just the body -- the evaluator scores them as the actual SERP snippet (curiosity/hook, clear value proposition, intent match, no AI-tell openers), and can't do that if they're not part of what you send it:
+    - Use `get_evaluation_feedback` to evaluate content (always at least once; Jev publish_ready never replaces it). ALWAYS include your current Title and Summary in this call, not just the body -- the evaluator scores them as the actual SERP snippet (curiosity/hook, clear value proposition, intent match, no AI-tell openers), and can't do that if they're not part of what you send it:
         - Readability (30%): Short sentences, conversational tone, mobile-friendly (Flesch-Kincaid 60–70, <5 grammar errors).
         - Relevance (30%): Aligns with user intent, keywords, and subtopics; all claims verified.
         - SEO (20%): Word count (1500–2500), FAQs (5–7 questions), keyword usage (2–3 per keyword), natural link integration, AND whether Title/Summary would genuinely earn a click rather than reading as a generic label.
@@ -421,7 +421,7 @@ content_generator_agent = Agent(
     - `tavily_crawl_tool`: Deep content exploration (1 credit/5 URLs).  
     - `web_search_tool` (fallback): Web content for fact-checking.
     - `jev_score_draft_quality_tool` (Jev, 70-500ms): Batched Noul fact_supported + Noul on_brand + Score quality — call BEFORE get_evaluation_feedback per Step 5 (Verified Cascade); publish_ready gates the expensive evaluator.
-    - `get_evaluation_feedback`: Evaluate content quality (readability, relevance, SEO, user value) — only on `jev publish_ready==false`.  
+    - `get_evaluation_feedback`: Evaluate content quality (readability, relevance, SEO, user value) — required at least once per draft; Jev publish_ready does not waive it.  
     - `fetch_internal_links_tool`: Fetch internal links for natural integration (LIMITED TO 3 USES PER RUN - use strategically).  
     - `fetch_rescue_links_tool`: Internal link candidates ordered orphan-first (§5.6) — same args as `fetch_internal_links_tool`; each link carries `inbound` + `needs_rescue`. Use this as the primary source for `jev_rank_internal_links_tool`; fall back to `fetch_internal_links_tool` only if it errors.  
     - `check_link_hygiene_tool`: Deterministic final gate (§5.6) — call with `draft_markdown` before returning; fix all `guidance` until `pass == true` (3-8 internal links, 1-3 external, no exact-match anchor >2x).  

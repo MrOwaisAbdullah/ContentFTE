@@ -36,6 +36,13 @@ from lib.factcheck import extract_claims, verify_claims
 from lib.link_validator import UNVERIFIABLE_STATUSES as _UNVERIFIABLE_STATUSES
 
 
+def eval_required() -> bool:
+    """QUALITY_GATE_REQUIRE_EVAL=1: an ENGINE-GENERATED article must carry the evaluator's six sub-scores to be
+    approved. Off by default (articles written by hand, or imported, have none); turn it on once your pipeline
+    records them, so a draft that skipped the evaluator cannot ride on a cheap classifier alone (PIPE-03)."""
+    return os.environ.get("QUALITY_GATE_REQUIRE_EVAL", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def links_check_enabled() -> bool:
     return os.environ.get("QUALITY_GATE_CHECK_LINKS", "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -134,6 +141,9 @@ def assess(
         blocking.extend(f"eval gate: {r}" for r in verdict["reasons"])
     else:
         checks["eval"] = {"skipped": "sub-scores not recorded", "overall": overall}
+        if eval_required() and isinstance(meta.get("generation"), dict):
+            blocking.append("no evaluator sub-scores were recorded for this engine-generated article "
+                            "(the evaluation step was skipped); run the evaluation before approving")
         if overall is not None and float(overall) < PUBLISH_THRESHOLD:
             warnings.append(f"overall quality {overall} is below {PUBLISH_THRESHOLD} "
                             "(sub-scores weren't recorded, so the floor can't be enforced)")

@@ -723,3 +723,103 @@ def test_brain_notes_tool_returns_voice_text_but_only_titles_of_coverage(monkeyp
     assert [n["title"] for n in out["notes"]] == ["My crm migration"] and "3 clients" in out["notes"][0]["content"]
     assert out["already_covered_topics"] == [{"title": "Best CRM", "tags": ["crm"]}]
     assert INJECTED not in json.dumps(out)
+
+
+# ---- PIPE-02: a nested agent (as_tool) goes through the fallback runner; the driven agent does not recurse ------------
+def test_nested_agent_runs_use_the_fallback_runner_but_the_driven_agent_reaches_the_base_run(monkeypatch):
+    import asyncio
+    from blog_agent import custom_runner as cr
+
+    runner = object.__new__(cr.FallbackAgentRunner)
+    routed, base_calls = [], []
+
+    async def fake_with_fallback(agent, input_data, context=None, max_turns=15, hooks=None, **kw):
+        routed.append(agent)
+        return "fallback-result"
+
+    base_cls = cr.FallbackAgentRunner.__mro__[1]
+
+    async def fake_base_run(self, agent, input_data, **kw):
+        base_calls.append(agent)
+        # the generator's run calls the evaluator tool, which re-enters runner.run for a DIFFERENT agent
+        if agent == "generator":
+            nested = await runner.run("evaluator", "draft", context=None, max_turns=5)
+            return f"gen+{nested}"
+        return "base-result"
+
+    monkeypatch.setattr(runner, "run_with_fallback", fake_with_fallback)
+    monkeypatch.setattr(base_cls, "run", fake_base_run)
+
+    out = asyncio.run(runner._execute_agent_run("generator", "write it"))
+    assert out == "gen+fallback-result"                    # the nested evaluator got fallback + accounting
+    assert base_calls == ["generator"] and routed == ["evaluator"]
+    # outside any driven run, a direct call is also routed through the fallback logic
+    assert asyncio.run(runner.run("anything", "x")) == "fallback-result"
+
+
+# ---- PIPE-13: one runner (one set of quota books) per process ---------------------------------------------------------
+def test_all_agent_modules_share_one_fallback_runner():
+    import blog_agent.blog_agents as ba
+    import blog_agent.image_agent as ia
+    import blog_agent.posting_agent as pa
+    from blog_agent.custom_runner import FallbackAgentRunner
+    assert ba.custom_runner is ia.custom_runner is pa.custom_runner is FallbackAgentRunner.shared()
+    assert FallbackAgentRunner() is not FallbackAgentRunner.shared()          # a plain constructor is still fresh
+    src = open("scripts/run_stage.py", encoding="utf-8").read() + open("main.py", encoding="utf-8").read()
+    assert "FallbackAgentRunner()" not in src
+
+
+# ---- PIPE-14: a run has a budget -----------------------------------------------------------------------------------
+def test_the_run_budget_stops_a_runaway_run_and_resets_per_stage():
+    import pytest
+    from blog_agent import custom_runner as cr
+    r = object.__new__(cr.FallbackAgentRunner)
+    r.RUN_MAX_MODEL_CALLS, r.RUN_MAX_SECONDS = 3, 0
+    r.reset_run_budget()
+    for _ in range(3):
+        r._charge_run_budget()
+    with pytest.raises(cr.RunBudgetExceeded) as e:
+        r._charge_run_budget()
+    assert "3 model calls" in str(e.value)
+    r.reset_run_budget()
+    r._charge_run_budget()                                   # a new stage starts with a fresh budget
+    r.RUN_MAX_MODEL_CALLS = 0                                # 0 = unlimited
+    for _ in range(50):
+        r._charge_run_budget()
+
+
+def test_the_run_time_budget_is_enforced(monkeypatch):
+    import pytest
+    from datetime import datetime, timedelta
+    from blog_agent import custom_runner as cr
+    r = object.__new__(cr.FallbackAgentRunner)
+    r.RUN_MAX_MODEL_CALLS, r.RUN_MAX_SECONDS = 0, 60
+    r.reset_run_budget()
+    r._run_started = datetime.now() - timedelta(seconds=120)
+    with pytest.raises(cr.RunBudgetExceeded):
+        r._charge_run_budget()
+
+
+def test_a_spent_budget_propagates_out_of_run_with_fallback(monkeypatch):
+    import asyncio
+    import pytest
+    from blog_agent import custom_runner as cr
+    r = object.__new__(cr.FallbackAgentRunner)
+    r.LLM_MODELS = [{"name": "m1", "model": "m1", "provider": "gemini"}]
+    r.LAST_RESORT_MODELS = []
+    r.RUN_MAX_MODEL_CALLS, r.RUN_MAX_SECONDS = 1, 0
+    r.reset_run_budget()
+    r._run_calls = 1                                          # already spent
+    r._sort_models_by_performance = lambda: list(r.LLM_MODELS)
+
+    async def available(name):
+        return True
+
+    r.is_model_available = available
+    r.get_model_by_name = lambda name: name
+    stats = []
+    r._update_provider_stats = lambda *a, **k: stats.append(a)
+    agent = type("A", (), {"name": "Content Agent", "model": None})()
+    with pytest.raises(cr.RunBudgetExceeded):
+        asyncio.run(r.run_with_fallback(agent, "go", max_retries=1))
+    assert stats == []                                        # the model was not blamed

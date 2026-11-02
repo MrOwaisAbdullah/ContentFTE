@@ -59,9 +59,9 @@ Every finding in section 3 is a task. This section lists **all of them**, groupe
 | Phase | `phase0-console-engine-hardening` | `phase1-quality-gates` | `phase2-site-api-keys` | `phase3-tenant-isolation` | `phase4-remaining-hardening` | `phase5-pipeline-adapters` | Not fully done |
 |---|---|---|---|---|---|---|---|
 | 0 - Stop the bleed | 15 | - | - | - | 6 | 2 | 5 |
-| 1 - Make the quality gates real | 1 | 8 | - | - | - | 11 | 14 |
-| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 13 | 15 |
-| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 27 | 14 |
+| 1 - Make the quality gates real | 1 | 8 | - | - | - | 12 | 13 |
+| 2 - Tenant context, auth and secrets | 4 | 1 | 1 | 2 | 4 | 14 | 14 |
+| 3 - Scheduler, workers, quotas, adapters | - | 2 | - | - | 6 | 29 | 12 |
 | 4 - Fleet console and operations | 6 | - | - | - | - | 8 | 8 |
 | Frontend - Live website frontend (separate repository) | 1 | - | - | - | - | - | 6 |
 
@@ -107,9 +107,9 @@ _Goal:_ Close the open doors: unauthenticated /mcp and REST, secrets in response
 
 _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO gates run on every path to approved; honest structured data and dates; cadence and duplicate controls.
 
-**Status: in progress** - 12 of 26 done, 8 partly done, 6 not done (item-by-item list in section 2).
+**Status: in progress** - 13 of 26 done, 8 partly done, 5 not done (item-by-item list in section 2).
 
-- [ ] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft …
+- [x] **PIPE-03** (High) The generator may skip the evaluator when Jev publish_ready is true, and the evaluator returns its best draft … - the writer prompt no longer lets a high Jev score replace the evaluator (at least one evaluation per draft); QUALITY_GATE_REQUIRE_EVAL=1 makes recorded evaluator sub-scores mandatory for engine-generated articles at approval - `phase5-pipeline-adapters`
 - [ ] **PIPE-04** (High) Posting is LLM-driven: the agent echoes the article into post_to_sanity_tool, derives the slug, writes Publish…
 - [ ] **PIPE-05** (High) Head-of-line blocking: content always takes the first Generated=No brief, post always row 2; a poison row burn…
 - [x] **PIPE-07** (High) Internal-link fetch budget is a process global reset only in run_content/run_post — in the long-lived API/MCP … - internal-link fetch budget is per time window (INTERNAL_LINKS_WINDOW_S) and defaults to 6 calls (one per H2), so a long-lived API/MCP process no longer returns [] forever - `phase5-pipeline-adapters`
@@ -140,14 +140,14 @@ _Goal:_ Move quality from prompts into code: the fact-check, eval, link and AEO 
 
 _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant state, secrets out of plaintext, readiness and error contracts, observable requests.
 
-**Status: in progress** - 15 of 30 done, 10 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 16 of 30 done, 10 partly done, 4 not done (item-by-item list in section 2).
 
 - [x] **SEC-03** (High) No key→site binding - `phase2-site-api-keys`
 - [~] **ENG-04** (High) generate_content: no single-flight per article; token usage read from module-global LAST_USAGE (concurrent run… - single-flight done; LAST_USAGE module global and cost-in-finally still open - `phase4-remaining-hardening`
 - [x] **ENG-06** (High) MCP tools are async def but call sync service functions (WP, images, IndexNow) directly — each MCP call blocks… - `phase4-remaining-hardening`
 - [x] **ENG-07** (High) upsert_keyword overwrites intent/volume/difficulty/priority with defaults on re-submit — re-submitting a keywo… - `phase4-remaining-hardening`
 - [x] **ENG-08** (High) Unknown or empty site_slug returns all tenants' data for brain entries, review feedback, mine_feedback, spend … - `phase3-tenant-isolation`
-- [ ] **PIPE-06** (High) Brand DNA applied only in main.py lifespan, for the first Site, to module-level agents, once per process
+- [~] **PIPE-06** (High) Brand DNA applied only in main.py lifespan, for the first Site, to module-level agents, once per process - scheduled runs (run_stage) and the API lifespan share one helper that injects the site's Brand DNA; agents are still module-level objects rather than built per run from a TenantContext (TEN-02) - `phase5-pipeline-adapters`
 - [x] **CON-03** (High) Active instance is one global cookie resolved at call time; with two tabs on different instances, a click in t… - `phase0-console-engine-hardening`
 - [~] **CON-05** (High) Settings the engine never reads: image., content - cadence/enforce and the spend cap are read by the engine; image/content/indexing/notification groups are still saved but never consumed - `phase1-quality-gates`
 - [ ] **TEN-02** (High) Import-time site identity and process-global provider config: SITE_BASE_URL/SITE_HOST/SITE_PREFIX frozen at im… - replace import-time site identity/provider globals with TenantContext lookups
@@ -165,7 +165,7 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 - [ ] **ENG-18** (Medium) article_stats (every dashboard hit) loads every article's content_md + meta and aggregates in Python; same for… - article_stats: SQL aggregates instead of loading every article's markdown
 - [x] **ENG-19** (Medium) Both clients retry 4xx (401/404/409/422) because raise_for_status()/!res.ok is inside the retry try; non-idemp… - Python and TypeScript clients - `phase4-remaining-hardening`
 - [x] **CON-06** (Medium) No fetch timeout; the layout awaits 3 engine calls on every request → one hung engine freezes every page. - `phase0-console-engine-hardening`
-- [~] **SEC-15** (Low) Hardening: no security headers in next.config.ts; engine CORS defaults to  (and omits DELETE/PUT); OpenAPI doc… - security headers, media proxy, /docs gated (ENGINE_DOCS), shared-mode CORS default deny; a nonce-based CSP for the console is still open - `phase5-pipeline-adapters`
+- [x] **SEC-15** (Low) Hardening: no security headers in next.config.ts; engine CORS defaults to  (and omits DELETE/PUT); OpenAPI doc… - security headers, media proxy, /docs gated, shared-mode CORS default-deny, and a per-request-nonce CSP (every script on /login verified to carry the nonce against a real production server). The nonce policy ships in report-only mode (CSP_MODE); switching to enforce is your call after you click through the console in a browser. - `phase5-pipeline-adapters`
 - [~] **SEC-20** (Low) Model-chosen fetch URLs enable data exfiltration - model-chosen URLs must be plain (no query/fragment) unless the host came from this run's search results; title fetches capped; untrusted-text agents still hold the tools, so data can ride in a short path segment - `phase5-pipeline-adapters`
 - [x] **SEC-21** (Low) Second-order injection via brain/ - get_brain_notes_tool returns first-hand voice notes in full but only the titles/tags of LLM-drafted coverage records, as data under a different key - `phase5-pipeline-adapters`
 - [~] **ENG-20** (Low) Publish in draft mode still sets status=published, published_at, and pings IndexNow/Bing for a draft URL; requ… - no IndexNow/Bing ping for a WordPress draft or failed push; a distinct published_draft state (and published_at only when live) is still open - `phase5-pipeline-adapters`
@@ -177,11 +177,11 @@ _Goal:_ Make shared mode safe: per-site scoped keys, no process-global tenant st
 
 _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-site cadence; one quota owner; a real adapter contract with signed deliveries; retire the Sheets state store.
 
-**Status: in progress** - 28 of 42 done, 7 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 30 of 42 done, 7 partly done, 5 not done (item-by-item list in section 2).
 
 - [x] **SEC-05** (High) SSRF / unbounded fetches: test_wp_connection sends caller-supplied Basic creds to a caller-supplied URL and re… - safe_get on every image/link/title/WP fetch; residual DNS-rebinding race documented in lib/safe_fetch.py - `phase4-remaining-hardening`
 - [x] **ENG-03** (High) Duplicate WP posts: the wp_post_id check runs before the remote call and is persisted after it; no row claim - publish single-flight now spans processes (database lease) - `phase5-pipeline-adapters`
-- [ ] **PIPE-02** (High) The nested evaluator (content_evaluation_agent.as_tool()) runs through the inherited Runner.run, not run_with_…
+- [x] **PIPE-02** (High) The nested evaluator (content_evaluation_agent.as_tool()) runs through the inherited Runner.run, not run_with_… - a nested agent (the evaluator via as_tool) now runs through run_with_fallback, with model fallback and usage accounting; the driven agent is recognised by identity so it cannot recurse - `phase5-pipeline-adapters`
 - [x] **PIPE-08** (High) /run_workflow imports a non-existent symbol before its try → every workflow type returns 500 - `phase5-pipeline-adapters`
 - [x] **ADP-01** (High) Sanity uses createIfNotExists with _id = post-{slug}: a retry with new content, or a different article with th… - Sanity publish compares a content hash and engine article id: unchanged = reported no-op, changed = revision-guarded patch, other article/Studio post on the slug = explicit conflict; SANITY_PUBLISH_AS_DRAFT option - `phase5-pipeline-adapters`
 - [~] **ADP-02** (High) wp_render.inline() is regex-based: linked images become <a>\x000\x00</a> (NUL leak, image lost); two code span… - inline renderer fixed (linked images, code spans, nested lists, balanced-paren URLs); a full markdown AST (markdown-it-py) is still the cleaner end state - `phase5-pipeline-adapters`
@@ -197,8 +197,8 @@ _Goal:_ Replace the single-site Actions pipeline with a job queue honouring per-
 - [~] **PIPE-10** (Medium) Gemini tool-schema risk: manage_sheet_data_tool.data: Optional[Union[List[List[str]], str]] (nested anyOf), $d… - arrays-have-items contract test; Optional/union params and retries/delay on the full sheet tool remain - `phase1-quality-gates`
 - [ ] **PIPE-11** (Medium) Brief stage writes inside the agent loop; MaxTurnsExceeded re-runs the agent on the next model and replays wri…
 - [ ] **PIPE-12** (Medium) Screenshot QA is scored by a text-only agent that can't see pixels; VLM QA fails open (passed=True on outage);…
-- [ ] **PIPE-13** (Medium) ~7 FallbackAgentRunner instances each re-seed quota from the Sheets usage log (local date, not Pacific) and di…
-- [~] **PIPE-14** (Medium) No run-level token/request/time budget; tavily_crawl_tool(limit, max_depth) is model-controlled and metered as… - crawl depth/limit clamped and metered by size, extract URL count capped; a whole-run token/request/time budget in the runner is still open - `phase5-pipeline-adapters`
+- [~] **PIPE-13** (Medium) ~7 FallbackAgentRunner instances each re-seed quota from the Sheets usage log (local date, not Pacific) and di… - one FallbackAgentRunner per process (one set of quota books); making the router the sole quota owner is still open - `phase5-pipeline-adapters`
+- [x] **PIPE-14** (Medium) No run-level token/request/time budget; tavily_crawl_tool(limit, max_depth) is model-controlled and metered as… - per-run budget (RUN_MAX_MODEL_CALLS, RUN_MAX_SECONDS, reset per stage) plus clamped crawl/extract arguments - `phase5-pipeline-adapters`
 - [ ] **PIPE-15** (Medium) get_keyword_tool marks a keyword "used" immediately; release is in-process only, so a killed run loses the top…
 - [x] **PIPE-16** (Medium) Actions concurrency group keeps one pending run — a third dispatch cancels the earlier pending one (contradict… - pipeline concurrency is per stage, so queued runs of different stages no longer evict each other - `phase5-pipeline-adapters`
 - [x] **PIPE-17** (Medium) Import-time key requirements (search_tools.py:10 raises without TAVILY_API_KEY; OPENROUTER_API_KEY read at imp… - `phase5-pipeline-adapters`
@@ -617,7 +617,7 @@ Task list in §2.
 
 ### Phase 1 — Make the quality gates real (≈2 weeks)
 <!-- phase-status:1:start -->
-**Status: in progress** - 12 of 26 done, 8 partly done, 6 not done (item-by-item list in section 2).
+**Status: in progress** - 13 of 26 done, 8 partly done, 5 not done (item-by-item list in section 2).
 <!-- phase-status:1:end -->
 - SEO-01/SEO-02/PIPE-01: `check_gate` + fixed fact-check + link validation enforced in code on every path to `approved`; audit rows persisted.
 - SEO-09: overall score computed in code; accuracy + experience sub-scores; code-snippet verifier (AST/import check + context7 docs lookup for library APIs).
@@ -634,7 +634,7 @@ Task list in §2.
 
 ### Phase 2 — Tenant context, auth & secrets (≈2–3 weeks)
 <!-- phase-status:2:start -->
-**Status: in progress** - 15 of 30 done, 10 partly done, 5 not done (item-by-item list in section 2).
+**Status: in progress** - 16 of 30 done, 10 partly done, 4 not done (item-by-item list in section 2).
 <!-- phase-status:2:end -->
 - `TenantContext`; remove import-time globals (TEN-02) and startup Brand DNA (PIPE-06); per-run agent construction.
 - Per-site hashed scoped keys; `_require_site` / `_load_article` choke points (SEC-03, ENG-08, ENG-09); tenancy test matrix.
@@ -647,7 +647,7 @@ Task list in §2.
 
 ### Phase 3 — Scheduler, workers, quotas, adapters (≈3–4 weeks)
 <!-- phase-status:3:start -->
-**Status: in progress** - 28 of 42 done, 7 partly done, 7 not done (item-by-item list in section 2).
+**Status: in progress** - 30 of 42 done, 7 partly done, 5 not done (item-by-item list in section 2).
 <!-- phase-status:3:end -->
 - Jobs table + scheduler honoring `posting_frequency`, `max_posts_per_cadence`, `auto_publish`, `require_approval`; workers with per-tenant concurrency; Actions reduced to a tick (TEN-04, PIPE-16, OPS-02, ENG-14).
 - Quotas + hard USD caps (TEN-03, PIPE-14); single quota owner (PIPE-13).

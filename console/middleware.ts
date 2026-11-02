@@ -8,12 +8,27 @@ import type { NextRequest } from "next/server";
 import { validSessionToken } from "./lib/edge-session";
 import { FLASH_SIG, FLASH_TS, canonicalFlash, hasFlash, withoutFlash } from "./lib/flash.ts";
 import { validFlash } from "./lib/flash-verify.ts";
+import { cspHeader, newNonce } from "./lib/csp.ts";
 
 const COOKIE = "console_session";
 
+/** Let a page request through with a per-request CSP nonce (SEC-15; report-only by default, see lib/csp.ts).
+ *  Next.js reads the nonce from the request's CSP header and stamps it on the scripts it renders. */
+function pass(req: NextRequest): NextResponse {
+  const nonce = newNonce();
+  const csp = cspHeader(nonce);
+  if (!csp) return NextResponse.next();
+  const headers = new Headers(req.headers);
+  headers.set(csp.name, csp.value);
+  headers.set("x-nonce", nonce);
+  const res = NextResponse.next({ request: { headers } });
+  res.headers.set(csp.name, csp.value);
+  return res;
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname === "/login" || pathname.startsWith("/login/")) return NextResponse.next();
+  if (pathname === "/login" || pathname.startsWith("/login/")) return pass(req);
   if (pathname.startsWith("/_next")) return NextResponse.next();
   // /api/* is excluded here and MUST authenticate inside each handler
   // (the media proxy does — see app/api/media). Any new route needs the same.
@@ -32,7 +47,7 @@ export async function middleware(req: NextRequest) {
   }
 
   if (await validSessionToken(req.cookies.get(COOKIE)?.value, process.env.SESSION_SECRET)) {
-    return NextResponse.next();
+    return pass(req);
   }
 
   const url = req.nextUrl.clone();

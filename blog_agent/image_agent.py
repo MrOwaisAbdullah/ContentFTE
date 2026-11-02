@@ -21,7 +21,7 @@ from blog_agent.hooks import MyAgentHooks
 from lib.run_result_utils import run_looks_failed
 
 # Create a custom runner instance to access the get_model_by_name method
-custom_runner = FallbackAgentRunner()
+custom_runner = FallbackAgentRunner.shared()
 
 logger = logging.getLogger(__name__)
 

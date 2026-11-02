@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 
 // Design tokens in globals.css assume these CSS variables (plan §3).
@@ -12,11 +13,15 @@ export const metadata: Metadata = {
   description: "Internal operator console for the ContentFTE autonomous publishing engine",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Reading the request header makes every page dynamic, which a per-request CSP nonce requires (a prerendered page
+  // cannot carry one), and gives the inline theme script below its nonce (SEC-15).
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en" suppressHydrationWarning className={`dark ${inter.variable} ${jetbrains.variable} ${jakarta.variable}`}>
       <head>
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem("theme");var light=t==="light"||(t==="system"&&!window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",!light);}catch(e){}})();`,
           }}

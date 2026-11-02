@@ -145,3 +145,25 @@ def test_attribution_and_source_quality_only_judged_on_long_posts():
 def test_all_lint_findings_are_warnings_never_blockers():
     for f in aeo_lint.lint("## Agents vs workflows\nplain\n"):
         assert f["severity"] == "warn"
+
+
+def test_an_engine_generated_article_without_evaluator_scores_can_be_made_unapprovable(monkeypatch):
+    """PIPE-03: a draft that skipped the evaluator must not ride through on a cheap classifier alone."""
+    meta = {"generation": {"checks": {"words": {"pass": True}}}, "scores": {"overall": 95}}
+    base = dict(content_md="Plain prose without numbers.", meta=meta, source_excerpts=[], check_links=False)
+    monkeypatch.delenv("QUALITY_GATE_REQUIRE_EVAL", raising=False)
+    assert assess(**base)["pass"] is True                                          # off by default
+    monkeypatch.setenv("QUALITY_GATE_REQUIRE_EVAL", "1")
+    out = assess(**base)
+    assert out["pass"] is False and any("no evaluator sub-scores" in b for b in out["blocking"])
+    # a hand-written article (no generation record) is unaffected, and so is one with the six sub-scores
+    assert assess(content_md="x", meta={}, source_excerpts=[], check_links=False)["pass"] is True
+    full = {**meta, "scores": {"overall": 95, "sub_scores": dict.fromkeys(
+        ("accuracy", "depth", "seo", "voice", "originality", "citability"), 92)}}
+    assert assess(**{**base, "meta": full})["pass"] is True
+
+
+def test_the_generator_prompt_no_longer_lets_jev_replace_the_evaluator():
+    src = open("blog_agent/blog_agents.py", encoding="utf-8").read()
+    assert "you MAY skip `get_evaluation_feedback`" not in src
+    assert "MUST still call `get_evaluation_feedback` at least once per draft" in src

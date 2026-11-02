@@ -34,7 +34,7 @@ from sdk.errors import install as install_error_handler
 # FastAPI app (single-server architecture; API first, MCP second).
 from mcp_server.server import mcp as contentfte_mcp
 
-custom_runner = FallbackAgentRunner()
+custom_runner = FallbackAgentRunner.shared()
 
 
 @asynccontextmanager
@@ -54,26 +54,13 @@ async def lifespan(app: FastAPI):
     # inherits the injected profile automatically.
     try:
         sdk_service.init()
-        from lib.brand_dna import apply_brand_dna, load_profile
-        from lib.db import get_session
+        from lib.brand_dna import apply_brand_dna_for_site
 
-        session = get_session()
-        try:
-            from sqlalchemy import select
-
-            from lib.db import Site
-            site = session.execute(
-                select(Site).order_by(Site.id.asc()).limit(1)).scalar_one_or_none()
-            profile = load_profile(session, site.id) if site else None
-        finally:
-            session.close()
-        if profile:
-            injected = apply_brand_dna(
-                [brief_agent, content_generator_agent, content_evaluation_agent],
-                profile)
-            if injected:
-                logging.getLogger("contentfte").info(
-                    "Brand DNA injected into: %s", ", ".join(injected))
+        injected = apply_brand_dna_for_site(
+            [brief_agent, content_generator_agent, content_evaluation_agent])
+        if injected:
+            logging.getLogger("contentfte").info(
+                "Brand DNA injected into: %s", ", ".join(injected))
     except Exception as exc:  # startup must never die on DB/profile issues
         logging.getLogger("contentfte").warning("Brand DNA injection skipped: %s", exc)
 

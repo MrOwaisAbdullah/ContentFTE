@@ -225,6 +225,34 @@ def inject_into_system_prompt(base_prompt: str, profile: dict) -> str:
 _INJECTION_MARK = "[BRAND DNA — auto-loaded"
 
 
+def apply_brand_dna_for_site(agents: list, site_slug: str = "") -> list[str]:
+    """Inject a site's stored brand profile into `agents`; returns the names that were changed.
+
+    One implementation for every entry point (PIPE-06). Until now only `main.py`'s lifespan did this, for the
+    FIRST site, so the scheduled pipeline (`scripts/run_stage.py`, which is what actually writes the posts) ran
+    every agent without any Brand DNA. With a `site_slug` it uses that site; otherwise the instance's default
+    site (first row). Fail-open: no site, no profile, or a database problem means "no injection", never a crash.
+    Idempotent: `apply_brand_dna` marks agents it has already changed."""
+    try:
+        from sqlalchemy import select
+
+        from lib.db import Site, get_session, init_db
+
+        init_db()
+        session = get_session()
+        try:
+            stmt = select(Site).where(Site.slug == site_slug) if site_slug else select(Site).order_by(Site.id.asc())
+            site = session.execute(stmt.limit(1)).scalar_one_or_none()
+            profile = load_profile(session, site.id) if site else None
+        finally:
+            session.close()
+        return apply_brand_dna(agents, profile) if profile else []
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("Brand DNA injection skipped: %s", exc)
+        return []
+
+
 def apply_brand_dna(agents: list, profile: dict) -> list[str]:
     """§5.1 Agrici rule — system-prompt-level injection for brief, draft,
     eval, and image-prompt agents. Mutates `agent.instructions` in place so

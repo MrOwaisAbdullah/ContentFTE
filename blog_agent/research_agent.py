@@ -91,7 +91,7 @@ async def combined_research_workflow(LLM_MODELS, is_model_available, get_model_b
     """
     # Initialize agents
     # Create a custom runner instance to get the model getter function
-    custom_runner = FallbackAgentRunner()
+    custom_runner = FallbackAgentRunner.shared()
     
     triage_agent = Agent(
         name="Triage Agent",
@@ -504,7 +504,7 @@ async def run_topic_discovery_workflow(max_retries: int = 2, max_turns: int = 20
     a dedicated pipeline stage / Discord command, independent of an empty
     queue.
     """
-    custom_runner = FallbackAgentRunner()
+    custom_runner = FallbackAgentRunner.shared()
 
     topic_discovery_agent = Agent(
         name="Topic Discovery Agent",

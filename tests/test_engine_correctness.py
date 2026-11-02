@@ -621,3 +621,33 @@ def test_the_rest_layer_publishes_the_caller_to_the_audit_layer(svc, monkeypatch
         assert row.payload["actor"].startswith("site:audited/")
     finally:
         s.close()
+
+
+# ------------------------------------------------------------------ PIPE-06: scheduled runs get the site's Brand DNA
+def test_brand_dna_is_applied_for_the_named_or_default_site_and_fails_open(svc):
+    from lib.brand_dna import apply_brand_dna_for_site, save_profile
+    from lib.db import Site, get_session
+
+    class Agent:
+        def __init__(self, name):
+            self.name, self.instructions = name, "Write."
+
+    assert apply_brand_dna_for_site([Agent("x")]) in ([], ["x"])          # no saved profile: defaults at most, no crash
+    s = get_session()
+    try:
+        site = s.query(Site).filter_by(slug="s").one()
+        save_profile(s, site.id, {"pov": "first", "banned_phrases": ["synergy"]})
+    finally:
+        s.close()
+    a, b = Agent("Brief"), Agent("Draft")
+    assert apply_brand_dna_for_site([a, b], "s") == ["Brief", "Draft"]
+    assert "synergy" in a.instructions and a.instructions.count("[BRAND DNA") == 1
+    assert apply_brand_dna_for_site([a, b], "s") == []                    # idempotent
+    c = Agent("Other")
+    assert apply_brand_dna_for_site([c], "no-such-site") == [] and c.instructions == "Write."
+
+
+def test_the_scheduled_pipeline_entry_point_applies_brand_dna():
+    src = open("scripts/run_stage.py", encoding="utf-8").read()
+    assert "apply_brand_dna_for_site([brief_agent, content_generator_agent, post_editor_agent])" in src
+    assert src.index("apply_brand_dna_for_site") < src.index("asyncio.run(STAGE_HANDLERS[args.stage]())")

@@ -105,10 +105,10 @@
       "note": "site secrets (WordPress app password, IndexNow/Bing keys, Discord webhook, delivery secret) are Fernet-encrypted in the database with SECRETS_KEY (rotation supported) and decrypted only where used; scripts/encrypt_site_secrets.py converts existing rows; the console encrypts instances.json API keys with INSTANCES_KEY. Both are off until you set a key - you must generate and store them."
     },
     "SEC-15": {
-      "status": "partial",
+      "status": "done",
       "branch": "p5",
-      "note": "security headers, media proxy, /docs gated (ENGINE_DOCS), shared-mode CORS default deny; a nonce-based CSP for the console is still open",
-      "phase": "2"
+      "phase": "2",
+      "note": "security headers, media proxy, /docs gated, shared-mode CORS default-deny, and a per-request-nonce CSP (every script on /login verified to carry the nonce against a real production server). The nonce policy ships in report-only mode (CSP_MODE); switching to enforce is your call after you click through the console in a browser."
     },
     "SEC-16": {
       "status": "owner",
@@ -291,12 +291,16 @@
       "phase": "0"
     },
     "PIPE-02": {
-      "status": "open",
-      "phase": "3"
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "a nested agent (the evaluator via as_tool) now runs through run_with_fallback, with model fallback and usage accounting; the driven agent is recognised by identity so it cannot recurse"
     },
     "PIPE-03": {
-      "status": "open",
-      "phase": "1"
+      "status": "done",
+      "branch": "p5",
+      "phase": "1",
+      "note": "the writer prompt no longer lets a high Jev score replace the evaluator (at least one evaluation per draft); QUALITY_GATE_REQUIRE_EVAL=1 makes recorded evaluator sub-scores mandatory for engine-generated articles at approval"
     },
     "PIPE-04": {
       "status": "open",
@@ -307,8 +311,10 @@
       "phase": "1"
     },
     "PIPE-06": {
-      "status": "open",
-      "phase": "2"
+      "status": "partial",
+      "branch": "p5",
+      "phase": "2",
+      "note": "scheduled runs (run_stage) and the API lifespan share one helper that injects the site's Brand DNA; agents are still module-level objects rather than built per run from a TenantContext (TEN-02)"
     },
     "PIPE-07": {
       "status": "done",
@@ -341,14 +347,16 @@
       "phase": "3"
     },
     "PIPE-13": {
-      "status": "open",
-      "phase": "3"
-    },
-    "PIPE-14": {
       "status": "partial",
       "branch": "p5",
       "phase": "3",
-      "note": "crawl depth/limit clamped and metered by size, extract URL count capped; a whole-run token/request/time budget in the runner is still open"
+      "note": "one FallbackAgentRunner per process (one set of quota books); making the router the sole quota owner is still open"
+    },
+    "PIPE-14": {
+      "status": "done",
+      "branch": "p5",
+      "phase": "3",
+      "note": "per-run budget (RUN_MAX_MODEL_CALLS, RUN_MAX_SECONDS, reset per stage) plus clamped crawl/extract arguments"
     },
     "PIPE-15": {
       "status": "open",

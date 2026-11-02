@@ -65,7 +65,7 @@ BENIGN_EMPTY_MARKERS = (
     "no approved, unpublished posts found",
 )
 
-custom_runner = FallbackAgentRunner()
+custom_runner = FallbackAgentRunner.shared()
 # All inference goes through Gemini/OpenRouter/Cohere via custom clients,
 # never OpenAI's API, so tracing export is disabled (same as main.py).
 set_tracing_disabled(True)
@@ -2363,6 +2363,11 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        custom_runner.reset_run_budget()
+        # Scheduled runs are what write the posts, and they never went through main.py's lifespan, so they ran
+        # without the site's Brand DNA (PIPE-06).
+        from lib.brand_dna import apply_brand_dna_for_site
+        apply_brand_dna_for_site([brief_agent, content_generator_agent, post_editor_agent])
         asyncio.run(STAGE_HANDLERS[args.stage]())
     except Exception as e:
         print(f"Stage '{args.stage}' failed: {e}", file=sys.stderr)

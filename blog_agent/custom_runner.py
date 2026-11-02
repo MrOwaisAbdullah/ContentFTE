@@ -110,6 +110,12 @@ def router_disabled_models(path: Optional[str] = None) -> set:
     return out
 
 
+# id() of the agent whose run is currently being driven by FallbackAgentRunner._execute_agent_run (see `run`).
+import contextvars as _contextvars
+
+_DRIVING_AGENT: "_contextvars.ContextVar[int]" = _contextvars.ContextVar("cfte_driving_agent", default=0)
+
+
 def _provider_key(name: str) -> str:
     """The provider key, read when a client is BUILT. A missing key used to raise KeyError while the
     module-level agents were constructed, so merely importing blog_agents (a test, the console, a tool
@@ -122,7 +128,48 @@ def _provider_key(name: str) -> str:
     return val
 
 
+class RunBudgetExceeded(RuntimeError):
+    """A single run spent more model calls or wall-clock time than its budget (PIPE-14)."""
+
+
 class FallbackAgentRunner(AgentRunner):
+    _shared_instance = None
+
+    # Run-level budget. Retries x models x revision loops multiply: a stuck run could make hundreds of model
+    # calls before the 30-minute Actions timeout killed it, on free tiers that other runs share. Generous
+    # defaults (a healthy run uses a few dozen calls); 0 disables a limit.
+    RUN_MAX_MODEL_CALLS = int(os.environ.get("RUN_MAX_MODEL_CALLS") or "300")
+    RUN_MAX_SECONDS = int(os.environ.get("RUN_MAX_SECONDS") or "1500")
+
+    def reset_run_budget(self) -> None:
+        """Start a new budget window - call at the top of each pipeline stage."""
+        self._run_calls = 0
+        self._run_started = datetime.now()
+
+    def _charge_run_budget(self) -> None:
+        """Count one model attempt; raise RunBudgetExceeded once the call or time budget is spent."""
+        if not hasattr(self, "_run_started"):
+            self.reset_run_budget()
+        self._run_calls += 1
+        if self.RUN_MAX_MODEL_CALLS and self._run_calls > self.RUN_MAX_MODEL_CALLS:
+            raise RunBudgetExceeded(f"run exceeded its budget of {self.RUN_MAX_MODEL_CALLS} model calls")
+        elapsed = (datetime.now() - self._run_started).total_seconds()
+        if self.RUN_MAX_SECONDS and elapsed > self.RUN_MAX_SECONDS:
+            raise RunBudgetExceeded(f"run exceeded its budget of {self.RUN_MAX_SECONDS}s ({int(elapsed)}s used)")
+
+    @classmethod
+    def shared(cls) -> "FallbackAgentRunner":
+        """The one runner for this process (PIPE-13).
+
+        Every agent module used to build its own (`custom_runner = FallbackAgentRunner()` in 7 places). Each one
+        re-seeded its quota counters from the Sheets usage log at construction and then counted independently, so
+        a run that crossed modules spent the same model's daily allowance several times over in the runner's
+        books while the router (which owns the real limits) saw something else. One instance = one set of books.
+        `FallbackAgentRunner()` still builds a fresh one, for tests."""
+        if cls._shared_instance is None:
+            cls._shared_instance = cls()
+        return cls._shared_instance
+
     def __init__(self):
         super().__init__()
         # LLM model configurations. Quota is tracked per model name below,
@@ -620,6 +667,7 @@ class FallbackAgentRunner(AgentRunner):
                     # success, so a model Google was rejecting all day (e.g.
                     # gemini-flash-latest at 87.95% error) kept reading as
                     # "available" and got hammered on every retry.
+                    self._charge_run_budget()
                     await self.increment_usage(model_config["name"])
                     start_time = datetime.now()
                     result = await self._execute_agent_run(
@@ -638,6 +686,8 @@ class FallbackAgentRunner(AgentRunner):
                     )
                     print(f"[DEBUG] Agent '{agent_name}' run complete.")
                     return result
+                except RunBudgetExceeded:
+                    raise          # a spent budget is not the model's fault: no failure stat, no fallback
                 except Exception as e:
                     response_time = (datetime.now() - start_time).total_seconds() if 'start_time' in locals() else 0.0
                     await self._update_provider_stats(model_config["name"], False, response_time)
@@ -745,6 +795,24 @@ class FallbackAgentRunner(AgentRunner):
         self.jev_rpm_timestamps = [ts for ts in self.jev_rpm_timestamps if ts > cutoff]
         return len(self.jev_rpm_timestamps) < 60
 
+    async def run(self, starting_agent, input, **kwargs):
+        """The SDK's entry point - also what `Agent.as_tool()` calls for a nested agent.
+
+        The nested evaluator (`content_evaluation_agent.as_tool(...)`) used to arrive here, hit the inherited base
+        `run`, and execute pinned to ONE model with no fallback and no usage accounting: if that model 429'd the
+        generator carried on without the evaluation (PIPE-02). A nested agent is now sent through
+        `run_with_fallback` like any other. The one call that must NOT be redirected is the one
+        `run_with_fallback` itself makes for the agent it is driving - recognised by agent identity - or it would
+        recurse forever."""
+        if id(starting_agent) == _DRIVING_AGENT.get():
+            return await super().run(starting_agent, input, **kwargs)
+        return await self.run_with_fallback(
+            starting_agent, input,
+            context=kwargs.get("context"),
+            max_turns=kwargs.get("max_turns") or 15,
+            hooks=kwargs.get("hooks"),
+        )
+
     async def _execute_agent_run(self, agent, input_data, context=None, max_turns=15, hooks=None, session=None, run_config=None):
         """Helper wrapper that actually invokes the parent AgentRunner.run.
 
@@ -753,5 +821,10 @@ class FallbackAgentRunner(AgentRunner):
         """
         if run_config is None:
             run_config = RunConfig(tool_not_found_behavior="return_error_to_model")
-        # In normal operation, delegate to the parent class implementation.
-        return await super().run(agent, input_data, context=context, max_turns=max_turns, hooks=hooks, session=session, run_config=run_config)
+        # In normal operation, delegate to the parent class implementation. The marker tells our own `run`
+        # override that THIS call is the real one (nested agents have a different identity and fall back).
+        token = _DRIVING_AGENT.set(id(agent))
+        try:
+            return await super().run(agent, input_data, context=context, max_turns=max_turns, hooks=hooks, session=session, run_config=run_config)
+        finally:
+            _DRIVING_AGENT.reset(token)

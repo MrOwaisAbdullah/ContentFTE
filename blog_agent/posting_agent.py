@@ -17,7 +17,7 @@ from lib.geo import extract_tldr
 from lib.jev_tools import jev_classify_category_tool, jev_gate_tool_call_tool
 
 
-custom_runner = FallbackAgentRunner()
+custom_runner = FallbackAgentRunner.shared()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
